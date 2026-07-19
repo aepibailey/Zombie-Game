@@ -242,8 +242,8 @@ func _fire() -> void:
 		var col = shoot_ray.get_collider()  # Variant: may be world or a zombie
 		if col and col.is_in_group("zombies"):
 			var point := shoot_ray.get_collision_point()
-			var local_y := point.y - col.global_position.y
-			var headshot := local_y >= HEAD_LOCAL_Y
+			var local_y: float = point.y - col.global_position.y
+			var headshot: bool = local_y >= HEAD_LOCAL_Y
 			if col.has_method("take_damage"):
 				col.take_damage(BODY_DAMAGE, headshot)
 
