@@ -1,0 +1,11 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+/builds/
+/export/
+
+# macOS
+.DS_Store
+
+# Godot export presets can contain secrets
+export_presets.cfg

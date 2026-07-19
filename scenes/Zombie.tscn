@@ -1,0 +1,28 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/Zombie.gd" id="1_zombie"]
+
+[sub_resource type="CapsuleShape3D" id="cap"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="CapsuleMesh" id="capmesh"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="zmat"]
+albedo_color = Color(0.25, 0.6, 0.25, 1)
+
+[node name="Zombie" type="CharacterBody3D"]
+script = ExtResource("1_zombie")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("cap")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("capmesh")
+material_override = SubResource("zmat")
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
