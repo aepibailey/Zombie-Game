@@ -12,10 +12,10 @@ signal time_updated(time_left: float, phase: int)
 enum Phase { DAY, NIGHT }
 
 # --- Tuning ---------------------------------------------------------------
-# Playtest cadence: 60s day / 180s night. (Spec default for a night is 360s /
+# Playtest cadence: 30s day / 60s night. (Spec default for a night is 360s /
 # 6 min; shortened here for faster iteration.)
-const DAY_LENGTH: float = 60.0
-const NIGHT_LENGTH: float = 180.0
+const DAY_LENGTH: float = 30.0
+const NIGHT_LENGTH: float = 60.0
 
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
