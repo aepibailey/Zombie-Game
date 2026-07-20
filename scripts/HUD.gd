@@ -11,6 +11,7 @@ var _ammo_label: Label
 var _state_label: Label
 var _supp_label: Label
 var _msg_label: Label
+var _prompt_label: Label
 var _crosshair: Label
 var _msg_timer := 0.0
 
@@ -47,6 +48,21 @@ func _ready() -> void:
 	_msg_label.position.y = -80
 	_msg_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_msg_label)
+
+	# Persistent interaction prompt (e.g. "Press E to open shop"), sits just
+	# below the crosshair. Shown/hidden by whatever is in range.
+	_prompt_label = Label.new()
+	_prompt_label.add_theme_font_size_override("font_size", 20)
+	_prompt_label.add_theme_color_override("font_color", Color(0.95, 0.95, 0.95))
+	_prompt_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_prompt_label.add_theme_constant_override("outline_size", 5)
+	_prompt_label.set_anchors_preset(Control.PRESET_CENTER)
+	_prompt_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_prompt_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_prompt_label.position.y = 48
+	_prompt_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt_label.visible = false
+	add_child(_prompt_label)
 
 	# Autoload wiring.
 	PointsManager.points_changed.connect(_on_points_changed)
@@ -137,3 +153,10 @@ func _on_suppressor_changed(has_supp: bool) -> void:
 func show_message(text: String) -> void:
 	_msg_label.text = text
 	_msg_timer = 2.5
+
+func show_prompt(text: String) -> void:
+	_prompt_label.text = text
+	_prompt_label.visible = true
+
+func hide_prompt() -> void:
+	_prompt_label.visible = false

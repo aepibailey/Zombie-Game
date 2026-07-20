@@ -192,6 +192,7 @@ func _build_ui() -> void:
 
 	if _pending_tent_zone:
 		_pending_tent_zone.tent_ui = _tent_ui
+		_pending_tent_zone.hud = _hud
 
 # --- Phase handling / zombie spawning ------------------------------------
 func _on_phase_changed(phase: int) -> void:

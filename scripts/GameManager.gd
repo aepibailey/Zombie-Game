@@ -21,7 +21,18 @@ var current_phase: int = Phase.DAY
 var time_left: float = 0.0
 
 func _ready() -> void:
+	_ensure_input_actions()
 	_start_phase(Phase.DAY)
+
+## The "interact" action is defined in project.godot's Input Map (remappable in
+## Project Settings). This is a safety net so the tent still opens even if that
+## definition is missing for any reason.
+func _ensure_input_actions() -> void:
+	if not InputMap.has_action("interact"):
+		InputMap.add_action("interact")
+		var ev := InputEventKey.new()
+		ev.physical_keycode = KEY_E
+		InputMap.action_add_event("interact", ev)
 
 func _process(delta: float) -> void:
 	time_left -= delta

@@ -74,6 +74,9 @@ func close_tent() -> void:
 		_player.set_control_enabled(true)
 		_player._set_mouse_captured(true)
 
+func is_open() -> bool:
+	return visible
+
 func _unhandled_input(event: InputEvent) -> void:
 	if visible and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		close_tent()

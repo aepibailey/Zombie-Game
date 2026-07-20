@@ -9,7 +9,6 @@ const MAX_HP := 100
 const HEADSHOT_MULT := 2            # PROJECT_SPEC.md "Combat & Scoring"
 const WANDER_SPEED := 1.6
 const CHASE_SPEED := 3.6
-const SIGHT_RANGE := 16.0          # can visually acquire the player within this
 const CHASE_LOSE_RANGE := 26.0     # drop chase past this with no LOS
 const ATTACK_RANGE := 1.8
 const ATTACK_DAMAGE := 20          # PROJECT_SPEC.md "Combat & Scoring"
@@ -26,7 +25,8 @@ var last_hit_headshot := false
 var _investigate_timer := 0.0
 var _attack_timer := 0.0
 var _repath_timer := 0.0
-var _target_pos: Vector3 = Vector3.ZERO
+var _target_pos: Vector3 = Vector3.ZERO      # fixed nav goal (wander pt or noise loc)
+var _last_noise_radius := 0.0                # radius of the noise being investigated
 var _last_known_player: Vector3 = Vector3.ZERO
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
@@ -85,17 +85,17 @@ func _physics_process(delta: float) -> void:
 
 # --- States ---------------------------------------------------------------
 func _do_wander(delta: float) -> void:
-	if _can_see_player():
-		_enter_chase()
-		return
+	# Pure roaming. Zombies never read the player's position here — a silent
+	# (crouching) player can pass right by. Chase is only entered through a
+	# confirmed contact (laser reveal or being shot).
 	_move_toward(_target_pos, WANDER_SPEED, delta)
 	if global_position.distance_to(_target_pos) < 1.2:
 		_pick_wander_target()
 
 func _do_investigate(delta: float) -> void:
-	if _can_see_player():
-		_enter_chase()
-		return
+	# Path to the FIXED location the noise came from — not the player's live
+	# transform. If nothing is found before the timeout (or on arrival), give
+	# up and return to Wander.
 	_investigate_timer -= delta
 	_move_toward(_target_pos, WANDER_SPEED, delta)
 	var arrived := global_position.distance_to(_target_pos) < 1.5
@@ -177,14 +177,9 @@ func _face(target: Vector3) -> void:
 		look_at(flat, Vector3.UP)
 
 # --- Perception -----------------------------------------------------------
-func _can_see_player() -> bool:
-	var player = _get_player()
-	if player == null:
-		return false
-	if global_position.distance_to(player.global_position) > SIGHT_RANGE:
-		return false
-	return _has_los_to(player)
-
+# NOTE: line-of-sight is only consulted from Chase (to track/lose a target the
+# zombie already has a confirmed fix on). Wander/Investigate never look at the
+# player, so noise events are the only thing that can move an un-alerted zombie.
 func _has_los_to(player: Node3D) -> bool:
 	var space := get_world_3d().direct_space_state
 	var from := global_position + Vector3(0, 1.4, 0)
@@ -201,6 +196,9 @@ func _get_player():
 
 # --- External triggers ----------------------------------------------------
 ## Noise bus callback: alerts to a location, not to the player specifically.
+## Stores the noise's fixed (position, radius) and heads there. A newer noise
+## within range while wandering/investigating simply replaces the target with
+## its own fixed location — each event is independent of the player's transform.
 func _on_noise_emitted(position: Vector3, radius: float) -> void:
 	if not active or GameManager.is_day():
 		return
@@ -210,6 +208,7 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 		state = State.INVESTIGATE
 		_investigate_timer = INVESTIGATE_TIMEOUT
 		_target_pos = position
+		_last_noise_radius = radius
 
 ## Red-laser proximity reveal (from Player): confirmed player position -> chase.
 func reveal_player(player_pos: Vector3) -> void:

@@ -26,10 +26,14 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | Left click | Fire M17 (semi-auto) |
 | Right click | Toggle ADS (red laser) |
 | `R` | Reload |
+| `E` | Interact — open/close the tent shop when in range (Day only) |
 | `Esc` | Free / recapture mouse (and close the tent) |
 
-The HUD (top-left) shows phase + countdown, points, HP, ammo, movement state,
-and whether the suppressor is fitted.
+`E` is bound via a remappable **Input Map** action (`interact`) in Project
+Settings, not hardcoded.
+
+The HUD shows a top-center day/night clock, plus points, HP, ammo, movement
+state, and whether the suppressor is fitted (top-left).
 
 ## Project structure
 
@@ -73,7 +77,9 @@ exact position.
 1. **Crouch past a zombie (<10m) undetected** — at Night, press `C` and walk
    slowly past a zombie a few metres away. It should stay in Wander (no laser).
 2. **Standing/sprint triggers Investigate** — walk (5m) or sprint (15m) near a
-   zombie; it should turn and path toward your last noise position.
+   zombie; it should turn and path to the fixed spot the noise came from, then
+   give up (~10s) and return to Wander if it finds nothing there. A fresh noise
+   within range retargets it to that new location.
 3. **Unsuppressed vs suppressed shots** — fire once unsuppressed (40m): zombies
    across the map converge. After buying the suppressor (8m), a shot only alerts
    very close/already-alerted zombies.
@@ -81,6 +87,8 @@ exact position.
    **3 pts**); body shots do 34 (3 shots kill, **1 pt**). Watch the Points HUD.
 5. **Day/night auto-transition** — the countdown flips phases automatically;
    lighting darkens at Night, zombies activate; they go dormant by Day.
-6. **Buy the suppressor** — during Day, walk into the tent (green box, center-ish).
-   The shop opens; buy the suppressor for 3 pts and confirm the next shot's
+6. **Buy the suppressor** — during Day, walk into the tent (green box,
+   center-ish). A "Press E to open shop" prompt appears; press `E` to open (it
+   won't auto-open), buy the suppressor for 3 pts, and confirm the next shot's
    noise radius drops (HUD shows `[Suppressed 8m]` and zombie reaction shrinks).
+   Press `E` again, `Esc`, the Close button, or walk away to shut the shop.
