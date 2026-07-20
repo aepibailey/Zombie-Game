@@ -2,6 +2,8 @@ extends CharacterBody3D
 ## Walker zombie: enum state machine (Wander / Investigate / Chase / Attack)
 ## driven by the noise bus and line-of-sight. See PROJECT_SPEC.md "Zombie AI".
 
+signal died   ## emitted just before this zombie frees itself (wave tracking)
+
 enum State { WANDER, INVESTIGATE, CHASE, ATTACK }
 
 # --- Tuning ---------------------------------------------------------------
@@ -237,6 +239,7 @@ func take_damage(amount: int, headshot: bool) -> void:
 func _die() -> void:
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
+	died.emit()   # let the wave tracker decrement the live count
 	queue_free()
 
 # --- Wander target --------------------------------------------------------

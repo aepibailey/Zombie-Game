@@ -1,13 +1,23 @@
 extends Node3D
 ## World bootstrap. Builds the greybox map (floor, patrol-base structures,
 ## perimeter trees), bakes a runtime navmesh, wires the day/night lighting,
-## spawns the HUD + tent, and manages zombie spawning per phase.
+## spawns the HUD + supply crate, and runs the nightly zombie wave (trickle
+## spawn + all-clear detection).
 
-const DESIRED_ZOMBIES := 6
 const MAP_HALF := 30.0          # 60x60m clearing
 const TREE_RING_MIN := 23.0
 const TREE_RING_MAX := 29.0
 const TREE_COUNT := 44
+
+# Wave pacing (pool size lives on GameManager.NIGHT_ZOMBIE_COUNT). Zombies
+# trickle in rather than all spawning at once. Tune after playtest.
+const FIRST_SPAWN_DELAY := 1.5
+const SPAWN_INTERVAL_MIN := 4.0
+const SPAWN_INTERVAL_MAX := 9.0
+
+# All-clear prompt keybinds (shown on the prompt).
+const KEY_SKIP_TO_DAY := KEY_Y
+const KEY_FINISH_NIGHT := KEY_N
 
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
@@ -17,8 +27,15 @@ var _sky_mat: ProceduralSkyMaterial
 var _nav_region: NavigationRegion3D
 var _zombies: Array = []
 var _hud: HUD
-var _tent_ui: TentUI
-var _pending_tent_zone: TentZone
+var _crate_ui: SupplyCrateUI
+var _pending_crate_zone: SupplyCrateZone
+
+# --- Nightly wave state ---------------------------------------------------
+var _wave_total := 0            # zombies to spawn this night
+var _wave_spawned := 0          # how many have spawned so far
+var _wave_alive := 0            # how many are currently alive
+var _spawn_timer := 0.0         # countdown to the next trickle spawn
+var _all_clear_shown := false   # prompt fires once per all-clear event
 
 @onready var player: Node3D = $Player
 
@@ -96,8 +113,8 @@ func _build_world() -> void:
 	_add_box(_nav_region, Vector3(6, 0.8, 1), Vector3(0, 0.4, 4), Color(0.5, 0.45, 0.3))   # sandbags
 	_add_box(_nav_region, Vector3(1, 0.8, 5), Vector3(-3, 0.4, 1), Color(0.5, 0.45, 0.3))  # sandbags
 
-	# The tent (a low green box) + its trigger zone.
-	_build_tent(Vector3(6, 0, 6))
+	# The air-dropped supply crate + its trigger zone.
+	_build_crate(Vector3(6, 0, 6))
 
 	# Perimeter woods to break sightlines and give wander routes.
 	for i in TREE_COUNT:
@@ -167,19 +184,21 @@ func _add_tree(parent: Node, pos: Vector3) -> void:
 
 	parent.add_child(body)
 
-func _build_tent(pos: Vector3) -> void:
-	_add_box(self, Vector3(3, 2.2, 3), pos + Vector3(0, 1.1, 0), Color(0.2, 0.35, 0.2))
+func _build_crate(pos: Vector3) -> void:
+	# Blockout crate: a wooden box with a lighter lid. (No parachute for v1.)
+	_add_box(self, Vector3(1.6, 1.4, 1.6), pos + Vector3(0, 0.7, 0), Color(0.5, 0.35, 0.18))
+	_add_box(self, Vector3(1.7, 0.15, 1.7), pos + Vector3(0, 1.45, 0), Color(0.62, 0.46, 0.26))
 
-	var zone := TentZone.new()
+	var zone := SupplyCrateZone.new()
 	zone.position = pos
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(5, 3, 5)
+	shape.size = Vector3(4, 3, 4)
 	col.shape = shape
 	col.position.y = 1.5
 	zone.add_child(col)
 	add_child(zone)
-	_pending_tent_zone = zone
+	_pending_crate_zone = zone
 
 # --- UI -------------------------------------------------------------------
 func _build_ui() -> void:
@@ -187,14 +206,14 @@ func _build_ui() -> void:
 	add_child(_hud)
 	_hud.bind_player(player)
 
-	_tent_ui = TentUI.new()
-	add_child(_tent_ui)
+	_crate_ui = SupplyCrateUI.new()
+	add_child(_crate_ui)
 
-	if _pending_tent_zone:
-		_pending_tent_zone.tent_ui = _tent_ui
-		_pending_tent_zone.hud = _hud
+	if _pending_crate_zone:
+		_pending_crate_zone.crate_ui = _crate_ui
+		_pending_crate_zone.hud = _hud
 
-# --- Phase handling / zombie spawning ------------------------------------
+# --- Phase handling -------------------------------------------------------
 func _on_phase_changed(phase: int) -> void:
 	_apply_lighting(phase == GameManager.Phase.DAY)
 	if phase == GameManager.Phase.NIGHT:
@@ -203,19 +222,38 @@ func _on_phase_changed(phase: int) -> void:
 		_begin_day()
 
 func _begin_night() -> void:
-	_prune_zombies()
-	# Reactivate survivors, then top up to the desired count.
-	for z in _zombies:
-		z.set_active(true)
-	while _zombies.size() < DESIRED_ZOMBIES:
-		_spawn_zombie()
-	_hud.show_message("NIGHT — zombies are active. Survive until dawn.")
+	# Fresh wave each night: clear anything left over, then trickle in the pool.
+	_clear_all_zombies()
+	_wave_total = GameManager.zombies_for_night(GameManager.night_number)
+	_wave_spawned = 0
+	_wave_alive = 0
+	_spawn_timer = FIRST_SPAWN_DELAY
+	_all_clear_shown = false
+	_update_wave_hud()
+	_hud.show_message("NIGHT %d — %d hostiles inbound." % [GameManager.night_number, _wave_total])
 
 func _begin_day() -> void:
+	# Any survivors go dormant where they stand; the all-clear prompt is moot now.
 	_prune_zombies()
 	for z in _zombies:
-		z.set_active(false)   # dormant where they stand
-	_hud.show_message("DAY — safe. Visit the tent to spend points.")
+		z.set_active(false)
+	_hud.hide_all_clear()
+	_update_wave_hud()
+	_hud.show_message("DAY — safe. Open the supply crate to spend points.")
+
+# --- Nightly wave: trickle spawn + all-clear -----------------------------
+func _process(delta: float) -> void:
+	if GameManager.is_day():
+		return
+	if _wave_spawned >= _wave_total:
+		return
+	_spawn_timer -= delta
+	if _spawn_timer <= 0.0:
+		_spawn_zombie()
+		_wave_spawned += 1
+		_wave_alive += 1
+		_spawn_timer = randf_range(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
+		_update_wave_hud()
 
 func _spawn_zombie() -> void:
 	var angle := randf() * TAU
@@ -223,8 +261,42 @@ func _spawn_zombie() -> void:
 	var z = zombie_scene.instantiate()  # untyped for the zombie's custom API
 	add_child(z)
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
+	z.died.connect(_on_zombie_died)
 	z.set_active(true)
 	_zombies.append(z)
+
+func _on_zombie_died() -> void:
+	_wave_alive = maxi(0, _wave_alive - 1)
+	_update_wave_hud()
+	_check_all_clear()
+
+func _check_all_clear() -> void:
+	if GameManager.is_day() or _all_clear_shown:
+		return
+	if _wave_spawned >= _wave_total and _wave_alive <= 0:
+		_all_clear_shown = true
+		_hud.show_all_clear(char(KEY_SKIP_TO_DAY), char(KEY_FINISH_NIGHT))
+
+func _update_wave_hud() -> void:
+	_hud.set_wave_status(GameManager.night_number, _wave_spawned, _wave_total, _wave_alive)
+
+# --- All-clear prompt input ----------------------------------------------
+func _unhandled_input(event: InputEvent) -> void:
+	if not _hud or not _hud.all_clear_visible():
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_SKIP_TO_DAY:
+			_hud.hide_all_clear()
+			GameManager.force_phase(GameManager.Phase.DAY)
+		elif event.keycode == KEY_FINISH_NIGHT:
+			_hud.hide_all_clear()
+
+# --- Zombie bookkeeping ---------------------------------------------------
+func _clear_all_zombies() -> void:
+	for z in _zombies:
+		if is_instance_valid(z):
+			z.queue_free()
+	_zombies.clear()
 
 func _prune_zombies() -> void:
 	_zombies = _zombies.filter(func(z): return is_instance_valid(z))

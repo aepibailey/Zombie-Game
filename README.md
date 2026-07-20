@@ -26,14 +26,21 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | Left click | Fire M17 (semi-auto) — inaccurate from the hip |
 | Right click | Toggle ADS (red laser) — pinpoint accurate |
 | `R` | Reload |
-| `E` | Interact — open/close the tent shop when in range (Day only) |
-| `Esc` | Free / recapture mouse (and close the tent) |
+| `E` | Interact — open/close the supply crate when in range (Day only) |
+| `Esc` | Free / recapture mouse (and close the crate) |
+| `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
 
 `E` is bound via a remappable **Input Map** action (`interact`) in Project
 Settings, not hardcoded.
 
-The HUD shows a top-center day/night clock, plus points, HP, ammo, movement
-state, and whether the suppressor is fitted (top-left).
+The HUD shows a top-center day/night clock with a **"Night N"** counter and the
+live **wave count** (hostiles alive · spawned/total) beneath it, plus points,
+HP, ammo, movement state, and whether the suppressor is fitted (top-left).
+
+**Nights** spawn a fixed pool of zombies (`GameManager.NIGHT_ZOMBIE_COUNT`, 5
+for now) that trickle in over the night. Once every zombie for the night has
+spawned *and* been killed, an **all-clear** prompt lets you skip straight to Day
+(`Y`) or ride out the timer (`N`).
 
 **Aiming:** there is no always-on crosshair. Hip-firing is blind and each shot
 is scattered within a spread cone (`HIP_FIRE_SPREAD_RADIUS` in `Player.gd`) — a
@@ -55,8 +62,8 @@ scripts/
   Player.gd            # movement/noise states, ADS laser, M17 combat
   Zombie.gd            # Wander/Investigate/Chase/Attack state machine
   Main.gd              # builds map, bakes navmesh, spawns zombies per phase
-  TentZone.gd          # Day-only shop trigger volume
-  TentUI.gd            # minimal tent shop (buy suppressor)
+  SupplyCrateZone.gd   # Day-only crate trigger volume (press E in range)
+  SupplyCrateUI.gd     # minimal supply-crate shop (buy suppressor)
   HUD.gd               # in-code HUD
   SuppressorResource.gd# attachment resource
 resources/
@@ -94,8 +101,12 @@ exact position.
    reliable headshots.
 5. **Day/night auto-transition** — the countdown flips phases automatically;
    lighting darkens at Night, zombies activate; they go dormant by Day.
-6. **Buy the suppressor** — during Day, walk into the tent (green box,
-   center-ish). A "Press E to open shop" prompt appears; press `E` to open (it
-   won't auto-open), buy the suppressor for 3 pts, and confirm the next shot's
-   noise radius drops (HUD shows `[Suppressed 8m]` and zombie reaction shrinks).
-   Press `E` again, `Esc`, the Close button, or walk away to shut the shop.
+6. **Nightly wave + all-clear** — watch the wave counter as zombies trickle in.
+   Kill all 5 and an "AREA CLEAR" prompt appears: press `Y` to skip to Day or
+   `N` to keep playing the night out. The "Night N" counter bumps each night.
+7. **Buy the suppressor** — during Day, walk up to the supply crate (wooden box,
+   center-ish). A "Press E to open the supply crate" prompt appears; press `E`
+   to open (it won't auto-open), buy the suppressor for 3 pts, and confirm the
+   next shot's noise radius drops (HUD shows `[Suppressed 8m]` and zombie
+   reaction shrinks). Press `E` again, `Esc`, the Close button, or walk away to
+   shut it.

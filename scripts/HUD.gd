@@ -1,11 +1,14 @@
 extends CanvasLayer
 class_name HUD
-## Minimal greybox HUD: a day/night clock, points, health, ammo, movement
-## state, an interaction prompt, and a transient message line. Built entirely
-## in code so there's no fragile .tscn wiring for v1. No always-on crosshair —
-## hip-fire is deliberately blind; ADS shows the laser dot instead.
+## Minimal greybox HUD: a day/night clock, a "Night N" + wave counter, points,
+## health, ammo, movement state, an interaction prompt, a transient message
+## line, and the center-screen all-clear prompt. Built entirely in code so
+## there's no fragile .tscn wiring for v1. No always-on crosshair — hip-fire is
+## deliberately blind; ADS shows the laser dot instead.
 
 var _clock_label: Label
+var _night_label: Label
+var _wave_label: Label
 var _points_label: Label
 var _health_label: Label
 var _ammo_label: Label
@@ -13,6 +16,8 @@ var _state_label: Label
 var _supp_label: Label
 var _msg_label: Label
 var _prompt_label: Label
+var _all_clear_panel: PanelContainer
+var _all_clear_label: Label
 var _msg_timer := 0.0
 
 func _ready() -> void:
@@ -30,6 +35,8 @@ func _ready() -> void:
 	_supp_label = _mk(panel)
 
 	_build_clock()
+	_build_night_readout()
+	_build_all_clear()
 
 	_msg_label = Label.new()
 	_msg_label.add_theme_font_size_override("font_size", 18)
@@ -40,8 +47,8 @@ func _ready() -> void:
 	_msg_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_msg_label)
 
-	# Persistent interaction prompt (e.g. "Press E to open shop"), sits just
-	# below the crosshair. Shown/hidden by whatever is in range.
+	# Persistent interaction prompt (e.g. "Press E to open the supply crate"),
+	# sits just below screen-centre. Shown/hidden by whatever is in range.
 	_prompt_label = Label.new()
 	_prompt_label.add_theme_font_size_override("font_size", 20)
 	_prompt_label.add_theme_color_override("font_color", Color(0.95, 0.95, 0.95))
@@ -87,6 +94,54 @@ func _build_clock() -> void:
 	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clock_panel.add_child(_clock_label)
 
+# "Night N" plus the live wave count, stacked just under the clock.
+func _build_night_readout() -> void:
+	_night_label = _mk_centered(56, 20, Color(0.95, 0.9, 0.8))
+	_wave_label = _mk_centered(82, 16, Color(0.9, 0.6, 0.55))
+	_wave_label.visible = false   # only shown during a night
+
+func _mk_centered(y: float, font_size: int, color: Color) -> Label:
+	var l := Label.new()
+	l.add_theme_font_size_override("font_size", font_size)
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 5)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	l.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	l.position.y = y
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(l)
+	return l
+
+# Center-screen "area clear" prompt with the two choices.
+func _build_all_clear() -> void:
+	_all_clear_panel = PanelContainer.new()
+	_all_clear_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_all_clear_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_all_clear_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_all_clear_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_all_clear_panel.visible = false
+
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.08, 0.05, 0.85)
+	sb.border_color = Color(0.5, 0.9, 0.5, 0.9)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 26
+	sb.content_margin_right = 26
+	sb.content_margin_top = 18
+	sb.content_margin_bottom = 18
+	_all_clear_panel.add_theme_stylebox_override("panel", sb)
+	add_child(_all_clear_panel)
+
+	_all_clear_label = Label.new()
+	_all_clear_label.add_theme_font_size_override("font_size", 22)
+	_all_clear_label.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	_all_clear_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_all_clear_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_all_clear_panel.add_child(_all_clear_label)
+
 func _mk(parent: Node) -> Label:
 	var l := Label.new()
 	l.add_theme_font_size_override("font_size", 16)
@@ -125,6 +180,7 @@ func _on_time_updated(time_left: float, phase: int) -> void:
 	# Warm for day, cool for night — both stay bright over the backing panel.
 	_clock_label.add_theme_color_override("font_color",
 		Color(1.0, 0.95, 0.7) if is_day else Color(0.72, 0.86, 1.0))
+	_night_label.text = "Night %d" % maxi(GameManager.night_number, 1)
 
 func _on_points_changed(points: int) -> void:
 	_points_label.text = "Points: %d" % points
@@ -151,3 +207,20 @@ func show_prompt(text: String) -> void:
 
 func hide_prompt() -> void:
 	_prompt_label.visible = false
+
+# --- Nightly wave -----------------------------------------------------------
+func set_wave_status(_night: int, spawned: int, total: int, alive: int) -> void:
+	_wave_label.text = "Hostiles: %d alive · %d/%d" % [alive, spawned, total]
+	# Only meaningful during the night; hide the count during the day.
+	_wave_label.visible = not GameManager.is_day()
+
+func show_all_clear(skip_key: String, finish_key: String) -> void:
+	_all_clear_label.text = "AREA CLEAR — all hostiles down\n\n[%s] Skip to Day     [%s] Finish the night" % [
+		skip_key, finish_key]
+	_all_clear_panel.visible = true
+
+func hide_all_clear() -> void:
+	_all_clear_panel.visible = false
+
+func all_clear_visible() -> bool:
+	return _all_clear_panel.visible

@@ -2,7 +2,7 @@ extends Node
 ## Points economy (autoload).
 ##
 ## Points are the only currency (PROJECT_SPEC.md "Economy"). Kills add points;
-## the tent spends them. `points_changed` lets the HUD and tent UI stay in sync.
+## the crate spends them. `points_changed` keeps the HUD and crate UI in sync.
 
 signal points_changed(points: int)
 

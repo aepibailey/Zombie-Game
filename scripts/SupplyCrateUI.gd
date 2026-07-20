@@ -1,8 +1,8 @@
 extends CanvasLayer
-class_name TentUI
-## Minimal tent shop (Day-only). Shows current points and a single purchase:
-## the M17 suppressor. Buying it attaches a SuppressorResource to the player,
-## proving the attachment pipeline end-to-end (PROJECT_SPEC.md acceptance).
+class_name SupplyCrateUI
+## Minimal supply-crate shop (Day-only). Shows current points and a single
+## purchase: the M17 suppressor. Buying it attaches a SuppressorResource to the
+## player, proving the attachment pipeline end-to-end (PROJECT_SPEC.md acceptance).
 
 const SUPPRESSOR_COST := 3
 
@@ -33,7 +33,7 @@ func _ready() -> void:
 	margin.add_child(vb)
 
 	var title := Label.new()
-	title.text = "— TENT (Day) —"
+	title.text = "— SUPPLY CRATE (Day) —"
 	title.add_theme_font_size_override("font_size", 22)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(title)
@@ -53,12 +53,12 @@ func _ready() -> void:
 
 	var close := Button.new()
 	close.text = "Close (Esc)"
-	close.pressed.connect(close_tent)
+	close.pressed.connect(close_crate)
 	vb.add_child(close)
 
 	PointsManager.points_changed.connect(func(_p): _refresh())
 
-func open_tent(player) -> void:
+func open_crate(player) -> void:
 	_player = player
 	visible = true
 	player.set_control_enabled(false)
@@ -66,7 +66,7 @@ func open_tent(player) -> void:
 	_status_label.text = ""
 	_refresh()
 
-func close_tent() -> void:
+func close_crate() -> void:
 	if not visible:
 		return
 	visible = false
@@ -79,7 +79,7 @@ func is_open() -> bool:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if visible and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		close_tent()
+		close_crate()
 		get_viewport().set_input_as_handled()
 
 func _refresh() -> void:

@@ -222,7 +222,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if control_enabled:
 					_reload()
 			KEY_ESCAPE:
-				# When the tent shop owns the mouse, let it handle Esc instead.
+				# When the crate shop owns the mouse, let it handle Esc instead.
 				if control_enabled:
 					_set_mouse_captured(not mouse_captured)
 

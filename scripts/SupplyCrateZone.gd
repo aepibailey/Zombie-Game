@@ -1,11 +1,11 @@
 extends Area3D
-class_name TentZone
-## Trigger volume for the tent. Entering only flags the player as "in range" and
-## shows a prompt; the shop opens when they press the "interact" action (E), and
-## the same key (or the UI's close/Esc) shuts it. Walking out closes it too.
-## Only usable during Day.
+class_name SupplyCrateZone
+## Trigger volume for the air-dropped supply crate. Entering only flags the
+## player as "in range" and shows a prompt; the crate opens when they press the
+## "interact" action (E), and the same key (or the UI's close/Esc) shuts it.
+## Walking out closes it too. Only usable during Day.
 
-var tent_ui: TentUI = null
+var crate_ui: SupplyCrateUI = null
 var hud: HUD = null
 
 var _player_inside := false
@@ -17,21 +17,21 @@ func _ready() -> void:
 	GameManager.phase_changed.connect(_on_phase_changed)
 
 func _process(_delta: float) -> void:
-	# Keep the prompt in sync regardless of how the shop was opened/closed
+	# Keep the prompt in sync regardless of how the crate was opened/closed
 	# (interact key, close button, Esc, walking away, or nightfall).
 	_update_prompt()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
-		_toggle_shop()
+		_toggle_crate()
 
-func _toggle_shop() -> void:
-	if tent_ui == null:
+func _toggle_crate() -> void:
+	if crate_ui == null:
 		return
-	if tent_ui.is_open():
-		tent_ui.close_tent()
+	if crate_ui.is_open():
+		crate_ui.close_crate()
 	elif _player_inside and GameManager.is_day() and _player != null:
-		tent_ui.open_tent(_player)
+		crate_ui.open_crate(_player)
 
 func _on_body_entered(body: Node3D) -> void:
 	if not body.is_in_group("player"):
@@ -44,19 +44,19 @@ func _on_body_exited(body: Node3D) -> void:
 		return
 	_player_inside = false
 	_player = null
-	if tent_ui:
-		tent_ui.close_tent()
+	if crate_ui:
+		crate_ui.close_crate()
 
 func _on_phase_changed(phase: int) -> void:
-	# Tent shuts at dusk.
-	if phase == GameManager.Phase.NIGHT and tent_ui:
-		tent_ui.close_tent()
+	# Crate seals up at dusk.
+	if phase == GameManager.Phase.NIGHT and crate_ui:
+		crate_ui.close_crate()
 
 func _update_prompt() -> void:
 	if hud == null:
 		return
-	var shop_open: bool = tent_ui != null and tent_ui.is_open()
-	if _player_inside and GameManager.is_day() and not shop_open:
-		hud.show_prompt("Press E to open shop")
+	var crate_open: bool = crate_ui != null and crate_ui.is_open()
+	if _player_inside and GameManager.is_day() and not crate_open:
+		hud.show_prompt("Press E to open the supply crate")
 	else:
 		hud.hide_prompt()
