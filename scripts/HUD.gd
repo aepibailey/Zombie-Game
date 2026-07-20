@@ -1,8 +1,9 @@
 extends CanvasLayer
 class_name HUD
-## Minimal greybox HUD: phase/time, points, health, ammo, movement state, a
-## crosshair, and a transient message line. Built entirely in code so there's
-## no fragile .tscn wiring for v1.
+## Minimal greybox HUD: a day/night clock, points, health, ammo, movement
+## state, an interaction prompt, and a transient message line. Built entirely
+## in code so there's no fragile .tscn wiring for v1. No always-on crosshair —
+## hip-fire is deliberately blind; ADS shows the laser dot instead.
 
 var _clock_label: Label
 var _points_label: Label
@@ -12,7 +13,6 @@ var _state_label: Label
 var _supp_label: Label
 var _msg_label: Label
 var _prompt_label: Label
-var _crosshair: Label
 var _msg_timer := 0.0
 
 func _ready() -> void:
@@ -30,15 +30,6 @@ func _ready() -> void:
 	_supp_label = _mk(panel)
 
 	_build_clock()
-
-	_crosshair = Label.new()
-	_crosshair.text = "+"
-	_crosshair.add_theme_font_size_override("font_size", 26)
-	_crosshair.set_anchors_preset(Control.PRESET_CENTER)
-	_crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_crosshair)
 
 	_msg_label = Label.new()
 	_msg_label.add_theme_font_size_override("font_size", 18)

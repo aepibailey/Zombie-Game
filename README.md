@@ -23,8 +23,8 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | Mouse | Look |
 | `Shift` (hold) | Sprint |
 | `C` | Toggle crouch (silent movement) |
-| Left click | Fire M17 (semi-auto) |
-| Right click | Toggle ADS (red laser) |
+| Left click | Fire M17 (semi-auto) — inaccurate from the hip |
+| Right click | Toggle ADS (red laser) — pinpoint accurate |
 | `R` | Reload |
 | `E` | Interact — open/close the tent shop when in range (Day only) |
 | `Esc` | Free / recapture mouse (and close the tent) |
@@ -34,6 +34,11 @@ Settings, not hardcoded.
 
 The HUD shows a top-center day/night clock, plus points, HP, ammo, movement
 state, and whether the suppressor is fitted (top-left).
+
+**Aiming:** there is no always-on crosshair. Hip-firing is blind and each shot
+is scattered within a spread cone (`HIP_FIRE_SPREAD_RADIUS` in `Player.gd`) — a
+tracer shows where it actually went. Aim down sights (right click) to get the
+red laser dot and pinpoint-accurate shots.
 
 ## Project structure
 
@@ -83,8 +88,10 @@ exact position.
 3. **Unsuppressed vs suppressed shots** — fire once unsuppressed (40m): zombies
    across the map converge. After buying the suppressor (8m), a shot only alerts
    very close/already-alerted zombies.
-4. **Headshots** — aim high: a headshot does 2×34 = 68 dmg (2 shots kill,
-   **3 pts**); body shots do 34 (3 shots kill, **1 pt**). Watch the Points HUD.
+4. **Headshots** — ADS (right click) for accuracy and aim high: a headshot does
+   2×34 = 68 dmg (2 shots kill, **3 pts**); body shots do 34 (3 shots kill,
+   **1 pt**). Watch the Points HUD. Hip-fire is intentionally too loose to land
+   reliable headshots.
 5. **Day/night auto-transition** — the countdown flips phases automatically;
    lighting darkens at Night, zombies activate; they go dormant by Day.
 6. **Buy the suppressor** — during Day, walk into the tent (green box,

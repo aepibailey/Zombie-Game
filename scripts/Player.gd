@@ -50,6 +50,17 @@ const HEADSHOT_MULT := 2                # -> 2 headshots kill (spec 2x)
 const HEAD_LOCAL_Y := 1.45              # hit height (feet-relative) = headshot
 const SHOT_NOISE_UNSUPPRESSED := 40.0
 const MAX_HP := 100
+const WEAPON_RANGE := 150.0             # max shot distance
+
+# Hip-fire accuracy penalty. On each unaimed shot we pick a random point inside
+# a screen-space circle of this pixel radius (centered on screen-centre) and
+# fire toward it instead of dead-centre. Bigger = looser. Tune by playtest.
+# (ADS ignores this entirely and fires pinpoint down the laser.)
+const HIP_FIRE_SPREAD_RADIUS := 80.0    # pixels
+
+# Tracer (only visual feedback for hip-fire, since there's no reticle).
+const TRACER_WIDTH := 0.03
+const TRACER_LIFETIME := 0.08
 
 # --- Runtime state --------------------------------------------------------
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
@@ -73,7 +84,6 @@ var _spawn_point := Vector3.ZERO
 
 @onready var head: Node3D = $Head
 @onready var camera: Camera3D = $Head/Camera3D
-@onready var shoot_ray: RayCast3D = $Head/Camera3D/ShootRay
 @onready var laser_ray: RayCast3D = $Head/Camera3D/LaserRay
 @onready var laser_dot: MeshInstance3D = $LaserDot
 
@@ -83,7 +93,6 @@ func _ready() -> void:
 	camera.current = true
 	laser_dot.visible = false
 	_set_mouse_captured(true)
-	shoot_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
 	# Prime the HUD.
 	ammo_changed.emit(ammo, reserve)
@@ -237,15 +246,36 @@ func _fire() -> void:
 	var noise_radius := suppressor.shot_noise_radius if suppressor else SHOT_NOISE_UNSUPPRESSED
 	NoiseManager.emit_noise(global_position, noise_radius)
 
-	shoot_ray.force_raycast_update()
-	if shoot_ray.is_colliding():
-		var col = shoot_ray.get_collider()  # Variant: may be world or a zombie
+	# Aim point: ADS is pinpoint (screen-centre, down the laser); hip-fire draws
+	# a random point inside a screen-space spread circle for an accuracy penalty.
+	var screen_centre := get_viewport().get_visible_rect().size * 0.5
+	var screen_point := screen_centre
+	if not ads_active:
+		var ang := randf() * TAU
+		var rad := sqrt(randf()) * HIP_FIRE_SPREAD_RADIUS   # sqrt = uniform in disk
+		screen_point += Vector2(cos(ang), sin(ang)) * rad
+
+	var from := camera.project_ray_origin(screen_point)
+	var dir := camera.project_ray_normal(screen_point)
+	var to := from + dir * WEAPON_RANGE
+
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [self]
+	var hit := space.intersect_ray(q)
+
+	# Impact/damage logic is unchanged — only the ray direction above differs.
+	var impact := to
+	if hit:
+		impact = hit.position
+		var col = hit.collider  # Variant: may be world or a zombie
 		if col and col.is_in_group("zombies"):
-			var point := shoot_ray.get_collision_point()
-			var local_y: float = point.y - col.global_position.y
+			var local_y: float = hit.position.y - col.global_position.y
 			var headshot: bool = local_y >= HEAD_LOCAL_Y
 			if col.has_method("take_damage"):
 				col.take_damage(BODY_DAMAGE, headshot)
+
+	_spawn_tracer(_muzzle_position(), impact)
 
 func _reload() -> void:
 	if reloading or ammo >= MAG_SIZE or reserve <= 0:
@@ -271,6 +301,43 @@ func _update_laser_dot() -> void:
 		laser_dot.global_position = laser_ray.global_position + \
 			(-laser_ray.global_transform.basis.z) * LASER_MAX_DRAW
 	laser_dot.visible = true
+
+# --- Tracer ---------------------------------------------------------------
+# Approximate muzzle: offset down/right/forward of the eye so the tracer reads
+# as coming from a held pistol rather than the centre of the screen.
+func _muzzle_position() -> Vector3:
+	var b := camera.global_transform.basis
+	return camera.global_position + b * Vector3(0.2, -0.18, -0.35)
+
+func _spawn_tracer(from: Vector3, to: Vector3) -> void:
+	var length := from.distance_to(to)
+	if length < 0.05:
+		return
+
+	var tracer := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(TRACER_WIDTH, TRACER_WIDTH, length)
+	tracer.mesh = box
+	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1.0, 0.85, 0.35, 0.9)
+	tracer.material_override = mat
+
+	get_tree().current_scene.add_child(tracer)
+	tracer.global_position = (from + to) * 0.5
+	# Orient the box's local Z along the shot line (avoid a vertical-parallel up).
+	var up := Vector3.UP
+	if absf((to - from).normalized().dot(Vector3.UP)) > 0.99:
+		up = Vector3.RIGHT
+	tracer.look_at(to, up)
+
+	# Quick fade-out, then free.
+	var tw := tracer.create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.0, TRACER_LIFETIME)
+	tw.tween_callback(tracer.queue_free)
 
 # --- Damage / life --------------------------------------------------------
 func take_damage(amount: int) -> void:
