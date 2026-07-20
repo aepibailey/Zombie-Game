@@ -4,7 +4,7 @@ class_name HUD
 ## crosshair, and a transient message line. Built entirely in code so there's
 ## no fragile .tscn wiring for v1.
 
-var _phase_label: Label
+var _clock_label: Label
 var _points_label: Label
 var _health_label: Label
 var _ammo_label: Label
@@ -22,12 +22,13 @@ func _ready() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(panel)
 
-	_phase_label = _mk(panel)
 	_points_label = _mk(panel)
 	_health_label = _mk(panel)
 	_ammo_label = _mk(panel)
 	_state_label = _mk(panel)
 	_supp_label = _mk(panel)
+
+	_build_clock()
 
 	_crosshair = Label.new()
 	_crosshair.text = "+"
@@ -51,6 +52,33 @@ func _ready() -> void:
 	PointsManager.points_changed.connect(_on_points_changed)
 	GameManager.time_updated.connect(_on_time_updated)
 	_on_points_changed(PointsManager.points)
+
+# Top-center day/night clock. A translucent backing panel keeps the readout
+# legible against bright day skies as well as dark night lighting.
+func _build_clock() -> void:
+	var clock_panel := PanelContainer.new()
+	clock_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	clock_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	clock_panel.position.y = 10
+	clock_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0.45)
+	sb.set_corner_radius_all(8)
+	sb.content_margin_left = 18
+	sb.content_margin_right = 18
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	clock_panel.add_theme_stylebox_override("panel", sb)
+	add_child(clock_panel)
+
+	_clock_label = Label.new()
+	_clock_label.add_theme_font_size_override("font_size", 30)
+	_clock_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_clock_label.add_theme_constant_override("outline_size", 6)
+	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	clock_panel.add_child(_clock_label)
 
 func _mk(parent: Node) -> Label:
 	var l := Label.new()
@@ -84,8 +112,12 @@ func _process(delta: float) -> void:
 
 func _on_time_updated(time_left: float, phase: int) -> void:
 	var t: int = maxi(0, int(ceil(time_left)))
-	var phase_str := "DAY" if phase == GameManager.Phase.DAY else "NIGHT"
-	_phase_label.text = "%s  —  %02d:%02d" % [phase_str, t / 60, t % 60]
+	var is_day := phase == GameManager.Phase.DAY
+	var phase_str := "DAY" if is_day else "NIGHT"
+	_clock_label.text = "%s   %02d:%02d" % [phase_str, t / 60, t % 60]
+	# Warm for day, cool for night — both stay bright over the backing panel.
+	_clock_label.add_theme_color_override("font_color",
+		Color(1.0, 0.95, 0.7) if is_day else Color(0.72, 0.86, 1.0))
 
 func _on_points_changed(points: int) -> void:
 	_points_label.text = "Points: %d" % points
