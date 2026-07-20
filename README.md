@@ -38,7 +38,9 @@ live **wave count** (hostiles alive · spawned/total) beneath it, plus points,
 HP, ammo, movement state, and whether the suppressor is fitted (top-left).
 
 **Nights** spawn a fixed pool of zombies (`GameManager.NIGHT_ZOMBIE_COUNT`, 5
-for now) that trickle in over the night. Once every zombie for the night has
+for now) that trickle in over the night. Any zombies left alive at dawn go
+dormant and **carry over** — they're folded into the next night's total on top
+of the fresh pool. Once every zombie for the night (carryover + pool) has
 spawned *and* been killed, an **all-clear** prompt lets you skip straight to Day
 (`Y`) or ride out the timer (`N`).
 

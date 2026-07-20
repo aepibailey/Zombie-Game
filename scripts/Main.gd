@@ -222,15 +222,27 @@ func _on_phase_changed(phase: int) -> void:
 		_begin_day()
 
 func _begin_night() -> void:
-	# Fresh wave each night: clear anything left over, then trickle in the pool.
-	_clear_all_zombies()
-	_wave_total = GameManager.zombies_for_night(GameManager.night_number)
-	_wave_spawned = 0
-	_wave_alive = 0
+	# Survivors from previous nights carry over: reactivate them and fold them
+	# into this night's totals on top of the fresh pool. They already count as
+	# "spawned" and "alive", so the trickle only adds the new pool and the
+	# all-clear still requires every carried-over zombie to be killed too.
+	_prune_zombies()
+	var carryover := _zombies.size()
+	for z in _zombies:
+		z.set_active(true)
+
+	var new_pool: int = GameManager.zombies_for_night(GameManager.night_number)
+	_wave_total = carryover + new_pool
+	_wave_spawned = carryover
+	_wave_alive = carryover
 	_spawn_timer = FIRST_SPAWN_DELAY
 	_all_clear_shown = false
 	_update_wave_hud()
-	_hud.show_message("NIGHT %d — %d hostiles inbound." % [GameManager.night_number, _wave_total])
+	if carryover > 0:
+		_hud.show_message("NIGHT %d — %d inbound (+%d survivors carried over)." % [
+			GameManager.night_number, new_pool, carryover])
+	else:
+		_hud.show_message("NIGHT %d — %d hostiles inbound." % [GameManager.night_number, new_pool])
 
 func _begin_day() -> void:
 	# Any survivors go dormant where they stand; the all-clear prompt is moot now.
@@ -292,11 +304,5 @@ func _unhandled_input(event: InputEvent) -> void:
 			_hud.hide_all_clear()
 
 # --- Zombie bookkeeping ---------------------------------------------------
-func _clear_all_zombies() -> void:
-	for z in _zombies:
-		if is_instance_valid(z):
-			z.queue_free()
-	_zombies.clear()
-
 func _prune_zombies() -> void:
 	_zombies = _zombies.filter(func(z): return is_instance_valid(z))
