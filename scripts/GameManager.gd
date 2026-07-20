@@ -12,10 +12,10 @@ signal time_updated(time_left: float, phase: int)
 enum Phase { DAY, NIGHT }
 
 # --- Tuning ---------------------------------------------------------------
-# Spec default for a night is 360s (6 min). Lower NIGHT_LENGTH while testing
-# if you want the cycle to flip faster.
-const DAY_LENGTH: float = 45.0
-const NIGHT_LENGTH: float = 360.0
+# Playtest cadence: 60s day / 180s night. (Spec default for a night is 360s /
+# 6 min; shortened here for faster iteration.)
+const DAY_LENGTH: float = 60.0
+const NIGHT_LENGTH: float = 180.0
 
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
