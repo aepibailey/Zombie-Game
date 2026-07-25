@@ -4,6 +4,8 @@ extends CharacterBody3D
 
 signal died   ## emitted just before this zombie frees itself (wave tracking)
 
+const SFX_DEATH := "res://audio/zombie_death.wav"
+
 enum State { WANDER, INVESTIGATE, CHASE, ATTACK }
 
 # --- Tuning ---------------------------------------------------------------
@@ -30,6 +32,7 @@ var _repath_timer := 0.0
 var _target_pos: Vector3 = Vector3.ZERO      # fixed nav goal (wander pt or noise loc)
 var _last_noise_radius := 0.0                # radius of the noise being investigated
 var _last_known_player: Vector3 = Vector3.ZERO
+var _hit_flash := 0.0                         # brief white flash timer when shot
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
@@ -60,6 +63,12 @@ func _refresh_tint() -> void:
 		m.albedo_color = Color(0.25, 0.6, 0.25) if active else Color(0.35, 0.38, 0.35)
 
 func _physics_process(delta: float) -> void:
+	# Brief white hit-flash fade back to the normal tint.
+	if _hit_flash > 0.0:
+		_hit_flash -= delta
+		if _hit_flash <= 0.0:
+			_refresh_tint()
+
 	# Gravity keeps them grounded.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
@@ -230,17 +239,37 @@ func take_damage(amount: int, headshot: bool) -> void:
 	var dmg := amount * (HEADSHOT_MULT if headshot else 1)
 	hp -= dmg
 	last_hit_headshot = headshot
+	_flash_white()
 	# Being shot is a confirmed contact — start chasing the shooter.
 	if active and not GameManager.is_day():
 		_enter_chase()
 	if hp <= 0:
 		_die()
 
+func _flash_white() -> void:
+	_hit_flash = 0.12
+	if body_mesh.material_override is StandardMaterial3D:
+		body_mesh.material_override.albedo_color = Color(1, 1, 1)
+
 func _die() -> void:
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
+	_play_death_sound()
 	died.emit()   # let the wave tracker decrement the live count
 	queue_free()
+
+func _play_death_sound() -> void:
+	if not ResourceLoader.exists(SFX_DEATH):
+		return
+	# Detached from the zombie so it survives queue_free(); frees itself when done.
+	var p := AudioStreamPlayer3D.new()
+	var res = load(SFX_DEATH)  # untyped: avoids a Resource->AudioStream downcast error
+	p.stream = res
+	p.max_distance = 45.0
+	get_tree().current_scene.add_child(p)
+	p.global_position = global_position + Vector3(0, 1.0, 0)
+	p.finished.connect(p.queue_free)
+	p.play()
 
 # --- Wander target --------------------------------------------------------
 func _pick_wander_target() -> void:

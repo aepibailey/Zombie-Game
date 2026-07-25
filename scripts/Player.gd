@@ -8,6 +8,8 @@ signal health_changed(hp: int, max_hp: int)
 signal state_changed(state_name: String)
 signal suppressor_changed(has_suppressor: bool)
 signal message(text: String)
+signal damaged                       ## player took a hit (HUD flash / shake)
+signal zombie_hit                    ## a shot connected with a zombie (hitmarker)
 
 enum MoveState { CROUCH, WALK, SPRINT }
 
@@ -62,6 +64,29 @@ const HIP_FIRE_SPREAD_RADIUS := 80.0    # pixels
 const TRACER_WIDTH := 0.03
 const TRACER_LIFETIME := 0.08
 
+# --- Juice / feedback -----------------------------------------------------
+const FIRE_SHAKE := 0.12             # trauma added per shot
+const HURT_SHAKE := 0.55             # trauma added when hit
+const SHAKE_DECAY := 1.6             # trauma bled off per second
+const MAX_SHAKE_ROT := 0.06          # radians at full trauma
+const MAX_SHAKE_POS := 0.05          # metres at full trauma
+const RECOIL_PER_SHOT := 0.03        # radians of upward camera kick
+const MAX_RECOIL := 0.12
+const RECOIL_RECOVER := 12.0
+const MUZZLE_FLASH_TIME := 0.05
+
+# First-person weapon viewmodel (camera-local placement).
+const VM_HIP_POS := Vector3(0.22, -0.22, -0.45)
+const VM_ADS_POS := Vector3(0.0, -0.13, -0.32)
+const VM_RECOIL_KICK := 0.05         # metres kicked back on fire
+const VM_LERP := 16.0
+
+# Loaded at runtime (not preload) so a missing/failed import degrades to
+# "no sound" instead of breaking the whole script.
+const SFX_GUNSHOT := "res://audio/gunshot.wav"
+const SFX_HURT := "res://audio/player_hurt.wav"
+const SFX_IMPACT := "res://audio/impact.wav"
+
 # --- Runtime state --------------------------------------------------------
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 var move_state: int = MoveState.WALK
@@ -82,6 +107,17 @@ var _footstep_timer := 0.0
 var _branch_timer := 1.0
 var _spawn_point := Vector3.ZERO
 
+# Feedback runtime state.
+var _shake_trauma := 0.0
+var _recoil := 0.0
+var _muzzle_timer := 0.0
+var _vm_recoil := 0.0
+var _muzzle_flash: Node3D
+var _viewmodel: Node3D
+var _sfx_fire: AudioStreamPlayer
+var _sfx_hurt: AudioStreamPlayer
+var _sfx_impact: AudioStreamPlayer
+
 @onready var head: Node3D = $Head
 @onready var camera: Camera3D = $Head/Camera3D
 @onready var laser_ray: RayCast3D = $Head/Camera3D/LaserRay
@@ -94,6 +130,8 @@ func _ready() -> void:
 	laser_dot.visible = false
 	_set_mouse_captured(true)
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
+	_build_viewmodel()
+	_build_audio()
 	# Prime the HUD.
 	ammo_changed.emit(ammo, reserve)
 	health_changed.emit(hp, MAX_HP)
@@ -124,6 +162,7 @@ func _physics_process(delta: float) -> void:
 	var target_y := CROUCH_HEAD_Y if is_crouching else STAND_HEAD_Y
 	head.position.y = lerpf(head.position.y, target_y, delta * HEAD_LERP)
 
+	_update_feedback(delta)
 	_update_laser_dot()
 
 func _handle_movement(_delta: float) -> void:
@@ -243,6 +282,15 @@ func _fire() -> void:
 	fire_cooldown = FIRE_INTERVAL
 	ammo_changed.emit(ammo, reserve)
 
+	# Fire feedback: muzzle flash, recoil kick, a touch of shake, and the report.
+	_muzzle_flash.visible = true
+	_muzzle_timer = MUZZLE_FLASH_TIME
+	_recoil = minf(MAX_RECOIL, _recoil + RECOIL_PER_SHOT)
+	_vm_recoil = VM_RECOIL_KICK
+	add_shake(FIRE_SHAKE)
+	if _sfx_fire.stream:
+		_sfx_fire.play()
+
 	var noise_radius := suppressor.shot_noise_radius if suppressor else SHOT_NOISE_UNSUPPRESSED
 	NoiseManager.emit_noise(global_position, noise_radius)
 
@@ -274,6 +322,9 @@ func _fire() -> void:
 			var headshot: bool = local_y >= HEAD_LOCAL_Y
 			if col.has_method("take_damage"):
 				col.take_damage(BODY_DAMAGE, headshot)
+			zombie_hit.emit()       # hitmarker
+			if _sfx_impact.stream:
+				_sfx_impact.play()
 
 	_spawn_tracer(_muzzle_position(), impact)
 
@@ -339,10 +390,110 @@ func _spawn_tracer(from: Vector3, to: Vector3) -> void:
 	tw.tween_property(mat, "albedo_color:a", 0.0, TRACER_LIFETIME)
 	tw.tween_callback(tracer.queue_free)
 
+# --- Feedback (shake / recoil / muzzle / viewmodel / audio) ---------------
+func add_shake(amount: float) -> void:
+	_shake_trauma = minf(1.0, _shake_trauma + amount)
+
+func _update_feedback(delta: float) -> void:
+	# Recoil and trauma bleed back toward rest.
+	_recoil = lerpf(_recoil, 0.0, delta * RECOIL_RECOVER)
+	_shake_trauma = maxf(0.0, _shake_trauma - SHAKE_DECAY * delta)
+
+	# Camera-local shake + recoil (independent of head mouse-look and ADS fov).
+	var shake := _shake_trauma * _shake_trauma
+	camera.rotation = Vector3(
+		-_recoil + randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT,
+		randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT,
+		randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT * 0.5)
+	camera.position = Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), 0.0) * shake * MAX_SHAKE_POS
+
+	# Muzzle flash lifetime.
+	if _muzzle_timer > 0.0:
+		_muzzle_timer -= delta
+		if _muzzle_timer <= 0.0:
+			_muzzle_flash.visible = false
+
+	# Viewmodel: settle toward the hip/ADS pose with a recovering recoil kick.
+	_vm_recoil = lerpf(_vm_recoil, 0.0, delta * VM_LERP)
+	var base_pos := VM_ADS_POS if ads_active else VM_HIP_POS
+	var desired := base_pos + Vector3(0.0, _vm_recoil * 0.3, _vm_recoil)
+	_viewmodel.position = _viewmodel.position.lerp(desired, delta * VM_LERP)
+
+func _build_viewmodel() -> void:
+	_viewmodel = Node3D.new()
+	camera.add_child(_viewmodel)
+	_viewmodel.position = VM_HIP_POS
+
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color(0.09, 0.09, 0.11)
+	metal.metallic = 0.6
+	metal.roughness = 0.5
+
+	var slide := MeshInstance3D.new()
+	var sb := BoxMesh.new()
+	sb.size = Vector3(0.05, 0.06, 0.22)
+	slide.mesh = sb
+	slide.material_override = metal
+	slide.position = Vector3(0, 0, -0.05)
+	_viewmodel.add_child(slide)
+
+	var grip := MeshInstance3D.new()
+	var gb := BoxMesh.new()
+	gb.size = Vector3(0.045, 0.13, 0.06)
+	grip.mesh = gb
+	grip.material_override = metal
+	grip.position = Vector3(0, -0.08, 0.04)
+	grip.rotation_degrees = Vector3(18, 0, 0)
+	_viewmodel.add_child(grip)
+
+	# Muzzle flash lives at the front of the slide so recoil carries it.
+	_muzzle_flash = Node3D.new()
+	_muzzle_flash.position = Vector3(0, 0.005, -0.18)
+	_muzzle_flash.visible = false
+	_viewmodel.add_child(_muzzle_flash)
+
+	var light := OmniLight3D.new()
+	light.light_color = Color(1.0, 0.8, 0.4)
+	light.light_energy = 4.0
+	light.omni_range = 6.0
+	_muzzle_flash.add_child(light)
+
+	var flash := MeshInstance3D.new()
+	var fmesh := SphereMesh.new()
+	fmesh.radius = 0.05
+	fmesh.height = 0.1
+	flash.mesh = fmesh
+	var fmat := StandardMaterial3D.new()
+	fmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fmat.albedo_color = Color(1.0, 0.85, 0.4)
+	fmat.emission_enabled = true
+	fmat.emission = Color(1.0, 0.8, 0.3)
+	fmat.emission_energy_multiplier = 6.0
+	flash.material_override = fmat
+	_muzzle_flash.add_child(flash)
+
+func _build_audio() -> void:
+	_sfx_fire = _make_sfx(SFX_GUNSHOT, -6.0)
+	_sfx_hurt = _make_sfx(SFX_HURT, 0.0)
+	_sfx_impact = _make_sfx(SFX_IMPACT, -3.0)
+
+func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
+	var p := AudioStreamPlayer.new()
+	if ResourceLoader.exists(path):
+		var res = load(path)  # untyped: avoids a Resource->AudioStream downcast error
+		p.stream = res
+	p.volume_db = volume_db
+	add_child(p)
+	return p
+
 # --- Damage / life --------------------------------------------------------
 func take_damage(amount: int) -> void:
 	hp = maxi(0, hp - amount)
 	health_changed.emit(hp, MAX_HP)
+	add_shake(HURT_SHAKE)
+	damaged.emit()
+	if _sfx_hurt.stream:
+		_sfx_hurt.play()
 	if hp <= 0:
 		_respawn()
 

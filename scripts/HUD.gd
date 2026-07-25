@@ -18,7 +18,15 @@ var _msg_label: Label
 var _prompt_label: Label
 var _all_clear_panel: PanelContainer
 var _all_clear_label: Label
+var _dmg_vignette: TextureRect
+var _hitmarker: Label
 var _msg_timer := 0.0
+var _dmg_flash := 0.0
+var _hitmarker_timer := 0.0
+
+const DMG_FLASH_TIME := 0.45
+const DMG_MAX_ALPHA := 0.75
+const HITMARKER_TIME := 0.12
 
 func _ready() -> void:
 	layer = 10
@@ -37,6 +45,8 @@ func _ready() -> void:
 	_build_clock()
 	_build_night_readout()
 	_build_all_clear()
+	_build_damage_vignette()
+	_build_hitmarker()
 
 	_msg_label = Label.new()
 	_msg_label.add_theme_font_size_override("font_size", 18)
@@ -142,6 +152,45 @@ func _build_all_clear() -> void:
 	_all_clear_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_all_clear_panel.add_child(_all_clear_label)
 
+# Full-screen red edge vignette that flashes when the player is hit.
+func _build_damage_vignette() -> void:
+	var grad := Gradient.new()
+	grad.set_offset(0, 0.55)
+	grad.set_offset(1, 1.0)
+	grad.set_color(0, Color(0.7, 0.0, 0.0, 0.0))
+	grad.set_color(1, Color(0.7, 0.0, 0.0, 1.0))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 256
+
+	_dmg_vignette = TextureRect.new()
+	_dmg_vignette.texture = tex
+	_dmg_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_dmg_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_dmg_vignette.stretch_mode = TextureRect.STRETCH_SCALE
+	_dmg_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dmg_vignette.modulate.a = 0.0
+	add_child(_dmg_vignette)
+
+# Brief hitmarker shown when a shot connects with a zombie.
+func _build_hitmarker() -> void:
+	_hitmarker = Label.new()
+	_hitmarker.text = "X"
+	_hitmarker.add_theme_font_size_override("font_size", 24)
+	_hitmarker.add_theme_color_override("font_color", Color(1, 1, 1))
+	_hitmarker.add_theme_color_override("font_outline_color", Color.BLACK)
+	_hitmarker.add_theme_constant_override("outline_size", 4)
+	_hitmarker.set_anchors_preset(Control.PRESET_CENTER)
+	_hitmarker.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hitmarker.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_hitmarker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hitmarker.visible = false
+	add_child(_hitmarker)
+
 func _mk(parent: Node) -> Label:
 	var l := Label.new()
 	l.add_theme_font_size_override("font_size", 16)
@@ -159,6 +208,8 @@ func bind_player(player) -> void:
 	player.state_changed.connect(_on_state_changed)
 	player.suppressor_changed.connect(_on_suppressor_changed)
 	player.message.connect(show_message)
+	player.damaged.connect(flash_damage)
+	player.zombie_hit.connect(show_hitmarker)
 	# The player's _ready() emitted its initial values before we connected,
 	# so pull the current state once to seed the labels.
 	_on_ammo_changed(player.ammo, player.reserve)
@@ -171,6 +222,13 @@ func _process(delta: float) -> void:
 		_msg_timer -= delta
 		if _msg_timer <= 0.0:
 			_msg_label.text = ""
+	if _dmg_flash > 0.0:
+		_dmg_flash -= delta
+		_dmg_vignette.modulate.a = maxf(0.0, _dmg_flash / DMG_FLASH_TIME) * DMG_MAX_ALPHA
+	if _hitmarker_timer > 0.0:
+		_hitmarker_timer -= delta
+		if _hitmarker_timer <= 0.0:
+			_hitmarker.visible = false
 
 func _on_time_updated(time_left: float, phase: int) -> void:
 	var t: int = maxi(0, int(ceil(time_left)))
@@ -207,6 +265,15 @@ func show_prompt(text: String) -> void:
 
 func hide_prompt() -> void:
 	_prompt_label.visible = false
+
+# --- Combat feedback --------------------------------------------------------
+func flash_damage() -> void:
+	_dmg_flash = DMG_FLASH_TIME
+	_dmg_vignette.modulate.a = DMG_MAX_ALPHA
+
+func show_hitmarker() -> void:
+	_hitmarker.visible = true
+	_hitmarker_timer = HITMARKER_TIME
 
 # --- Nightly wave -----------------------------------------------------------
 func set_wave_status(_night: int, spawned: int, total: int, alive: int) -> void:

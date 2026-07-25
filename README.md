@@ -27,6 +27,7 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | Right click | Toggle ADS (red laser) — pinpoint accurate |
 | `R` | Reload |
 | `E` | Interact — open/close the supply crate when in range (Day only) |
+| `G` | Toggle NVGs (green night-vision tint + brightness) |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
 
@@ -49,6 +50,12 @@ is scattered within a spread cone (`HIP_FIRE_SPREAD_RADIUS` in `Player.gd`) — 
 tracer shows where it actually went. Aim down sights (right click) to get the
 red laser dot and pinpoint-accurate shots.
 
+**Feedback / juice:** first-person weapon viewmodel with recoil kick, muzzle
+flash + light, camera recoil/shake, tracers, a hitmarker + impact sound when a
+shot connects, a red damage vignette + screen shake + grunt when you're hit, and
+a zombie hit-flash + death growl. Sound effects are small procedurally-generated
+WAVs in `audio/` (loaded at runtime, so a missing one just means silence).
+
 ## Project structure
 
 ```
@@ -70,6 +77,8 @@ scripts/
   SuppressorResource.gd# attachment resource
 resources/
   Suppressor.tres      # the suppressor attachment asset
+audio/
+  gunshot.wav player_hurt.wav impact.wav zombie_death.wav  # procedural SFX
 ```
 
 ## Noise model (from the spec)

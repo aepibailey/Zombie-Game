@@ -19,6 +19,9 @@ const SPAWN_INTERVAL_MAX := 9.0
 const KEY_SKIP_TO_DAY := KEY_Y
 const KEY_FINISH_NIGHT := KEY_N
 
+# Night-vision toggle (v1: always-on, no battery — PROJECT_SPEC.md "NVGs").
+const KEY_NVG_TOGGLE := KEY_G
+
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
 var _sun: DirectionalLight3D
@@ -29,6 +32,8 @@ var _zombies: Array = []
 var _hud: HUD
 var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
+var _nvg_on := false
+var _nvg_overlay: CanvasLayer
 
 # --- Nightly wave state ---------------------------------------------------
 var _wave_total := 0            # zombies to spawn this night
@@ -89,6 +94,12 @@ func _apply_lighting(is_day: bool) -> void:
 		_sky_mat.sky_top_color = Color(0.02, 0.03, 0.08)
 		_sky_mat.sky_horizon_color = Color(0.05, 0.06, 0.12)
 		_sky_mat.ground_bottom_color = Color(0.02, 0.02, 0.03)
+
+	# Night-vision brightens the scene with a green cast on top of the base pass.
+	if _nvg_on:
+		_sun.light_energy = maxf(_sun.light_energy, 0.9)
+		_sun.light_color = Color(0.55, 1.0, 0.55)
+		_env.ambient_light_energy = maxf(_env.ambient_light_energy, 0.9)
 
 # --- World geometry -------------------------------------------------------
 func _build_world() -> void:
@@ -202,6 +213,8 @@ func _build_crate(pos: Vector3) -> void:
 
 # --- UI -------------------------------------------------------------------
 func _build_ui() -> void:
+	_build_nvg_overlay()
+
 	_hud = HUD.new()
 	add_child(_hud)
 	_hud.bind_player(player)
@@ -212,6 +225,24 @@ func _build_ui() -> void:
 	if _pending_crate_zone:
 		_pending_crate_zone.crate_ui = _crate_ui
 		_pending_crate_zone.hud = _hud
+
+func _build_nvg_overlay() -> void:
+	# Green tint sits under the HUD (layer 5) so HUD text stays readable.
+	_nvg_overlay = CanvasLayer.new()
+	_nvg_overlay.layer = 5
+	_nvg_overlay.visible = false
+	add_child(_nvg_overlay)
+	var rect := ColorRect.new()
+	rect.color = Color(0.2, 0.85, 0.3, 0.16)
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_nvg_overlay.add_child(rect)
+
+func _toggle_nvg() -> void:
+	_nvg_on = not _nvg_on
+	_nvg_overlay.visible = _nvg_on
+	_apply_lighting(GameManager.is_day())
+	_hud.show_message("NVGs " + ("ON" if _nvg_on else "OFF"))
 
 # --- Phase handling -------------------------------------------------------
 func _on_phase_changed(phase: int) -> void:
@@ -292,11 +323,14 @@ func _check_all_clear() -> void:
 func _update_wave_hud() -> void:
 	_hud.set_wave_status(GameManager.night_number, _wave_spawned, _wave_total, _wave_alive)
 
-# --- All-clear prompt input ----------------------------------------------
+# --- Global key input (NVG toggle + all-clear prompt) --------------------
 func _unhandled_input(event: InputEvent) -> void:
-	if not _hud or not _hud.all_clear_visible():
+	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
+	if event.keycode == KEY_NVG_TOGGLE:
+		_toggle_nvg()
+		return
+	if _hud and _hud.all_clear_visible():
 		if event.keycode == KEY_SKIP_TO_DAY:
 			_hud.hide_all_clear()
 			GameManager.force_phase(GameManager.Phase.DAY)
