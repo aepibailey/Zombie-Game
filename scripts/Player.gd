@@ -1,12 +1,13 @@
 extends CharacterBody3D
 ## First-person operator controller: movement/noise states, ADS red laser, and
-## the M17 pistol (fire / reload / headshot detection). See PROJECT_SPEC.md
-## "Movement & Noise", "Combat & Scoring" and "V1 Thin-Slice Scope".
+## data-driven weapons (fire / reload / headshot detection, switching). See
+## PROJECT_SPEC.md "Movement & Noise", "Combat & Scoring" and "Weapons".
 
 signal ammo_changed(loaded: int, reserve: int)
 signal health_changed(hp: int, max_hp: int)
 signal state_changed(state_name: String)
 signal suppressor_changed(has_suppressor: bool)
+signal weapon_changed(display_name: String, fire_mode: String)
 signal message(text: String)
 signal damaged                       ## player took a hit (HUD flash / shake)
 signal zombie_hit                    ## a shot connected with a zombie (hitmarker)
@@ -42,23 +43,14 @@ const WOODS_INNER_RADIUS := 22.0        # beyond this from map centre = woods
 const LASER_REVEAL_RANGE := 10.0
 const LASER_MAX_DRAW := 100.0
 
-# --- Weapon (M17) tuning --------------------------------------------------
-const MAG_SIZE := 17
-const STARTING_RESERVE := 85            # ~5 spare mags
-const FIRE_INTERVAL := 0.15             # semi-auto cadence cap
-const RELOAD_TIME := 1.6
-const BODY_DAMAGE := 34                 # 3 body shots kill a 100hp zombie
-const HEADSHOT_MULT := 2                # -> 2 headshots kill (spec 2x)
+# --- Weapon tuning (per-weapon stats live in WeaponData / Arsenal) --------
 const HEAD_LOCAL_Y := 1.45              # hit height (feet-relative) = headshot
-const SHOT_NOISE_UNSUPPRESSED := 40.0
+const STARTING_WEAPON := "m17"
 const MAX_HP := 100
-const WEAPON_RANGE := 150.0             # max shot distance
 
-# Hip-fire accuracy penalty. On each unaimed shot we pick a random point inside
-# a screen-space circle of this pixel radius (centered on screen-centre) and
-# fire toward it instead of dead-centre. Bigger = looser. Tune by playtest.
-# (ADS ignores this entirely and fires pinpoint down the laser.)
-const HIP_FIRE_SPREAD_RADIUS := 80.0    # pixels
+# Hip-fire accuracy penalty: each unaimed shot is aimed at a random point in a
+# screen-space circle (per-weapon `hip_spread_radius`) instead of dead-centre.
+# ADS ignores this and fires pinpoint down the laser.
 
 # Tracer (only visual feedback for hip-fire, since there's no reticle).
 const TRACER_WIDTH := 0.03
@@ -70,7 +62,6 @@ const HURT_SHAKE := 0.55             # trauma added when hit
 const SHAKE_DECAY := 1.6             # trauma bled off per second
 const MAX_SHAKE_ROT := 0.06          # radians at full trauma
 const MAX_SHAKE_POS := 0.05          # metres at full trauma
-const RECOIL_PER_SHOT := 0.03        # radians of upward camera kick
 const MAX_RECOIL := 0.12
 const RECOIL_RECOVER := 12.0
 const MUZZLE_FLASH_TIME := 0.05
@@ -97,11 +88,20 @@ var mouse_captured := true
 var ads_active := false
 
 var hp := MAX_HP
-var ammo := MAG_SIZE
-var reserve := STARTING_RESERVE
+
+# Weapon state. `ammo`/`reserve` mirror the CURRENT weapon; per-weapon values
+# are stashed in the dictionaries so switching preserves each gun's ammo.
+var weapon: WeaponData
+var current_weapon_id := STARTING_WEAPON
+var owned: Array[String] = [STARTING_WEAPON]
+var ammo := 0
+var reserve := 0
 var reloading := false
 var fire_cooldown := 0.0
-var suppressor: SuppressorResource = null
+var _auto_selected := false           # for BOTH-mode weapons: is auto selected?
+var _mag: Dictionary = {}             # weapon id -> loaded rounds
+var _reserve: Dictionary = {}         # weapon id -> reserve rounds
+var _suppressed: Dictionary = {}      # weapon id -> bool
 
 var _footstep_timer := 0.0
 var _branch_timer := 1.0
@@ -132,10 +132,16 @@ func _ready() -> void:
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
 	_build_viewmodel()
 	_build_audio()
+
+	# Starting loadout: M17 only (operator-stranded premise).
+	var w := Arsenal.get_weapon(STARTING_WEAPON)
+	_mag[STARTING_WEAPON] = w.mag_size
+	_reserve[STARTING_WEAPON] = w.spare_ammo
+	_suppressed[STARTING_WEAPON] = false
+	_equip(STARTING_WEAPON)
+
 	# Prime the HUD.
-	ammo_changed.emit(ammo, reserve)
 	health_changed.emit(hp, MAX_HP)
-	suppressor_changed.emit(false)
 	state_changed.emit("WALK")
 
 func _physics_process(delta: float) -> void:
@@ -152,6 +158,9 @@ func _physics_process(delta: float) -> void:
 		_handle_noise(delta)
 		if ads_active:
 			_handle_laser_reveal()
+		# Full-auto: keep firing while the trigger is held (rate-limited in _fire).
+		if _wants_auto_fire() and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_fire()
 	else:
 		velocity.x = 0.0
 		velocity.z = 0.0
@@ -248,7 +257,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not (mouse_captured and control_enabled):
 			return
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			_fire()
+			if not _wants_auto_fire():   # semi: one shot per click (auto is in _physics_process)
+				_fire()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_toggle_ads()
 	elif event is InputEventKey and event.pressed and not event.echo:
@@ -260,6 +270,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_R:
 				if control_enabled:
 					_reload()
+			KEY_B:
+				if control_enabled:
+					_toggle_fire_mode()
+			KEY_1:
+				_try_equip_slot(0)
+			KEY_2:
+				_try_equip_slot(1)
+			KEY_3:
+				_try_equip_slot(2)
+			KEY_4:
+				_try_equip_slot(3)
 			KEY_ESCAPE:
 				# When the crate shop owns the mouse, let it handle Esc instead.
 				if control_enabled:
@@ -279,40 +300,49 @@ func _fire() -> void:
 		return
 
 	ammo -= 1
-	fire_cooldown = FIRE_INTERVAL
+	fire_cooldown = weapon.fire_interval
 	ammo_changed.emit(ammo, reserve)
 
 	# Fire feedback: muzzle flash, recoil kick, a touch of shake, and the report.
 	_muzzle_flash.visible = true
 	_muzzle_timer = MUZZLE_FLASH_TIME
-	_recoil = minf(MAX_RECOIL, _recoil + RECOIL_PER_SHOT)
+	_recoil = minf(MAX_RECOIL, _recoil + weapon.recoil_per_shot)
 	_vm_recoil = VM_RECOIL_KICK
 	add_shake(FIRE_SHAKE)
 	if _sfx_fire.stream:
 		_sfx_fire.play()
 
-	var noise_radius := suppressor.shot_noise_radius if suppressor else SHOT_NOISE_UNSUPPRESSED
+	var suppressed: bool = _suppressed.get(current_weapon_id, false)
+	var noise_radius := weapon.noise_suppressed if suppressed else weapon.noise_unsuppressed
 	NoiseManager.emit_noise(global_position, noise_radius)
 
-	# Aim point: ADS is pinpoint (screen-centre, down the laser); hip-fire draws
-	# a random point inside a screen-space spread circle for an accuracy penalty.
+	# Aim base: ADS is pinpoint (screen-centre); hip-fire scatters within the
+	# weapon's screen-space spread circle.
 	var screen_centre := get_viewport().get_visible_rect().size * 0.5
 	var screen_point := screen_centre
 	if not ads_active:
 		var ang := randf() * TAU
-		var rad := sqrt(randf()) * HIP_FIRE_SPREAD_RADIUS   # sqrt = uniform in disk
+		var rad := sqrt(randf()) * weapon.hip_spread_radius   # sqrt = uniform in disk
 		screen_point += Vector2(cos(ang), sin(ang)) * rad
 
 	var from := camera.project_ray_origin(screen_point)
-	var dir := camera.project_ray_normal(screen_point)
-	var to := from + dir * WEAPON_RANGE
+	var base_dir := camera.project_ray_normal(screen_point)
 
+	# Shotguns fire multiple pellets, each jittered inside a cone.
+	for i in weapon.pellets:
+		var dir := base_dir
+		if weapon.pellet_spread_deg > 0.0:
+			dir = _jitter_dir(base_dir, weapon.pellet_spread_deg)
+		_fire_ray(from, dir)
+
+# Traces one round/pellet, applies damage, and draws a tracer.
+func _fire_ray(from: Vector3, dir: Vector3) -> void:
+	var to := from + dir * weapon.max_range
 	var space := get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(from, to)
 	q.exclude = [self]
 	var hit := space.intersect_ray(q)
 
-	# Impact/damage logic is unchanged — only the ray direction above differs.
 	var impact := to
 	if hit:
 		impact = hit.position
@@ -321,25 +351,104 @@ func _fire() -> void:
 			var local_y: float = hit.position.y - col.global_position.y
 			var headshot: bool = local_y >= HEAD_LOCAL_Y
 			if col.has_method("take_damage"):
-				col.take_damage(BODY_DAMAGE, headshot)
+				col.take_damage(weapon.body_damage, headshot)
 			zombie_hit.emit()       # hitmarker
 			if _sfx_impact.stream:
 				_sfx_impact.play()
 
 	_spawn_tracer(_muzzle_position(), impact)
 
+# Random direction within a cone of the given half-angle (degrees).
+func _jitter_dir(dir: Vector3, spread_deg: float) -> Vector3:
+	var a := deg_to_rad(spread_deg)
+	var up_ref := Vector3.UP
+	if absf(dir.dot(Vector3.UP)) > 0.99:
+		up_ref = Vector3.RIGHT
+	var right := dir.cross(up_ref).normalized()
+	var up := right.cross(dir).normalized()
+	return dir.rotated(up, randf_range(-a, a)).rotated(right, randf_range(-a, a)).normalized()
+
 func _reload() -> void:
-	if reloading or ammo >= MAG_SIZE or reserve <= 0:
+	if reloading or ammo >= weapon.mag_size or reserve <= 0:
 		return
 	reloading = true
+	var id := current_weapon_id
 	message.emit("Reloading…")
-	await get_tree().create_timer(RELOAD_TIME).timeout
-	var needed := MAG_SIZE - ammo
+	await get_tree().create_timer(weapon.reload_time).timeout
+	if not reloading or current_weapon_id != id:
+		return   # cancelled by a weapon switch mid-reload
+	var needed := weapon.mag_size - ammo
 	var take: int = mini(needed, reserve)
 	ammo += take
 	reserve -= take
 	reloading = false
 	ammo_changed.emit(ammo, reserve)
+
+# --- Weapon inventory -----------------------------------------------------
+func _equip(id: String) -> void:
+	if weapon and id == current_weapon_id:
+		return
+	# Stash the outgoing weapon's ammo before swapping.
+	if weapon:
+		_mag[current_weapon_id] = ammo
+		_reserve[current_weapon_id] = reserve
+	current_weapon_id = id
+	weapon = Arsenal.get_weapon(id)
+	ammo = _mag.get(id, weapon.mag_size)
+	reserve = _reserve.get(id, weapon.spare_ammo)
+	reloading = false
+	fire_cooldown = 0.0
+	_auto_selected = weapon.fire_mode == WeaponData.FireMode.AUTO
+	ammo_changed.emit(ammo, reserve)
+	suppressor_changed.emit(has_suppressor())
+	weapon_changed.emit(weapon.display_name, _fire_mode_label())
+
+func acquire_weapon(id: String) -> void:
+	if id in owned:
+		return
+	var w := Arsenal.get_weapon(id)
+	if w == null:
+		return
+	owned.append(id)
+	_mag[id] = w.mag_size
+	_reserve[id] = w.spare_ammo
+	_suppressed[id] = false
+	_equip(id)
+
+func _try_equip_slot(index: int) -> void:
+	if not control_enabled or index >= Arsenal.order.size():
+		return
+	var id: String = Arsenal.order[index]
+	if id in owned:
+		_equip(id)
+	elif Arsenal.get_weapon(id):
+		message.emit("%s — not owned (buy it at the crate)." % Arsenal.get_weapon(id).display_name)
+
+func _toggle_fire_mode() -> void:
+	if weapon.fire_mode != WeaponData.FireMode.BOTH:
+		return
+	_auto_selected = not _auto_selected
+	weapon_changed.emit(weapon.display_name, _fire_mode_label())
+	message.emit("Fire mode: %s" % _fire_mode_label())
+
+func _wants_auto_fire() -> bool:
+	if weapon == null:
+		return false
+	if weapon.fire_mode == WeaponData.FireMode.AUTO:
+		return true
+	return weapon.fire_mode == WeaponData.FireMode.BOTH and _auto_selected
+
+func _fire_mode_label() -> String:
+	match weapon.fire_mode:
+		WeaponData.FireMode.AUTO:
+			return "AUTO"
+		WeaponData.FireMode.BOTH:
+			return "AUTO" if _auto_selected else "SEMI"
+		_:
+			return "SEMI"
+
+func owned_weapons() -> Array:
+	return owned
 
 func _update_laser_dot() -> void:
 	if not ads_active:
@@ -500,21 +609,25 @@ func take_damage(amount: int) -> void:
 func _respawn() -> void:
 	message.emit("You died — respawning at base.")
 	hp = MAX_HP
-	ammo = MAG_SIZE
-	reserve = STARTING_RESERVE
+	# Top the current weapon back up (owned weapons and attachments are kept).
+	ammo = weapon.mag_size
+	reserve = weapon.spare_ammo
 	global_position = _spawn_point
 	velocity = Vector3.ZERO
 	health_changed.emit(hp, MAX_HP)
 	ammo_changed.emit(ammo, reserve)
 
 # --- Attachment pipeline --------------------------------------------------
-func attach_suppressor(res: SuppressorResource) -> void:
-	suppressor = res
+## Suppressor is fitted to the CURRENTLY equipped weapon (proves per-weapon
+## attachments). `_res` is accepted for compatibility with the crate shop.
+func attach_suppressor(_res = null) -> void:
+	_suppressed[current_weapon_id] = true
 	suppressor_changed.emit(true)
-	message.emit("Suppressor attached — gunshots now %dm." % int(res.shot_noise_radius))
+	message.emit("Suppressor fitted to %s — now %dm." % [
+		weapon.display_name, int(weapon.noise_suppressed)])
 
 func has_suppressor() -> bool:
-	return suppressor != null
+	return _suppressed.get(current_weapon_id, false)
 
 # --- Helpers --------------------------------------------------------------
 func set_control_enabled(enabled: bool) -> void:

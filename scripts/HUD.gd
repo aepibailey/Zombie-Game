@@ -23,6 +23,9 @@ var _hitmarker: Label
 var _msg_timer := 0.0
 var _dmg_flash := 0.0
 var _hitmarker_timer := 0.0
+var _wpn_name := ""
+var _wpn_mode := ""
+var _wpn_suppressed := false
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
@@ -207,6 +210,7 @@ func bind_player(player) -> void:
 	player.health_changed.connect(_on_health_changed)
 	player.state_changed.connect(_on_state_changed)
 	player.suppressor_changed.connect(_on_suppressor_changed)
+	player.weapon_changed.connect(_on_weapon_changed)
 	player.message.connect(show_message)
 	player.damaged.connect(flash_damage)
 	player.zombie_hit.connect(show_hitmarker)
@@ -215,6 +219,7 @@ func bind_player(player) -> void:
 	_on_ammo_changed(player.ammo, player.reserve)
 	_on_health_changed(player.hp, player.MAX_HP)
 	_on_state_changed(player._state_label())
+	_on_weapon_changed(player.weapon.display_name, player._fire_mode_label())
 	_on_suppressor_changed(player.has_suppressor())
 
 func _process(delta: float) -> void:
@@ -252,8 +257,18 @@ func _on_ammo_changed(loaded: int, reserve: int) -> void:
 func _on_state_changed(state_name: String) -> void:
 	_state_label.text = "Move: %s" % state_name
 
+func _on_weapon_changed(display_name: String, fire_mode: String) -> void:
+	_wpn_name = display_name
+	_wpn_mode = fire_mode
+	_compose_weapon_label()
+
 func _on_suppressor_changed(has_supp: bool) -> void:
-	_supp_label.text = "Weapon: M17" + ("  [Suppressed 8m]" if has_supp else "  [Unsupp. 40m]")
+	_wpn_suppressed = has_supp
+	_compose_weapon_label()
+
+func _compose_weapon_label() -> void:
+	var supp := "  • Suppressed" if _wpn_suppressed else ""
+	_supp_label.text = "%s  [%s]%s" % [_wpn_name, _wpn_mode, supp]
 
 func show_message(text: String) -> void:
 	_msg_label.text = text

@@ -1,35 +1,36 @@
 extends CanvasLayer
 class_name SupplyCrateUI
-## Minimal supply-crate shop (Day-only). Shows current points and a single
-## purchase: the M17 suppressor. Buying it attaches a SuppressorResource to the
-## player, proving the attachment pipeline end-to-end (PROJECT_SPEC.md acceptance).
+## Supply-crate shop (Day-only). Buy weapons from the arsenal and fit a
+## suppressor to the currently-equipped weapon. Buttons are built once and just
+## re-labelled/enabled in _refresh, so a purchase never frees a live button.
+## See PROJECT_SPEC.md "Weapons" / "Attachments" / "Economy".
 
 const SUPPRESSOR_COST := 3
 
 var _player = null  # untyped: the player exposes a custom API off CharacterBody3D
-var _panel: PanelContainer
 var _points_label: Label
 var _status_label: Label
-var _buy_button: Button
+var _supp_button: Button
+var _weapon_buttons: Dictionary = {}   # weapon id -> Button
 
 func _ready() -> void:
 	layer = 20
 	visible = false
 
-	_panel = PanelContainer.new()
-	_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_panel.custom_minimum_size = Vector2(360, 220)
-	add_child(_panel)
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.custom_minimum_size = Vector2(440, 340)
+	add_child(panel)
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 20)
-	_panel.add_child(margin)
+	panel.add_child(margin)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 12)
+	vb.add_theme_constant_override("separation", 8)
 	margin.add_child(vb)
 
 	var title := Label.new()
@@ -42,10 +43,16 @@ func _ready() -> void:
 	_points_label.add_theme_font_size_override("font_size", 18)
 	vb.add_child(_points_label)
 
-	_buy_button = Button.new()
-	_buy_button.text = "Buy Suppressor — %d pts" % SUPPRESSOR_COST
-	_buy_button.pressed.connect(_on_buy_pressed)
-	vb.add_child(_buy_button)
+	# One button per weapon in the roster (buy / owned / equipped).
+	for id in Arsenal.order:
+		var btn := Button.new()
+		btn.pressed.connect(_on_buy_weapon.bind(id))
+		_weapon_buttons[id] = btn
+		vb.add_child(btn)
+
+	_supp_button = Button.new()
+	_supp_button.pressed.connect(_on_buy_suppressor)
+	vb.add_child(_supp_button)
 
 	_status_label = Label.new()
 	_status_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
@@ -84,22 +91,48 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _refresh() -> void:
 	_points_label.text = "Points available: %d" % PointsManager.points
-	var owned: bool = _player != null and _player.has_suppressor()
-	if owned:
-		_buy_button.disabled = true
-		_buy_button.text = "Suppressor — OWNED"
-	else:
-		_buy_button.disabled = PointsManager.points < SUPPRESSOR_COST
-		_buy_button.text = "Buy Suppressor — %d pts" % SUPPRESSOR_COST
+	if _player == null:
+		return
+	var owned = _player.owned_weapons()
 
-func _on_buy_pressed() -> void:
+	for i in Arsenal.order.size():
+		var id: String = Arsenal.order[i]
+		var w = Arsenal.get_weapon(id)
+		var btn: Button = _weapon_buttons[id]
+		if id in owned:
+			btn.disabled = true
+			if id == _player.current_weapon_id:
+				btn.text = "%s — EQUIPPED" % w.display_name
+			else:
+				btn.text = "%s — owned (press %d)" % [w.display_name, i + 1]
+		else:
+			btn.disabled = PointsManager.points < w.cost
+			btn.text = "Buy %s — %d pts" % [w.display_name, w.cost]
+
+	if _player.has_suppressor():
+		_supp_button.disabled = true
+		_supp_button.text = "%s — suppressed" % _player.weapon.display_name
+	else:
+		_supp_button.disabled = PointsManager.points < SUPPRESSOR_COST
+		_supp_button.text = "Suppress %s — %d pts" % [_player.weapon.display_name, SUPPRESSOR_COST]
+
+func _on_buy_weapon(id: String) -> void:
+	if _player == null or id in _player.owned_weapons():
+		return
+	var w = Arsenal.get_weapon(id)
+	if PointsManager.spend_points(w.cost):
+		_player.acquire_weapon(id)
+		_status_label.text = "%s acquired & equipped." % w.display_name
+	else:
+		_status_label.text = "Not enough points."
+	_refresh()
+
+func _on_buy_suppressor() -> void:
 	if _player == null or _player.has_suppressor():
 		return
 	if PointsManager.spend_points(SUPPRESSOR_COST):
-		# Load the resource asset and hand a fresh copy to the weapon.
-		var res = load("res://resources/Suppressor.tres").duplicate()
-		_player.attach_suppressor(res)
-		_status_label.text = "Purchased! Next shot is quiet (8m)."
+		_player.attach_suppressor()
+		_status_label.text = "Suppressor fitted to %s." % _player.weapon.display_name
 	else:
 		_status_label.text = "Not enough points."
 	_refresh()

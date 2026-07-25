@@ -23,9 +23,11 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | Mouse | Look |
 | `Shift` (hold) | Sprint |
 | `C` | Toggle crouch (silent movement) |
-| Left click | Fire M17 (semi-auto) — inaccurate from the hip |
+| Left click | Fire (semi = click, auto = hold) — inaccurate from the hip |
 | Right click | Toggle ADS (red laser) — pinpoint accurate |
 | `R` | Reload |
+| `1` – `4` | Switch weapon (M17 / HK416 / SPAS-12 / M249, if owned) |
+| `B` | Toggle fire mode (HK416: semi ↔ auto) |
 | `E` | Interact — open/close the supply crate when in range (Day only) |
 | `G` | Toggle NVGs (green night-vision tint + brightness) |
 | `Esc` | Free / recapture mouse (and close the crate) |
@@ -36,7 +38,21 @@ Settings, not hardcoded.
 
 The HUD shows a top-center day/night clock with a **"Night N"** counter and the
 live **wave count** (hostiles alive · spawned/total) beneath it, plus points,
-HP, ammo, movement state, and whether the suppressor is fitted (top-left).
+HP, ammo, movement state, and the current weapon + fire mode + suppressor state
+(top-left).
+
+**Weapons** are data-driven (`WeaponData` defined in the `Arsenal` autoload).
+You start with the M17; buy the rest at the crate and switch with `1`–`4`:
+
+| Weapon | Type | Mag | Fire | Cost |
+|---|---|---|---|---|
+| Sig Sauer M17 | Pistol | 17 | Semi | starter |
+| HK 416 | AR | 30 | Semi/Auto (`B`) | 15 |
+| SPAS-12 | Shotgun (8 pellets) | 8 | Semi | 20 |
+| M249 SAW | LMG | 100 | Auto | 30 |
+
+Ammo, suppressor state, and reloads are tracked **per weapon**. The suppressor
+fits the currently-equipped gun (per-weapon attachment).
 
 **Nights** spawn a fixed pool of zombies (`GameManager.NIGHT_ZOMBIE_COUNT`, 5
 for now) that trickle in over the night. Any zombies left alive at dawn go
@@ -59,7 +75,7 @@ WAVs in `audio/` (loaded at runtime, so a missing one just means silence).
 ## Project structure
 
 ```
-project.godot          # config + autoloads (NoiseManager, PointsManager, GameManager)
+project.godot          # config + autoloads (NoiseManager, PointsManager, GameManager, Arsenal)
 scenes/
   Main.tscn            # world bootstrap (map/nav/lighting built in code)
   Player.tscn          # CharacterBody3D + Camera3D + rays + laser dot
@@ -67,12 +83,14 @@ scenes/
 scripts/
   NoiseManager.gd      # global noise event bus: noise_emitted(pos, radius)
   PointsManager.gd     # points economy
-  GameManager.gd       # day/night cycle + phase_changed signal
-  Player.gd            # movement/noise states, ADS laser, M17 combat
+  GameManager.gd       # day/night cycle + night counter + phase_changed
+  Arsenal.gd           # weapon registry autoload (builds WeaponData defs)
+  WeaponData.gd        # per-weapon data resource (mag/fire mode/damage/noise…)
+  Player.gd            # movement/noise states, ADS laser, data-driven weapons
   Zombie.gd            # Wander/Investigate/Chase/Attack state machine
-  Main.gd              # builds map, bakes navmesh, spawns zombies per phase
+  Main.gd              # builds map, bakes navmesh, runs nightly waves
   SupplyCrateZone.gd   # Day-only crate trigger volume (press E in range)
-  SupplyCrateUI.gd     # minimal supply-crate shop (buy suppressor)
+  SupplyCrateUI.gd     # crate shop: buy weapons + suppressor
   HUD.gd               # in-code HUD
   SuppressorResource.gd# attachment resource
 resources/
@@ -115,9 +133,11 @@ exact position.
 6. **Nightly wave + all-clear** — watch the wave counter as zombies trickle in.
    Kill all 5 and an "AREA CLEAR" prompt appears: press `Y` to skip to Day or
    `N` to keep playing the night out. The "Night N" counter bumps each night.
-7. **Buy the suppressor** — during Day, walk up to the supply crate (wooden box,
-   center-ish). A "Press E to open the supply crate" prompt appears; press `E`
-   to open (it won't auto-open), buy the suppressor for 3 pts, and confirm the
-   next shot's noise radius drops (HUD shows `[Suppressed 8m]` and zombie
-   reaction shrinks). Press `E` again, `Esc`, the Close button, or walk away to
-   shut it.
+7. **Crate shop (weapons + suppressor)** — during Day, walk up to the supply
+   crate (wooden box, center-ish). A "Press E to open the supply crate" prompt
+   appears; press `E` to open (it won't auto-open). Buy a weapon (it equips
+   automatically) and switch owned guns with `1`–`4`; fit the suppressor to the
+   equipped gun for 3 pts and confirm the next shot's noise radius drops. Press
+   `E` again, `Esc`, the Close button, or walk away to shut it.
+8. **Fire modes** — the HK 416 toggles semi/auto with `B`; the M249 is full-auto
+   (hold to fire); the SPAS-12 throws a pellet spread. Ammo is tracked per gun.
