@@ -19,9 +19,16 @@ A lone Tier 1 operator holds a patrol base in the woods after everyone else is g
 Escalation is live (formerly a v2 item). Tunables are `@export` vars on the **Main** node.
 - **Spawn count per night:** `spawn_count = base_spawn + spawn_per_night * (night_number - 1)` → `base_spawn = 6`, `spawn_per_night = 3` (Night 1 = 6, Night 2 = 9, Night 3 = 12, …).
 - **Concurrent cap:** never more than `max_concurrent = 20` zombies alive at once; remaining spawns queue and trickle in as others die.
-- Zombies still trickle in over the night (`FIRST_SPAWN_DELAY`, `SPAWN_INTERVAL_MIN/MAX` in `Main.gd`); the whole allotment never appears at once.
+- Zombies trickle in; the whole allotment never appears at once. The spawn interval **scales with pool size** so bigger nights still deliver: the pool is spread over `spawn_window_frac = 0.75` of the night, clamped to `spawn_interval_min = 0.6s` … `spawn_interval_max = 9.0s`, with `spawn_jitter = ±35%` per spawn.
 - Survivors left alive at dawn carry over and are folded into the next night's total.
-- A debug line prints at each night start: night number, total to spawn, cap, and zombie HP.
+- A debug line prints at each night start: night number, total to spawn, cap, zombie HP, and the computed spawn interval.
+
+### Zombie health scaling (implemented)
+Zombies gain health every other night — negligible early, compounding later. Tunables are `@export` vars on **Main**.
+- `zombie_hp = zombie_base_hp + hp_per_step * floor((night_number - 1) / nights_per_step)`
+- Defaults: `zombie_base_hp = 100`, `hp_per_step = 8`, `nights_per_step = 2`.
+- Nights 1–2 = **100**, nights 3–4 = **108**, nights 5–6 = **116**, … no cap.
+- On every zombie death a debug line logs night number, that zombie's max HP, and shots-to-kill split by headshot/body — used to find the shots-to-kill breakpoints when tuning the step size.
 
 ## Movement & Noise
 Noise is a radius-based broadcast — any zombie within radius of a noise event becomes **alerted to that location** (not necessarily to the player, just "something happened here") and moves to investigate.
@@ -47,7 +54,7 @@ State machine:
 4. **Attack** — melee range, deals damage on contact, repeats until player dies or breaks line of sight/distance.
 
 ## Combat & Scoring
-- Zombie HP: **100** (baseline, single type for v1)
+- Zombie HP: **100** baseline, scaled per night — see "Zombie health scaling" above
 - Headshots deal **2x damage**
 - Body-shot kill: **1 point**
 - Headshot kill: **3 points** (not additive — headshot kill always awards 3 total)

@@ -15,10 +15,20 @@ const TREE_COUNT := 44
 @export var spawn_per_night: int = 3
 @export var max_concurrent: int = 20     # hard cap on zombies alive at once
 
-# Wave pacing — zombies trickle in rather than all at once.
+# Wave pacing — zombies trickle in rather than all at once. The interval scales
+# with pool size so bigger nights still deliver their allotment: the pool is
+# spread across `spawn_window_frac` of the night, clamped and jittered.
 const FIRST_SPAWN_DELAY := 1.5
-const SPAWN_INTERVAL_MIN := 4.0
-const SPAWN_INTERVAL_MAX := 9.0
+@export var spawn_window_frac: float = 0.75   # fraction of the night to spawn over
+@export var spawn_interval_min: float = 0.6   # floor, so huge nights stay sane
+@export var spawn_interval_max: float = 9.0   # ceiling, so tiny nights still trickle
+@export var spawn_jitter: float = 0.35        # ±35% randomisation per spawn
+
+# --- Zombie health scaling (tunable) --------------------------------------
+#   zombie_hp = zombie_base_hp + hp_per_step * floor((night_number - 1) / nights_per_step)
+@export var zombie_base_hp: int = 100
+@export var hp_per_step: int = 8
+@export var nights_per_step: int = 2
 
 # All-clear prompt keybinds (shown on the prompt).
 const KEY_SKIP_TO_DAY := KEY_Y
@@ -45,6 +55,7 @@ var _wave_total := 0            # zombies to spawn this night
 var _wave_spawned := 0          # how many have spawned so far
 var _wave_alive := 0            # how many are currently alive
 var _spawn_timer := 0.0         # countdown to the next trickle spawn
+var _spawn_interval := 4.0      # this night's base interval (scaled to pool size)
 var _all_clear_shown := false   # prompt fires once per all-clear event
 
 @onready var player: Node3D = $Player
@@ -272,10 +283,11 @@ func _begin_night() -> void:
 	_wave_spawned = carryover
 	_wave_alive = carryover
 	_spawn_timer = FIRST_SPAWN_DELAY
+	_spawn_interval = _compute_spawn_interval(new_pool)
 	_all_clear_shown = false
-	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d" % [
+	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
 		GameManager.night_number, _wave_total, new_pool, carryover,
-		max_concurrent, _zombie_hp_for_night()])
+		max_concurrent, _zombie_hp_for_night(), _spawn_interval])
 	_update_wave_hud()
 	if carryover > 0:
 		_hud.show_message("NIGHT %d — %d inbound (+%d survivors carried over)." % [
@@ -303,17 +315,29 @@ func _process(delta: float) -> void:
 		_spawn_zombie()
 		_wave_spawned += 1
 		_wave_alive += 1
-		_spawn_timer = randf_range(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
+		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
 
-## Per-night zombie max HP. Section 2 (health scaling) replaces the body of this.
+## Spread this night's pool across most of the night so bigger waves still
+## arrive, instead of a fixed interval that runs out of night on late waves.
+func _compute_spawn_interval(pool: int) -> float:
+	if pool <= 0:
+		return spawn_interval_max
+	var window: float = GameManager.NIGHT_LENGTH * spawn_window_frac
+	return clampf(window / float(pool), spawn_interval_min, spawn_interval_max)
+
+## Per-night zombie max HP: negligible early, compounding later.
+##   100 / 100 / 108 / 108 / 116 / 116 ...
 func _zombie_hp_for_night() -> int:
-	return 100
+	var steps: int = int(floor(float(GameManager.night_number - 1) / float(maxi(1, nights_per_step))))
+	return zombie_base_hp + hp_per_step * maxi(0, steps)
 
 func _spawn_zombie() -> void:
 	var angle := randf() * TAU
 	var r := randf_range(TREE_RING_MIN - 2.0, TREE_RING_MAX)
 	var z = zombie_scene.instantiate()  # untyped for the zombie's custom API
+	# Set max_hp BEFORE add_child so the zombie's _ready() seeds hp from it.
+	z.max_hp = _zombie_hp_for_night()
 	add_child(z)
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
 	z.died.connect(_on_zombie_died)

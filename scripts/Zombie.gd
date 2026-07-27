@@ -9,7 +9,7 @@ const SFX_DEATH := "res://audio/zombie_death.wav"
 enum State { WANDER, INVESTIGATE, CHASE, ATTACK }
 
 # --- Tuning ---------------------------------------------------------------
-const MAX_HP := 100
+const BASE_HP := 100                # night-scaled by the spawner via `max_hp`
 const HEADSHOT_MULT := 2            # PROJECT_SPEC.md "Combat & Scoring"
 const WANDER_SPEED := 1.6
 const CHASE_SPEED := 3.6
@@ -21,10 +21,16 @@ const INVESTIGATE_TIMEOUT := 10.0  # give up on a noise after ~10s
 const WANDER_RADIUS := 26.0        # roam within the map bounds
 const REPATH_INTERVAL := 0.3
 
-var hp := MAX_HP
+## Set by the spawner BEFORE add_child(); _ready() seeds `hp` from it.
+var max_hp := BASE_HP
+var hp := BASE_HP
 var state: int = State.WANDER
 var active := false                # only true at night (spec: dormant by day)
 var last_hit_headshot := false
+
+# Shots-to-kill telemetry (logged on death to tune the HP step).
+var _hits_head := 0
+var _hits_body := 0
 
 var _investigate_timer := 0.0
 var _attack_timer := 0.0
@@ -40,6 +46,7 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 
 func _ready() -> void:
 	add_to_group("zombies")
+	hp = max_hp   # spawner set max_hp for this night's scaling
 	agent.path_desired_distance = 0.6
 	agent.target_desired_distance = 0.8
 	agent.radius = 0.5
@@ -239,6 +246,10 @@ func take_damage(amount: int, headshot: bool) -> void:
 	var dmg := amount * (HEADSHOT_MULT if headshot else 1)
 	hp -= dmg
 	last_hit_headshot = headshot
+	if headshot:
+		_hits_head += 1
+	else:
+		_hits_body += 1
 	_flash_white()
 	# Being shot is a confirmed contact — start chasing the shooter.
 	if active and not GameManager.is_day():
@@ -254,6 +265,10 @@ func _flash_white() -> void:
 func _die() -> void:
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
+	# Shots-to-kill telemetry for tuning the HP step size.
+	print("[Night %d] zombie down — maxHP %d, shots: %d head + %d body = %d total (killing blow: %s)" % [
+		GameManager.night_number, max_hp, _hits_head, _hits_body,
+		_hits_head + _hits_body, "HEAD" if last_hit_headshot else "BODY"])
 	_play_death_sound()
 	died.emit()   # let the wave tracker decrement the live count
 	queue_free()
