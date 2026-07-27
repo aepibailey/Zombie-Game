@@ -229,7 +229,24 @@ The Day gate is removed — the crate works in **both phases**.
 - `Esc` exits, restores the first-person camera, and resumes the timer. Re-enterable freely during a Day.
 - Tunables on the BuildMode node: `default_zoom`, `min_zoom`, `max_zoom`, `zoom_step`, `pan_speed`, `camera_height`, `pan_limit`.
 
-*Still to come: obstacle palette, ghost placement and validation, navmesh strategy, the four obstacle types, new zombie states, and pricing.*
+**Ghost placement (implemented):**
+- Left-side palette lists all four obstacles with cost; unaffordable entries show their price in red. Click to select, click again to deselect. Points and a `Placed: n / 30` counter are visible at all times.
+- A semi-transparent ghost follows the cursor, positioned by projecting a ray from the camera through the cursor onto the ground plane.
+- **Rotation:** wheel steps 15° (`rotation_step_deg`); **Shift+wheel** free-rotates in 2° increments. Rotation **persists between placements** so parallel runs are quick to lay. `[` / `]` always zoom, so rotating never costs camera control.
+- **Validity:** the ghost is green when legal, red when not, with a reason line on screen (`Overlaps another obstacle`, `Outside the map`, `Ground too steep`, `Not enough points`, `Obstacle limit reached`).
+- **Placement commits on left click, and points are deducted only then.** An invalid click does nothing and plays the denial tone.
+- **Rejection rules are only:** overlap (another obstacle, the crate, the engineers' tent, base structures, trees), out of bounds, ground too steep, the 30-obstacle cap, or insufficient points. Dormant zombies and the player are explicitly *not* obstructions.
+- **Sealing the perimeter is allowed.** A coarse 2m-grid flood-fill from the map edge to the base centre detects when the current ghost would close the last gap and shows `PERIMETER WILL BE SEALED` — **informational only, the placement still goes through.** The result is cached per ghost cell/rotation so the fill runs only when something changes.
+- Obstacles carry a dedicated **footprint `Area3D` on collision layer 4**, used purely for placement overlap. Keeping it separate from solid collision lets non-solid obstacles (wire, ditch, minefield) reject overlapping placements without physically blocking anything.
+
+| Obstacle | Footprint | Cost | Solid | Blocks pathing |
+|---|---|---|---|---|
+| Sandbags | 10 × 1 × 0.5m | 10 | yes | yes |
+| Triple-strand C-wire | 10 × 1.8 × 1m | 20 | no | no |
+| Zombie ditch | 10 × 2 × 1m | 35 | no | no |
+| Minefield | 10 × 5m | 50 | no | no |
+
+*Still to come: navmesh strategy, obstacle behaviour (destructible sandbags, entanglement, trapping, mines), the new zombie states, and repair/persistence.*
 
 ## Roadmap
 Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.

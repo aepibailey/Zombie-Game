@@ -19,6 +19,17 @@ signal closed
 ## How far the view may pan from map centre, so you can't lose the base.
 @export var pan_limit: float = 34.0
 
+# --- Placement ------------------------------------------------------------
+@export var rotation_step_deg: float = 15.0
+## Placement is rejected outside this half-extent (the map is 60x60).
+@export var map_half_extent: float = 29.0
+## Ground normals flatter than this are "too steep" to build on.
+@export var max_ground_slope_dot: float = 0.9
+@export var max_obstacles: int = 30
+
+const SFX_CONFIRM := "res://assets/audio/ui/ui_confirm.wav"
+const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
+
 var active := false
 
 var _cam: Camera3D
@@ -28,12 +39,43 @@ var _ui: CanvasLayer
 var _title: Label
 var _points_label: Label
 var _hint: Label
+var _reason_label: Label
+var _seal_label: Label
+var _count_label: Label
+var _palette: VBoxContainer
+var _palette_buttons: Dictionary = {}
+
+var _selected_id := ""
+var _ghost: Node3D
+var _ghost_mat: StandardMaterial3D
+var _ghost_yaw := 0.0            # persists between placements
+var _ghost_valid := false
+var _ghost_pos := Vector3.ZERO
+var _placed: Array = []
+var _obstacles_root: Node3D
+var _sfx_confirm: AudioStreamPlayer
+var _sfx_deny: AudioStreamPlayer
+var _seal_cache_key := ""
+var _seal_cached := false
 
 func _ready() -> void:
+	_obstacles_root = Node3D.new()
+	_obstacles_root.name = "Obstacles"
+	add_child(_obstacles_root)
 	_build_camera()
 	_build_ui()
+	_sfx_confirm = _mk_sfx(SFX_CONFIRM)
+	_sfx_deny = _mk_sfx(SFX_DENY)
 	set_process(false)
 	set_process_unhandled_input(false)
+
+func _mk_sfx(path: String) -> AudioStreamPlayer:
+	var p := AudioStreamPlayer.new()
+	if ResourceLoader.exists(path):
+		var res = load(path)
+		p.stream = res
+	add_child(p)
+	return p
 
 func setup(player: Player, hud: HUD) -> void:
 	_player = player
@@ -84,10 +126,70 @@ func _build_ui() -> void:
 	_points_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	row.add_child(_points_label)
 
+	_count_label = Label.new()
+	_count_label.add_theme_font_size_override("font_size", 14)
+	_count_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+	row.add_child(_count_label)
+
+	# Palette down the left side.
+	var pal_panel := PanelContainer.new()
+	pal_panel.position = Vector2(16, 64)
+	var psb := StyleBoxFlat.new()
+	psb.bg_color = Color(0.05, 0.06, 0.05, 0.85)
+	psb.set_corner_radius_all(6)
+	for side in ["left", "right", "top", "bottom"]:
+		psb.set("content_margin_" + side, 12)
+	pal_panel.add_theme_stylebox_override("panel", psb)
+	_ui.add_child(pal_panel)
+
+	_palette = VBoxContainer.new()
+	_palette.add_theme_constant_override("separation", 6)
+	pal_panel.add_child(_palette)
+
+	var pal_title := Label.new()
+	pal_title.text = "OBSTACLES"
+	pal_title.add_theme_font_size_override("font_size", 14)
+	_palette.add_child(pal_title)
+
+	for id in ObstacleCatalog.ORDER:
+		var t = ObstacleCatalog.get_type(id)
+		var btn := Button.new()
+		btn.toggle_mode = true
+		btn.custom_minimum_size = Vector2(300, 0)
+		btn.tooltip_text = t.description
+		btn.pressed.connect(_select.bind(id))
+		_palette_buttons[id] = btn
+		_palette.add_child(btn)
+
+	# Reason line sits just under the cursor area, centred.
+	_reason_label = Label.new()
+	_reason_label.add_theme_font_size_override("font_size", 16)
+	_reason_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_reason_label.add_theme_constant_override("outline_size", 4)
+	_reason_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_reason_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reason_label.position.y = -76
+	_reason_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui.add_child(_reason_label)
+
+	# Informational only — sealing the perimeter is allowed.
+	_seal_label = Label.new()
+	_seal_label.text = "PERIMETER WILL BE SEALED"
+	_seal_label.add_theme_font_size_override("font_size", 16)
+	_seal_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.3))
+	_seal_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_seal_label.add_theme_constant_override("outline_size", 4)
+	_seal_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_seal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_seal_label.position.y = -100
+	_seal_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_seal_label.visible = false
+	_ui.add_child(_seal_label)
+
 	_hint = Label.new()
 	_hint.add_theme_font_size_override("font_size", 13)
 	_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
-	_hint.text = "WASD: pan     Wheel or [ ]: zoom     Esc: leave"
+	_hint.text = "WASD: pan   Wheel: rotate 15°   Shift+Wheel: free   [ ]: zoom   LMB: place   Esc: leave"
 	_hint.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.position.y = -28
@@ -119,6 +221,8 @@ func close() -> void:
 	if not active:
 		return
 	active = false
+	_selected_id = ""
+	_clear_ghost()
 	GameManager.set_paused(false)
 	_cam.current = false
 	if _player:
@@ -135,6 +239,244 @@ func is_open() -> bool:
 
 func _refresh() -> void:
 	_points_label.text = "Points: %d" % PointsManager.points
+	_count_label.text = "Placed: %d / %d" % [_placed.size(), max_obstacles]
+	for id in ObstacleCatalog.ORDER:
+		var t = ObstacleCatalog.get_type(id)
+		var btn: Button = _palette_buttons[id]
+		btn.button_pressed = (id == _selected_id)
+		var afford: bool = PointsManager.points >= t.cost
+		btn.text = "%s — %d pts" % [t.display_name, t.cost]
+		btn.add_theme_color_override("font_color",
+			Color(1, 1, 1) if afford else Color(1.0, 0.45, 0.4))
+
+# --- Selection & ghost ----------------------------------------------------
+func _select(id: String) -> void:
+	if _selected_id == id:
+		_selected_id = ""      # click again to deselect
+		_clear_ghost()
+	else:
+		_selected_id = id
+		_build_ghost(id)
+	_refresh()
+
+func _clear_ghost() -> void:
+	if _ghost and is_instance_valid(_ghost):
+		_ghost.queue_free()
+	_ghost = null
+	_reason_label.text = ""
+	_seal_label.visible = false
+
+func _build_ghost(id: String) -> void:
+	_clear_ghost()
+	var t = ObstacleCatalog.get_type(id)
+	if t == null:
+		return
+	_ghost = Node3D.new()
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = t.size
+	mesh.mesh = box
+	_ghost_mat = StandardMaterial3D.new()
+	_ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_ghost_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_ghost_mat.albedo_color = Color(0.2, 1.0, 0.3, 0.45)
+	mesh.material_override = _ghost_mat
+	# Ditch ghost sits below ground like the real thing.
+	mesh.position.y = -t.size.y * 0.5 if id == "ditch" else t.size.y * 0.5
+	_ghost.add_child(mesh)
+	_obstacles_root.add_child(_ghost)
+
+func _update_ghost() -> void:
+	if _ghost == null or _selected_id == "":
+		return
+	var t = ObstacleCatalog.get_type(_selected_id)
+	_ghost_pos = cursor_ground_point()
+	_ghost.global_position = _ghost_pos
+	_ghost.rotation.y = _ghost_yaw
+
+	var result := _validate(t, _ghost_pos, _ghost_yaw)
+	_ghost_valid = result["valid"]
+	_ghost_mat.albedo_color = Color(0.2, 1.0, 0.3, 0.45) if _ghost_valid \
+		else Color(1.0, 0.2, 0.15, 0.5)
+	_reason_label.text = result["reason"]
+	_reason_label.add_theme_color_override("font_color",
+		Color(0.6, 1.0, 0.6) if _ghost_valid else Color(1.0, 0.5, 0.45))
+
+	# Seal notice is informational only and never blocks placement.
+	if _ghost_valid and t.blocks_pathing:
+		_seal_label.visible = _would_seal(t, _ghost_pos, _ghost_yaw)
+	else:
+		_seal_label.visible = false
+
+# --- Validation -----------------------------------------------------------
+## Placement is rejected ONLY for overlap, out-of-bounds, steep ground, the
+## obstacle cap, or affordability. Sealing the base is explicitly allowed.
+func _validate(t, pos: Vector3, yaw: float) -> Dictionary:
+	if _placed.size() >= max_obstacles:
+		return {"valid": false, "reason": "Obstacle limit reached (%d)" % max_obstacles}
+	if PointsManager.points < t.cost:
+		return {"valid": false, "reason": "Not enough points (%d needed)" % t.cost}
+
+	# Bounds: every corner must be on the map.
+	for c in Obstacle.corners_for(pos, yaw, t.size):
+		if absf(c.x) > map_half_extent or absf(c.z) > map_half_extent:
+			return {"valid": false, "reason": "Outside the map"}
+
+	# Ground must exist and be flat enough under each corner.
+	var space := get_world_3d().direct_space_state
+	for c in Obstacle.corners_for(pos, yaw, t.size):
+		var from := Vector3(c.x, 6.0, c.z)
+		var q := PhysicsRayQueryParameters3D.create(from, from + Vector3(0, -12.0, 0))
+		q.collision_mask = 1
+		var hit := space.intersect_ray(q)
+		if not hit:
+			return {"valid": false, "reason": "No ground here"}
+		var n: Vector3 = hit.normal
+		if n.dot(Vector3.UP) < max_ground_slope_dot:
+			return {"valid": false, "reason": "Ground too steep"}
+
+	# Overlap: world geometry (layer 1) and other obstacle footprints (layer 4).
+	# The test box is lifted clear of the ground plane so the ground itself
+	# never counts as an overlap.
+	var blocker := _overlap_blocker(space, t, pos, yaw)
+	if blocker != "":
+		return {"valid": false, "reason": "Overlaps %s" % blocker}
+
+	return {"valid": true, "reason": "%s — %d pts" % [t.display_name, t.cost]}
+
+## Returns a human-readable description of the first blocking collider, or "".
+func _overlap_blocker(space: PhysicsDirectSpaceState3D, t, pos: Vector3, yaw: float) -> String:
+	var size: Vector3 = t.size
+	var test_h: float = maxf(0.6, size.y)
+	var shape := BoxShape3D.new()
+	# Shrink slightly so obstacles can sit flush against each other.
+	shape.size = Vector3(size.x * 0.96, test_h * 0.9, size.z * 0.96)
+
+	var basis := Basis(Vector3.UP, yaw)
+	var centre := Vector3(pos.x, 0.12 + test_h * 0.45, pos.z)
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.transform = Transform3D(basis, centre)
+	# Layer 1 = world geometry, layer 2 = the crate/tent/drop triggers (so the
+	# rejection message can name them), layer 4 = other obstacle footprints.
+	params.collision_mask = 1 | 2 | Obstacle.FOOTPRINT_LAYER
+	params.collide_with_areas = true
+	params.collide_with_bodies = true
+	if _player:
+		params.exclude = [_player.get_rid()]
+
+	for hit in space.intersect_shape(params, 16):
+		var col = hit.collider
+		if col == null:
+			continue
+		# The player and dormant zombies are not obstructions.
+		if col.is_in_group("zombies") or col.is_in_group("player"):
+			continue
+		if col.is_in_group("zombie_heads"):
+			continue
+		if col.is_in_group("obstacle_footprints"):
+			return "another obstacle"
+		if col is EngineersTentZone:
+			return "the engineers' tent"
+		if col is SupplyCrateZone or col is SupplyDrop:
+			return "the supply crate"
+		return "existing structures"
+	return ""
+
+## Coarse flood-fill: can a zombie still reach the base centre from the map
+## edge if this obstacle is placed? Purely informational.
+func _would_seal(t, pos: Vector3, yaw: float) -> bool:
+	var key := "%d_%d_%d_%d" % [
+		int(pos.x), int(pos.z), int(rad_to_deg(yaw)), _placed.size()]
+	if key == _seal_cache_key:
+		return _seal_cached
+	_seal_cache_key = key
+
+	const CELL := 2.0
+	var half := int(map_half_extent / CELL)
+	var dim := half * 2 + 1
+
+	# Mark blocked cells from every pathing-blocking obstacle, plus the ghost.
+	var blocked := {}
+	var runs: Array = []
+	for o in _placed:
+		if is_instance_valid(o) and o.obstacle_type.blocks_pathing:
+			runs.append({"pos": o.global_position, "yaw": o.rotation.y, "size": o.obstacle_type.size})
+	runs.append({"pos": pos, "yaw": yaw, "size": t.size})
+
+	for r in runs:
+		var s: Vector3 = r["size"]
+		var steps: int = int(ceil(s.x / (CELL * 0.5)))
+		for i in range(steps + 1):
+			var along: float = -s.x * 0.5 + s.x * (float(i) / float(maxi(1, steps)))
+			var offset := Vector2(along, 0.0).rotated(r["yaw"] as float)
+			var wx: float = (r["pos"] as Vector3).x + offset.x
+			var wz: float = (r["pos"] as Vector3).z + offset.y
+			var gx := int(round(wx / CELL)) + half
+			var gz := int(round(wz / CELL)) + half
+			blocked[gx * dim + gz] = true
+
+	# Flood from the map border inward.
+	var seen := {}
+	var queue: Array = []
+	for i in range(dim):
+		for cell in [i * dim + 0, i * dim + (dim - 1), 0 * dim + i, (dim - 1) * dim + i]:
+			if not blocked.has(cell) and not seen.has(cell):
+				seen[cell] = true
+				queue.append(cell)
+
+	var centre_cell := half * dim + half
+	while queue.size() > 0:
+		var c: int = queue.pop_back()
+		if c == centre_cell:
+			_seal_cached = false      # base still reachable
+			return false
+		var cx := c / dim
+		var cz := c % dim
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx := cx + d.x
+			var nz := cz + d.y
+			if nx < 0 or nz < 0 or nx >= dim or nz >= dim:
+				continue
+			var n := nx * dim + nz
+			if blocked.has(n) or seen.has(n):
+				continue
+			seen[n] = true
+			queue.append(n)
+
+	_seal_cached = true
+	return true
+
+# --- Placement ------------------------------------------------------------
+func _try_place() -> void:
+	if _selected_id == "" or _ghost == null:
+		return
+	var t = ObstacleCatalog.get_type(_selected_id)
+	var result := _validate(t, _ghost_pos, _ghost_yaw)
+	if not result["valid"]:
+		if _sfx_deny.stream:
+			_sfx_deny.play()
+		return
+	# Points are deducted ONLY here, on a committed placement.
+	if not PointsManager.spend_points(t.cost):
+		if _sfx_deny.stream:
+			_sfx_deny.play()
+		return
+
+	var o := Obstacle.new()
+	o.setup(t)
+	_obstacles_root.add_child(o)
+	o.global_position = _ghost_pos
+	o.rotation.y = _ghost_yaw
+	_placed.append(o)
+	if _sfx_confirm.stream:
+		_sfx_confirm.play()
+	_seal_cache_key = ""      # roster changed; recompute the seal test
+	_refresh()
+
+func placed_obstacles() -> Array:
+	return _placed
 
 # --- Camera control -------------------------------------------------------
 func _process(delta: float) -> void:
@@ -153,6 +495,7 @@ func _process(delta: float) -> void:
 		# Scale pan with zoom so it feels the same at any magnification.
 		var scale := _cam.size / default_zoom
 		_move_camera(pan.normalized() * pan_speed * scale * delta)
+	_update_ghost()
 
 ## Panning is keyboard-only. Middle-mouse drag was tried and removed: the
 ## build UI sits on a CanvasLayer above the viewport and swallowed the motion
@@ -184,16 +527,37 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if event is InputEventMouseButton:
-		# Wheel zooms while nothing is selected. Once the obstacle palette
-		# exists the wheel rotates the ghost instead, and [ ] remain for zoom.
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_zoom(-zoom_step)
+	if event is InputEventMouseButton and event.pressed:
+		# With an obstacle selected the wheel rotates it; otherwise it zooms.
+		# [ ] always zoom, so rotation never costs you camera control.
+		var rotating: bool = _selected_id != ""
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			if rotating:
+				_rotate_ghost(1, event.shift_pressed)
+			else:
+				_zoom(-zoom_step)
 			get_viewport().set_input_as_handled()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_zoom(zoom_step)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if rotating:
+				_rotate_ghost(-1, event.shift_pressed)
+			else:
+				_zoom(zoom_step)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			_try_place()
 			get_viewport().set_input_as_handled()
 	# Panning is WASD only — see the note on _move_camera.
+
+## Rotation persists between placements so parallel runs are quick to lay.
+func _rotate_ghost(dir: int, free: bool) -> void:
+	if free:
+		_ghost_yaw += dir * deg_to_rad(2.0)
+	else:
+		# Snap to the step grid, then advance one step.
+		var step := deg_to_rad(rotation_step_deg)
+		_ghost_yaw = (round(_ghost_yaw / step) + dir) * step
+	_ghost_yaw = wrapf(_ghost_yaw, 0.0, TAU)
+	_seal_cache_key = ""
 
 ## World point under the cursor on the ground plane (y = 0). Used by the ghost
 ## placement in the next section.
