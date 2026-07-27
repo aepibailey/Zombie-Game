@@ -225,7 +225,7 @@ The Day gate is removed — the crate works in **both phases**.
 - Opens with `E` during **Day**. At night it shows *"The engineers won't leave the tent after dark."* and does not open.
 - On entry the **day timer pauses** (`GameManager.set_paused`), the view lifts to a top-down camera, and the build UI opens. **The player body stays where it is** — only control is suspended.
 - The camera is **orthogonal**, not perspective: a build view wants consistent scale across the map, and zoom collapses to a single `size` value. Default `size = 72` frames the 60×60m map with margin.
-- **Pan** with WASD or middle-mouse drag (clamped to ±34m so the base can't be lost); **zoom** with the wheel or `[` / `]`, between 24 and 90.
+- **Pan** with WASD (clamped to ±34m so the base can't be lost); **zoom** with the wheel or `[` / `]`, between 24 and 90. Middle-mouse drag-pan was tried and removed — the build UI CanvasLayer swallowed the motion events, and the mouse is needed for ghost placement.
 - `Esc` exits, restores the first-person camera, and resumes the timer. Re-enterable freely during a Day.
 - Tunables on the BuildMode node: `default_zoom`, `min_zoom`, `max_zoom`, `zoom_step`, `pan_speed`, `camera_height`, `pan_limit`.
 

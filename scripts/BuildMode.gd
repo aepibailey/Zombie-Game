@@ -28,7 +28,6 @@ var _ui: CanvasLayer
 var _title: Label
 var _points_label: Label
 var _hint: Label
-var _dragging := false
 
 func _ready() -> void:
 	_build_camera()
@@ -88,7 +87,7 @@ func _build_ui() -> void:
 	_hint = Label.new()
 	_hint.add_theme_font_size_override("font_size", 13)
 	_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
-	_hint.text = "WASD / drag: pan     Wheel or [ ]: zoom     Esc: leave"
+	_hint.text = "WASD: pan     Wheel or [ ]: zoom     Esc: leave"
 	_hint.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.position.y = -28
@@ -155,6 +154,10 @@ func _process(delta: float) -> void:
 		var scale := _cam.size / default_zoom
 		_move_camera(pan.normalized() * pan_speed * scale * delta)
 
+## Panning is keyboard-only. Middle-mouse drag was tried and removed: the
+## build UI sits on a CanvasLayer above the viewport and swallowed the motion
+## events before _unhandled_input saw them, and the mouse is needed for ghost
+## placement anyway.
 func _move_camera(delta_pos: Vector3) -> void:
 	var p := _cam.position + delta_pos
 	p.x = clampf(p.x, -pan_limit, pan_limit)
@@ -190,13 +193,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			_zoom(zoom_step)
 			get_viewport().set_input_as_handled()
-		elif event.button_index == MOUSE_BUTTON_MIDDLE:
-			_dragging = event.pressed
-			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseMotion and _dragging:
-		# Drag-pan: 1 screen pixel -> world metres at the current zoom.
-		var per_px := _cam.size / maxf(1.0, float(get_viewport().get_visible_rect().size.y))
-		_move_camera(Vector3(-event.relative.x * per_px, 0, -event.relative.y * per_px))
+	# Panning is WASD only — see the note on _move_camera.
 
 ## World point under the cursor on the ground plane (y = 0). Used by the ghost
 ## placement in the next section.
