@@ -48,6 +48,16 @@ Noise is a radius-based broadcast — any zombie within radius of a noise event 
 | Branch snap (random event) | 20m, single burst | Random chance per second while moving through woods terrain, only while standing/sprinting |
 | Suppressed gunshot | 8m | |
 | Unsuppressed gunshot | 40m | |
+| Jump landing | 12m | `jump_noise_radius` |
+| Mantle completion | 10m | `mantle_noise_radius` |
+
+### Jump & mantle (implemented)
+- **Jump:** `Space`, height **0.9m** (`jump_height`). Blocked while crouched or mid-mantle.
+- **Mantle:** `Space` is a single contextual button — with **forward held** and a mantleable ledge in front it mantles, otherwise it jumps. Chosen over a dedicated key (one more thing to remember mid-fight) and over auto-mantle-on-collision (fires accidentally whenever you jump beside cover).
+- **Detection** is a three-stage probe: forward ray at chest height (1.0m) to find a roughly vertical face → downward ray past its top edge to find a standable ledge → capsule sweep confirming the player fits at the destination.
+- **Max height 2.0m** (`mantle_max_height`) — deliberately equal to the planned ditch depth, so climbing out is possible but effortful. Minimum 0.35m.
+- **Duration scales with height:** ~0.4s at 1m, ~0.9s at 2m. A locked interpolation — no gravity, no steering, and firing/ADS are blocked throughout.
+- **Zombies cannot jump or mantle.** They have no such capability and none was added.
 
 **Laser visibility (separate from noise):**
 - Red laser (default, when ADS): any zombie within **10m** with line of sight instantly knows your exact position, regardless of noise state.

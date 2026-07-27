@@ -30,6 +30,7 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | `B` | Toggle fire mode (HK416: semi ↔ auto) |
 | `E` | Interact — open/close the supply crate when in range (any phase) |
 | `H` | Apply IFAK (4s, cancels on sprint/fire) |
+| `Space` | Jump (0.9m) — or mantle a ledge when holding forward |
 | `G` | Toggle NVGs (green night-vision tint + brightness) |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |

@@ -234,7 +234,7 @@ func _has_los_to(player: Node3D) -> bool:
 	var from := global_position + Vector3(0, 1.4, 0)
 	var to := player.global_position + Vector3(0, 1.2, 0)
 	var q := PhysicsRayQueryParameters3D.create(from, to)
-	q.exclude = [self]
+	q.exclude = [get_rid()]
 	var hit := space.intersect_ray(q)
 	return hit and hit.collider == player
 

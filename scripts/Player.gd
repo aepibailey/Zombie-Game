@@ -33,6 +33,20 @@ const MOVE_NOISE := {
 	MoveState.WALK: 5.0,
 	MoveState.SPRINT: 15.0,
 }
+# --- Jump & mantle ---------------------------------------------------------
+@export var jump_height: float = 0.9
+## Noise made on landing a jump and on completing a mantle (PROJECT_SPEC.md
+## noise table). Neither may be silent or stealth breaks.
+@export var jump_noise_radius: float = 12.0
+@export var mantle_noise_radius: float = 10.0
+## Ledges up to this high can be mantled. 2.0 is deliberate: it's exactly the
+## depth of the zombie ditch, so climbing out is possible but effortful.
+@export var mantle_max_height: float = 2.0
+@export var mantle_reach: float = 0.9        # forward probe distance
+const MANTLE_CHEST_Y := 1.0                  # forward probe height
+const MANTLE_LEDGE_STEP := 0.45              # how far past the face to probe down
+const MANTLE_MIN_HEIGHT := 0.35
+
 const FOOTSTEP_INTERVAL := 0.45
 const MOUSE_SENSITIVITY := 0.0025
 const STAND_HEAD_Y := 1.6
@@ -166,6 +180,14 @@ var _footstep_timer := 0.0
 var _branch_timer := 1.0
 var _spawn_point := Vector3.ZERO
 
+# Jump / mantle state.
+var _jumping := false          # airborne because we jumped (drives landing noise)
+var _mantling := false
+var _mantle_t := 0.0
+var _mantle_dur := 0.5
+var _mantle_from := Vector3.ZERO
+var _mantle_to := Vector3.ZERO
+
 # Feedback runtime state.
 var _shake_trauma := 0.0
 var _recoil := 0.0
@@ -229,11 +251,24 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	fire_cooldown = maxf(0.0, fire_cooldown - delta)
 
+	# A mantle is a locked interpolation: no gravity, no steering, no shooting.
+	if _mantling:
+		_update_mantle(delta)
+		var mantle_head_y := CROUCH_HEAD_Y if is_crouching else STAND_HEAD_Y
+		head.position.y = lerpf(head.position.y, mantle_head_y, delta * HEAD_LERP)
+		_update_feedback(delta)
+		_update_laser()
+		return
+
 	# Gravity always applies.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	elif velocity.y < 0.0:
 		velocity.y = 0.0
+		# Landing from a jump is loud.
+		if _jumping:
+			_jumping = false
+			NoiseManager.emit_noise(global_position, jump_noise_radius)
 
 	if control_enabled:
 		_handle_movement(delta)
@@ -329,7 +364,7 @@ func _handle_laser_reveal() -> void:
 		# Line of sight: nothing solid between the operator's eye and the target.
 		var to: Vector3 = z.global_position + Vector3(0, 1.0, 0)
 		var q := PhysicsRayQueryParameters3D.create(from, to)
-		q.exclude = [self]
+		q.exclude = [get_rid()]
 		var hit := space.intersect_ray(q)
 		if hit and hit.collider == z:
 			if z.has_method("reveal_player"):
@@ -364,6 +399,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_H:
 				if control_enabled:
 					_start_ifak()
+			KEY_SPACE:
+				_try_jump_or_mantle()
 			KEY_1:
 				_try_equip_slot(0)
 			KEY_2:
@@ -378,14 +415,16 @@ func _unhandled_input(event: InputEvent) -> void:
 					_set_mouse_captured(not mouse_captured)
 
 func _toggle_ads() -> void:
-	if _ifak_applying:
-		return   # can't aim while patching up
+	if _ifak_applying or _mantling:
+		return   # can't aim while patching up or climbing
 	ads_active = not ads_active
 	camera.fov = 55.0 if ads_active else 75.0
 	message.emit("ADS " + ("ON — red laser hot (10m tell)" if ads_active else "OFF"))
 
 # --- Weapon ---------------------------------------------------------------
 func _fire() -> void:
+	if _mantling:
+		return   # both hands on the ledge
 	# Firing cancels an in-progress IFAK (nothing consumed) and does not shoot
 	# on that input — the cancel IS the action.
 	if _ifak_applying:
@@ -469,7 +508,7 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 	var to := from + dir * weapon.max_range
 	var space := get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(from, to)
-	q.exclude = [self]
+	q.exclude = [get_rid()]
 	# World/bodies (layer 1) + zombie head hitboxes (layer 3). Areas are opted
 	# into so the head Area3D can be hit; other areas sit on other layers.
 	q.collision_mask = HIT_MASK
@@ -1154,6 +1193,119 @@ func has_suppressor() -> bool:
 
 func weapon_suppressed(weapon_id: String) -> bool:
 	return _suppressed.get(weapon_id, false)
+
+# --- Jump & mantle --------------------------------------------------------
+## Space is a single contextual button: if a mantleable ledge is in front of
+## you it mantles, otherwise it jumps. Chosen over a separate bind because a
+## dedicated mantle key is one more thing to remember mid-fight, and over
+## "auto-mantle on jump collision" because that fires accidentally every time
+## you jump beside cover.
+func _try_jump_or_mantle() -> void:
+	if _mantling or not control_enabled:
+		return
+	# A ledge in front wins over a plain jump, but only while holding forward
+	# into it — otherwise standing beside a wall would never let you jump.
+	if Input.is_physical_key_pressed(KEY_W):
+		var target := _find_mantle_target()
+		if not target.is_empty():
+			_begin_mantle(target)
+			return
+	if is_crouching:
+		message.emit("Can't jump while crouched.")
+		return
+	if not is_on_floor():
+		return
+	velocity.y = sqrt(2.0 * gravity * jump_height)   # v = sqrt(2gh)
+	_jumping = true
+
+## Three-stage probe: forward at chest height to find a face, down past its top
+## edge to find the ledge surface, then a capsule sweep to confirm we'd fit.
+func _find_mantle_target() -> Dictionary:
+	var space := get_world_3d().direct_space_state
+	var fwd := -global_transform.basis.z
+	var chest := global_position + Vector3(0, MANTLE_CHEST_Y, 0)
+
+	var q1 := PhysicsRayQueryParameters3D.create(chest, chest + fwd * mantle_reach)
+	q1.collision_mask = 1
+	q1.exclude = [get_rid()]
+	var face := space.intersect_ray(q1)
+	if not face:
+		return {}
+	# Must be a roughly vertical face, not a floor or ceiling.
+	var face_normal: Vector3 = face.normal
+	if absf(face_normal.dot(Vector3.UP)) > 0.4:
+		return {}
+
+	# Probe straight down from above, just past the face.
+	var face_pos: Vector3 = face.position
+	var probe: Vector3 = face_pos + fwd * MANTLE_LEDGE_STEP
+	probe.y = global_position.y + mantle_max_height + 0.35
+	var q2 := PhysicsRayQueryParameters3D.create(
+		probe, probe + Vector3(0, -(mantle_max_height + 0.7), 0))
+	q2.collision_mask = 1
+	q2.exclude = [get_rid()]
+	var ledge := space.intersect_ray(q2)
+	if not ledge:
+		return {}
+	# The top must be standable, not a slope.
+	var ledge_normal: Vector3 = ledge.normal
+	if ledge_normal.dot(Vector3.UP) < 0.7:
+		return {}
+
+	var ledge_pos: Vector3 = ledge.position
+	var dest: Vector3 = ledge_pos + Vector3(0, 0.05, 0)
+	var height: float = dest.y - global_position.y
+	if height < MANTLE_MIN_HEIGHT or height > mantle_max_height:
+		return {}
+	if _capsule_blocked(space, dest):
+		return {}
+	return {"dest": dest, "height": height}
+
+## Would the player capsule fit standing at `foot_pos`?
+func _capsule_blocked(space: PhysicsDirectSpaceState3D, foot_pos: Vector3) -> bool:
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.35          # slightly under the real 0.4 for tolerance
+	shape.height = 1.7
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.transform = Transform3D(Basis.IDENTITY, foot_pos + Vector3(0, 0.9, 0))
+	params.collision_mask = 1
+	params.exclude = [get_rid()]
+	return space.intersect_shape(params, 1).size() > 0
+
+func _begin_mantle(target: Dictionary) -> void:
+	_mantling = true
+	_jumping = false
+	_mantle_t = 0.0
+	_mantle_from = global_position
+	_mantle_to = target["dest"]
+	# Taller ledges take longer: ~0.4s at 1m, ~0.9s at 2m. A full-height
+	# mantle is meant to feel like a commitment.
+	var h: float = target["height"]
+	_mantle_dur = clampf(0.4 + (h - 1.0) * 0.5, 0.25, 1.2)
+	# Aiming is dropped for the duration; firing/ADS are blocked while mantling.
+	ads_active = false
+	camera.fov = 75.0
+	velocity = Vector3.ZERO
+
+## Locked interpolation — no steering, no gravity, no shooting.
+func _update_mantle(delta: float) -> void:
+	_mantle_t += delta
+	var t: float = clampf(_mantle_t / _mantle_dur, 0.0, 1.0)
+	var eased: float = t * t * (3.0 - 2.0 * t)      # smoothstep
+	var pos: Vector3 = _mantle_from.lerp(_mantle_to, eased)
+	# Rise faster than we move forward so we clear the lip rather than
+	# clipping through the face.
+	pos.y = lerpf(_mantle_from.y, _mantle_to.y, clampf(t * 1.5, 0.0, 1.0))
+	global_position = pos
+	velocity = Vector3.ZERO
+	if t >= 1.0:
+		_mantling = false
+		global_position = _mantle_to
+		NoiseManager.emit_noise(global_position, mantle_noise_radius)
+
+func is_mantling() -> bool:
+	return _mantling
 
 # --- IFAK -----------------------------------------------------------------
 func add_ifak(count: int = 1) -> bool:
