@@ -15,8 +15,8 @@ const MIN_PLAYER_DISTANCE := 2.0
 var contents: Dictionary = {"magazines": 1}
 
 var _player_inside := false
-var _player = null
-var _hud = null
+var _player: Player = null
+var _hud: HUD = null
 var _collected := false
 
 func _ready() -> void:
@@ -28,7 +28,7 @@ func _ready() -> void:
 	body_exited.connect(_on_body_exited)
 	_build_visuals()
 
-func setup(hud, contents_config: Dictionary = {}) -> void:
+func setup(hud: HUD, contents_config: Dictionary = {}) -> void:
 	_hud = hud
 	if not contents_config.is_empty():
 		contents = contents_config
@@ -124,7 +124,7 @@ func _build_visuals() -> void:
 func _on_body_entered(body: Node3D) -> void:
 	if body.is_in_group("player"):
 		_player_inside = true
-		_player = body
+		_player = body as Player
 
 func _on_body_exited(body: Node3D) -> void:
 	if body.is_in_group("player"):

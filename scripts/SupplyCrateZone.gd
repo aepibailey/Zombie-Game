@@ -9,7 +9,7 @@ var crate_ui: SupplyCrateUI = null
 var hud: HUD = null
 
 var _player_inside := false
-var _player = null  # untyped: player exposes a custom API off CharacterBody3D
+var _player: Player = null
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
@@ -39,7 +39,7 @@ func _on_body_entered(body: Node3D) -> void:
 	if not body.is_in_group("player"):
 		return
 	_player_inside = true
-	_player = body
+	_player = body as Player
 
 func _on_body_exited(body: Node3D) -> void:
 	if not body.is_in_group("player"):

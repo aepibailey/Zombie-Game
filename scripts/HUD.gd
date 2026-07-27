@@ -268,8 +268,7 @@ func _mk(parent: Node) -> Label:
 	return l
 
 ## Called by Main once the player exists so we can subscribe to its signals.
-## `player` is intentionally untyped so its custom signals/API resolve dynamically.
-func bind_player(player) -> void:
+func bind_player(player: Player) -> void:
 	player.ammo_changed.connect(_on_ammo_changed)
 	player.health_changed.connect(_on_health_changed)
 	player.state_changed.connect(_on_state_changed)

@@ -71,7 +71,7 @@ var _spawn_timer := 0.0         # countdown to the next trickle spawn
 var _spawn_interval := 4.0      # this night's base interval (scaled to pool size)
 var _all_clear_shown := false   # prompt fires once per all-clear event
 
-@onready var player: Node3D = $Player
+@onready var player: Player = $Player
 
 func _ready() -> void:
 	randomize()

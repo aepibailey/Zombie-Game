@@ -237,10 +237,11 @@ func _has_los_to(player: Node3D) -> bool:
 	var hit := space.intersect_ray(q)
 	return hit and hit.collider == player
 
-func _get_player():
-	# Untyped return so callers get dynamic access to the player's custom API.
+func _get_player() -> Player:
 	var players := get_tree().get_nodes_in_group("player")
-	return players[0] if players.size() > 0 else null
+	if players.is_empty():
+		return null
+	return players[0] as Player
 
 # --- External triggers ----------------------------------------------------
 ## Noise bus callback: alerts to a location, not to the player specifically.

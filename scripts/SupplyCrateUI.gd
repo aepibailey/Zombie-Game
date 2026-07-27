@@ -9,7 +9,7 @@ class_name SupplyCrateUI
 const SFX_CONFIRM := "res://assets/audio/ui/ui_confirm.wav"
 const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
 
-var _player = null  # untyped: the player exposes a custom API off CharacterBody3D
+var _player: Player = null
 var _points_label: Label
 var _hp_label: Label
 var _status_label: Label
@@ -134,7 +134,7 @@ func _cycle_tab(step: int) -> void:
 	_select_tab(_categories[wrapi(i + step, 0, _categories.size())])
 
 # --- Open / close ---------------------------------------------------------
-func open_crate(player) -> void:
+func open_crate(player: Player) -> void:
 	_player = player
 	if not player.died_while_busy.is_connected(_on_player_died):
 		player.died_while_busy.connect(_on_player_died)

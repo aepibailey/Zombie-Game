@@ -1,4 +1,5 @@
 extends CharacterBody3D
+class_name Player
 ## First-person operator controller: movement/noise states, ADS red laser, and
 ## data-driven weapons (fire / reload / headshot detection, switching). See
 ## PROJECT_SPEC.md "Movement & Noise", "Combat & Scoring" and "Weapons".
