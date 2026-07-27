@@ -57,3 +57,18 @@ func _add(d: Dictionary) -> void:
 
 func get_type(id: String) -> ObstacleType:
 	return types.get(id)
+
+## Builds the right Obstacle subclass for an id, already set up.
+func create(id: String) -> Obstacle:
+	var t := get_type(id)
+	if t == null:
+		return null
+	var o: Obstacle
+	match id:
+		"sandbags": o = SandbagSection.new()
+		"cwire": o = CWireSection.new()
+		"ditch": o = ZombieDitch.new()
+		"minefield": o = Minefield.new()
+		_: o = Obstacle.new()
+	o.setup(t)
+	return o

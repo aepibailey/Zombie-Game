@@ -26,6 +26,8 @@ signal closed
 ## Ground normals flatter than this are "too steep" to build on.
 @export var max_ground_slope_dot: float = 0.9
 @export var max_obstacles: int = 30
+## Partial refill of a spent minefield, cheaper than a fresh emplacement.
+const REPLENISH_COST := 20
 
 const SFX_CONFIRM := "res://assets/audio/ui/ui_confirm.wav"
 const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
@@ -197,7 +199,7 @@ func _build_ui() -> void:
 	_hint = Label.new()
 	_hint.add_theme_font_size_override("font_size", 13)
 	_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
-	_hint.text = "WASD: pan   Wheel: rotate 15°   Shift+Wheel: free   [ ]: zoom   LMB: place   Esc: leave"
+	_hint.text = "WASD pan   Wheel rotate 15°   Shift+Wheel free   [ ] zoom   LMB place   RMB repair/replenish   Esc leave"
 	_hint.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.position.y = -28
@@ -472,12 +474,16 @@ func _try_place() -> void:
 			_sfx_deny.play()
 		return
 
-	var o := Obstacle.new()
-	o.setup(t)
+	var o := ObstacleCatalog.create(_selected_id)
+	if o == null:
+		return
 	_obstacles_root.add_child(o)
 	o.global_position = _ghost_pos
 	o.rotation.y = _ghost_yaw
 	_placed.append(o)
+	# A destroyed section opens a gap: rebake so zombies path through it.
+	if o is SandbagSection:
+		o.destroyed_section.connect(_on_section_destroyed)
 	if _sfx_confirm.stream:
 		_sfx_confirm.play()
 	_seal_cache_key = ""      # roster changed; recompute the seal test
@@ -486,7 +492,13 @@ func _try_place() -> void:
 		_world.request_navmesh_rebake("placed %s" % t.id)
 	_refresh()
 
+func _on_section_destroyed(section) -> void:
+	_placed.erase(section)
+	if _world and _world.has_method("request_navmesh_rebake"):
+		_world.request_navmesh_rebake("sandbag breached")
+
 func placed_obstacles() -> Array:
+	_placed = _placed.filter(func(o): return is_instance_valid(o))
 	return _placed
 
 # --- Camera control -------------------------------------------------------
@@ -557,6 +569,60 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			_try_place()
 			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			# Right-click a damaged section to repair it, or a spent
+			# minefield to replenish it.
+			_try_service_under_cursor()
+			get_viewport().set_input_as_handled()
+
+## Repair / replenish whatever is under the cursor, priced by what's missing.
+func _try_service_under_cursor() -> void:
+	var p := cursor_ground_point()
+	var best = null
+	var best_d := 3.0
+	for o in placed_obstacles():
+		var d: float = Vector2(o.global_position.x - p.x, o.global_position.z - p.z).length()
+		if o is SandbagSection:
+			d = Vector2(o.nearest_point(p).x - p.x, o.nearest_point(p).z - p.z).length()
+		if d < best_d:
+			best_d = d
+			best = o
+	if best == null:
+		return
+
+	if best is SandbagSection:
+		if best.health_fraction() >= 0.999:
+			_reason_label.text = "That section is undamaged"
+			return
+		var cost: int = best.repair_cost(ObstacleCatalog.get_type("sandbags").cost)
+		if not PointsManager.spend_points(cost):
+			_fail("Repair needs %d pts" % cost)
+			return
+		best.repair()
+		_status("Section repaired — %d pts" % cost)
+	elif best is Minefield:
+		if best.mines_remaining >= best.mine_count:
+			_reason_label.text = "That field is fully stocked"
+			return
+		var cost2: int = REPLENISH_COST
+		if not PointsManager.spend_points(cost2):
+			_fail("Replenish needs %d pts" % cost2)
+			return
+		best.replenish()
+		_status("Minefield replenished — %d pts" % cost2)
+	_refresh()
+
+func _status(msg: String) -> void:
+	_reason_label.text = msg
+	_reason_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	if _sfx_confirm.stream:
+		_sfx_confirm.play()
+
+func _fail(msg: String) -> void:
+	_reason_label.text = msg
+	_reason_label.add_theme_color_override("font_color", Color(1.0, 0.5, 0.45))
+	if _sfx_deny.stream:
+		_sfx_deny.play()
 	# Panning is WASD only — see the note on _move_camera.
 
 ## Rotation persists between placements so parallel runs are quick to lay.

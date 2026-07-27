@@ -267,7 +267,41 @@ Configuration:
 
 **Also fixed here:** the supply crate and Engineers' Tent were parented to `Main` rather than the nav region, so they were never in the navmesh and zombies pathed straight through both. They're now nav-region children.
 
-*Still to come: obstacle behaviour (destructible sandbags, entanglement, trapping, mines), the new zombie states, and repair/persistence.*
+### The obstacles (implemented)
+
+**Sandbags — 10 pts, destructible.** 10 × 1 × 0.5m. Each section is independent; damage never spreads between sections, so a breach opens exactly one gap.
+- **4000 HP** (`max_health`). Zombies deal **15 damage per 1.2s** (`structure_damage` / `structure_attack_interval` on Zombie) — deliberately separate from the 20 damage they deal the player, so anti-structure and anti-player pacing tune independently.
+- That's **12.5 dps each**: one zombie needs ~320s (longer than a 120s night); eight need ~40s. Turtling is viable, but a mass will come through.
+- **Three visual damage states** at >66% / >33% / below — colour darkens and the wall visibly slumps. Not decoration: an enclosed player needs to see which section is about to fail.
+- **Spatialised impact audio** at the point being worked (not the section centre), rate-limited per section so eight attackers read as busier rather than as sixty overlapping samples.
+- Solid collision on layer 1, so it blocks zombies, blocks the player, **and stops bullets** — and at 1m it's well under the 2.0m mantle limit, so the player can climb it while zombies must go around or through. Zombies at the wall can still reach a player standing behind or on top of it.
+- **Repair** in build mode: right-click a damaged section. Cost is `full_cost × (missing HP / max HP)`. Destroyed sections are gone and must be rebought.
+
+**Triple-strand C-wire — 20 pts, permanent, indestructible.** 10 × 1.8 × 1m.
+- Holds **4** zombies (`capacity`) permanently as **Entangled** — alive, immobile, and still able to swing if the player comes within melee range. Don't hug your own wire.
+- Once full the section is trampled and further zombies push through at **40%** speed (`inside_speed_mult`), keeping a **permanent −15%** (`exit_speed_penalty`) on exit. The wire shreds them on the way past even when it can't hold them.
+- Killing an entangled zombie frees its slot. **No effect on the player.**
+
+**Zombie ditch — 35 pts, permanent, indestructible.** 10 × 2 deep × 1m.
+- Built as a **recessed visual plus a trigger volume** — no real geometry is cut. Runtime CSG subtraction isn't worth it for a box-shaped hole.
+- Traps **6** zombies (`capacity`) as **Trapped** — alive, milling at the bottom, unable to attack.
+- Once full, later zombies cross over the pile at **40%** speed while crossing, with **no lingering penalty** — they climbed over bodies, they weren't injured.
+- The player can fall in and mantle out. At 2m it sits **exactly at the mantle limit**, so it takes real effort.
+
+**Minefield — 50 pts, most expensive.** 10 × 5m, **20 mines** (~1 per 2.5 m²), boundary marked with emissive posts.
+- **Player-safe** — the engineers marked the field.
+- On detonation: **125** to the triggering zombie, **50** to everything within **10m**, and a **permanent −50%** to every survivor of either. **No chain detonation** — one mine per trigger event.
+- Mines are **consumed**. The emplacement is permanent, its ammunition isn't; right-click in build mode to replenish for **20 pts**.
+- Loud blast plus a **60m noise event** — the field announcing itself and pulling more zombies in is intended.
+- **Known property, deliberate:** 125 one-shots a baseline zombie, but zombie HP reaches 132 by night 9 under the current scaling curve, so **from night 9 the minefield wounds rather than kills.** Left as-is pending playtest.
+
+### Zombie states & speed modifiers (implemented)
+Added to Wander / Investigate / Chase / Attack:
+- **Entangled** — stationary, alive, attacks at melee range. Immune to noise and laser events.
+- **Trapped** — stationary in a ditch, alive, cannot attack. Immune to noise and laser events.
+- **AttackStructure** — entered from Chase when a navmesh path to the player stops short. Targets the nearest intact sandbag section, and **re-checks reachability every second**, abandoning the wall the moment a route opens elsewhere. Being shot no longer breaks a zombie out of Entangled/Trapped, since it has nowhere to go.
+
+Speed modifiers **stack multiplicatively** with a floor: permanent (mine survivor ×0.5, wire exit ×0.85) compound for life; temporary (inside wire ×0.4, crossing a full ditch ×0.4) apply only inside the volume. Total is clamped to **`min_speed_mult` = 0.30** — a mined-then-wired zombie never approaches zero and becomes a de-facto permanent obstacle.
 
 ## Roadmap
 Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.

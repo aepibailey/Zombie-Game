@@ -21,7 +21,12 @@ const FOOTSTEP_COUNT := 5
 @export var step_min_speed: float = 0.15   # below this the zombie is standing still
 @export var step_pitch_variance: float = 0.08   # +/- 8%
 
-enum State { WANDER, INVESTIGATE, CHASE, ATTACK }
+enum State {
+	WANDER, INVESTIGATE, CHASE, ATTACK,
+	ENTANGLED,          # held in C-wire: alive, immobile, can still swing
+	TRAPPED,            # in a ditch: alive, immobile, cannot attack
+	ATTACK_STRUCTURE,   # no path to the player — breaking through sandbags
+}
 
 # --- Tuning ---------------------------------------------------------------
 const BASE_HP := 100                # night-scaled by the spawner via `max_hp`
@@ -35,6 +40,22 @@ const ATTACK_INTERVAL := 1.0
 const INVESTIGATE_TIMEOUT := 10.0  # give up on a noise after ~10s
 const WANDER_RADIUS := 26.0        # roam within the map bounds
 const REPATH_INTERVAL := 0.3
+
+# --- Structure attack ------------------------------------------------------
+## Damage dealt to sandbags, deliberately separate from ATTACK_DAMAGE (20) so
+## anti-structure and anti-player pacing can be tuned independently.
+@export var structure_damage: int = 15
+@export var structure_attack_interval: float = 1.2
+const STRUCTURE_REACH := 2.2
+## How often to re-check whether a route to the player has opened up.
+const REPATH_CHECK_INTERVAL := 1.0
+
+# --- Speed modifiers -------------------------------------------------------
+## Permanent multipliers compound (mine survivor 0.5, wire exit 0.85);
+## temporary ones apply only while inside a volume (wire 0.4, full ditch 0.4).
+## Total reduction is capped so a mined-then-wired zombie never becomes a
+## de-facto stationary prop.
+@export var min_speed_mult: float = 0.30   # never slower than 30% of base
 
 ## Set by the spawner BEFORE add_child(); _ready() seeds `hp` from it.
 var max_hp := BASE_HP
@@ -61,6 +82,15 @@ var _last_noise_radius := 0.0                # radius of the noise being investi
 var _last_known_player: Vector3 = Vector3.ZERO
 var _hit_flash := 0.0                         # brief white flash timer when shot
 var _dead := false                            # set once, in _die()
+
+# Obstacle interaction state.
+var _perm_speed_mult := 1.0      # compounding permanent slows
+var _temp_speed_mult := 1.0      # while inside a slowing volume
+var _held_by = null              # the wire section holding us, if Entangled
+var _trapped_in = null           # the ditch holding us, if Trapped
+var _structure_target = null     # sandbag section being attacked
+var _structure_timer := 0.0
+var _repath_check := 0.0
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
@@ -126,6 +156,12 @@ func _physics_process(delta: float) -> void:
 			_do_chase(delta)
 		State.ATTACK:
 			_do_attack(delta)
+		State.ENTANGLED:
+			_do_entangled(delta)
+		State.TRAPPED:
+			_do_trapped(delta)
+		State.ATTACK_STRUCTURE:
+			_do_attack_structure(delta)
 
 	move_and_slide()
 	# After move_and_slide so cadence tracks ACTUAL movement — a zombie stuck
@@ -175,6 +211,13 @@ func _do_chase(delta: float) -> void:
 		_target_pos = _last_known_player
 		return
 
+	# Walled in? Break through instead of milling against the sandbags.
+	_repath_check -= delta
+	if _repath_check <= 0.0:
+		_repath_check = REPATH_CHECK_INTERVAL
+		if not _player_reachable() and _try_enter_attack_structure():
+			return
+
 	_move_toward(player.global_position, CHASE_SPEED, delta)
 
 func _do_attack(delta: float) -> void:
@@ -200,12 +243,128 @@ func _do_attack(delta: float) -> void:
 		if player.has_method("take_damage"):
 			player.take_damage(ATTACK_DAMAGE, global_position)
 
+# --- Obstacle states -------------------------------------------------------
+## Held in wire: immobile and permanent, but still dangerous at melee range.
+## Don't hug your own wire.
+func _do_entangled(delta: float) -> void:
+	velocity.x = 0.0
+	velocity.z = 0.0
+	var player = _get_player()
+	if player == null:
+		return
+	if global_position.distance_to(player.global_position) <= ATTACK_RANGE:
+		_face(player.global_position)
+		_attack_timer -= delta
+		if _attack_timer <= 0.0:
+			_attack_timer = ATTACK_INTERVAL
+			player.take_damage(ATTACK_DAMAGE, global_position)
+
+## Stuck at the bottom of a ditch: alive, milling, unable to reach anything.
+func _do_trapped(_delta: float) -> void:
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+## No route to the player, so break the wall instead. Re-evaluates pathing
+## periodically and abandons the wall the moment a gap opens elsewhere.
+func _do_attack_structure(delta: float) -> void:
+	if _structure_target == null or not is_instance_valid(_structure_target):
+		_structure_target = null
+		_enter_chase()
+		return
+
+	_repath_check -= delta
+	if _repath_check <= 0.0:
+		_repath_check = REPATH_CHECK_INTERVAL
+		if _player_reachable():
+			_structure_target = null
+			_enter_chase()
+			return
+
+	var point: Vector3 = _structure_target.nearest_point(global_position)
+	var dist := global_position.distance_to(point)
+	if dist > STRUCTURE_REACH:
+		_move_toward(point, CHASE_SPEED, delta)
+		return
+
+	velocity.x = 0.0
+	velocity.z = 0.0
+	_face(point)
+	_structure_timer -= delta
+	if _structure_timer <= 0.0:
+		_structure_timer = structure_attack_interval
+		_structure_target.take_structure_damage(structure_damage, global_position)
+
+## True when the nav agent can reach the player rather than stopping short.
+func _player_reachable() -> bool:
+	var player = _get_player()
+	if player == null:
+		return false
+	var target := NavigationServer3D.map_get_closest_point(
+		agent.get_navigation_map(), player.global_position)
+	var path := NavigationServer3D.map_get_path(
+		agent.get_navigation_map(), global_position, target, true)
+	if path.size() == 0:
+		return false
+	return path[path.size() - 1].distance_to(target) < 2.0
+
+## Called by Chase when the path stops short of the player: find a sandbag
+## section to break through.
+func _try_enter_attack_structure() -> bool:
+	var best = null
+	var best_d := INF
+	for s in get_tree().get_nodes_in_group("sandbags"):
+		if not is_instance_valid(s) or s.destroyed:
+			continue
+		var d: float = global_position.distance_to(s.nearest_point(global_position))
+		if d < best_d:
+			best_d = d
+			best = s
+	if best == null:
+		return false
+	_structure_target = best
+	_structure_timer = 0.0
+	_repath_check = REPATH_CHECK_INTERVAL
+	state = State.ATTACK_STRUCTURE
+	return true
+
+# --- Obstacle hooks (called by the obstacles) ------------------------------
+func enter_entangled(wire) -> void:
+	if state == State.ENTANGLED or _dead:
+		return
+	_held_by = wire
+	state = State.ENTANGLED
+	_attack_timer = ATTACK_INTERVAL
+
+func enter_trapped(ditch) -> void:
+	if state == State.TRAPPED or _dead:
+		return
+	_trapped_in = ditch
+	state = State.TRAPPED
+
+func is_immobilised() -> bool:
+	return state == State.ENTANGLED or state == State.TRAPPED
+
+## Compounding and permanent — a mine survivor stays slow for the rest of its life.
+func apply_permanent_slow(mult: float) -> void:
+	_perm_speed_mult *= clampf(mult, 0.05, 1.0)
+
+## Applies only while inside a volume; 1.0 clears it.
+func set_temp_slow(mult: float) -> void:
+	_temp_speed_mult = clampf(mult, 0.05, 1.0)
+
+## Combined multiplier, floored so stacked slows can't approach zero.
+func speed_mult() -> float:
+	return maxf(min_speed_mult, _perm_speed_mult * _temp_speed_mult)
+
 # --- Movement helper (nav agent w/ direct fallback) -----------------------
 func _move_toward(target: Vector3, speed: float, delta: float) -> void:
 	_repath_timer -= delta
 	if _repath_timer <= 0.0:
 		_repath_timer = REPATH_INTERVAL
 		agent.target_position = target
+
+	# Obstacle slows apply to every movement state.
+	speed *= speed_mult()
 
 	var next := agent.get_next_path_position()
 	var dir := next - global_position
@@ -254,6 +413,9 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 		return
 	if state == State.CHASE or state == State.ATTACK:
 		return
+	# Entangled and trapped zombies aren't going anywhere.
+	if is_immobilised():
+		return
 	if global_position.distance_to(position) <= radius:
 		state = State.INVESTIGATE
 		_investigate_timer = INVESTIGATE_TIMEOUT
@@ -262,7 +424,7 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 
 ## Red-laser proximity reveal (from Player): confirmed player position -> chase.
 func reveal_player(player_pos: Vector3) -> void:
-	if not active or GameManager.is_day():
+	if not active or GameManager.is_day() or is_immobilised():
 		return
 	_last_known_player = player_pos
 	_enter_chase()
@@ -329,8 +491,9 @@ func take_damage(amount: int, headshot: bool) -> int:
 	else:
 		_hits_body += 1
 	_flash_white()
-	# Being shot is a confirmed contact — start chasing the shooter.
-	if active and not GameManager.is_day():
+	# Being shot is a confirmed contact — start chasing the shooter, unless
+	# we're held fast, in which case there's nowhere to go.
+	if active and not GameManager.is_day() and not is_immobilised():
 		_enter_chase()
 	if hp <= 0:
 		_die()
@@ -402,6 +565,11 @@ func _die() -> void:
 	if _dead:
 		return
 	_dead = true
+	# Killing a held zombie frees the slot it occupied.
+	if _held_by and is_instance_valid(_held_by):
+		_held_by.release(self)
+	if _trapped_in and is_instance_valid(_trapped_in):
+		_trapped_in.release(self)
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
 	# Shots-to-kill telemetry for tuning the HP step size.
