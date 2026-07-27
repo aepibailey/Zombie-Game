@@ -54,12 +54,13 @@ You start with the M17; buy the rest at the crate and switch with `1`–`4`:
 Ammo, suppressor state, and reloads are tracked **per weapon**. The suppressor
 fits the currently-equipped gun (per-weapon attachment).
 
-**Nights** spawn a fixed pool of zombies (`GameManager.NIGHT_ZOMBIE_COUNT`, 5
-for now) that trickle in over the night. Any zombies left alive at dawn go
-dormant and **carry over** — they're folded into the next night's total on top
-of the fresh pool. Once every zombie for the night (carryover + pool) has
-spawned *and* been killed, an **all-clear** prompt lets you skip straight to Day
-(`Y`) or ride out the timer (`N`).
+**Nights** spawn an escalating pool of zombies — `base_spawn + spawn_per_night *
+(night_number - 1)` (6, 9, 12, … tunable on the Main node), capped at
+`max_concurrent` alive at once — that trickle in over the night. Any zombies
+left alive at dawn go dormant and **carry over**, folded into the next night's
+total. Once every zombie for the night (carryover + pool) has spawned *and* been
+killed, an **all-clear** prompt lets you skip straight to Day (`Y`) or ride out
+the timer (`N`).
 
 **Aiming:** there is no always-on crosshair. Hip-firing is blind and each shot
 is scattered within a spread cone (`HIP_FIRE_SPREAD_RADIUS` in `Player.gd`) — a

@@ -9,8 +9,13 @@ const TREE_RING_MIN := 23.0
 const TREE_RING_MAX := 29.0
 const TREE_COUNT := 44
 
-# Wave pacing (pool size lives on GameManager.NIGHT_ZOMBIE_COUNT). Zombies
-# trickle in rather than all spawning at once. Tune after playtest.
+# Wave sizing (tunable on the Main node in the inspector).
+#   spawn_count = base_spawn + spawn_per_night * (night_number - 1)
+@export var base_spawn: int = 6
+@export var spawn_per_night: int = 3
+@export var max_concurrent: int = 20     # hard cap on zombies alive at once
+
+# Wave pacing — zombies trickle in rather than all at once.
 const FIRST_SPAWN_DELAY := 1.5
 const SPAWN_INTERVAL_MIN := 4.0
 const SPAWN_INTERVAL_MAX := 9.0
@@ -262,12 +267,15 @@ func _begin_night() -> void:
 	for z in _zombies:
 		z.set_active(true)
 
-	var new_pool: int = GameManager.zombies_for_night(GameManager.night_number)
+	var new_pool: int = base_spawn + spawn_per_night * (GameManager.night_number - 1)
 	_wave_total = carryover + new_pool
 	_wave_spawned = carryover
 	_wave_alive = carryover
 	_spawn_timer = FIRST_SPAWN_DELAY
 	_all_clear_shown = false
+	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d" % [
+		GameManager.night_number, _wave_total, new_pool, carryover,
+		max_concurrent, _zombie_hp_for_night()])
 	_update_wave_hud()
 	if carryover > 0:
 		_hud.show_message("NIGHT %d — %d inbound (+%d survivors carried over)." % [
@@ -286,17 +294,21 @@ func _begin_day() -> void:
 
 # --- Nightly wave: trickle spawn + all-clear -----------------------------
 func _process(delta: float) -> void:
-	if GameManager.is_day():
-		return
-	if _wave_spawned >= _wave_total:
+	if GameManager.is_day() or _wave_spawned >= _wave_total:
 		return
 	_spawn_timer -= delta
-	if _spawn_timer <= 0.0:
+	# Remaining spawns queue while we're at the concurrent cap; the timer stays
+	# elapsed so the next slot fills as soon as a zombie dies.
+	if _spawn_timer <= 0.0 and _wave_alive < max_concurrent:
 		_spawn_zombie()
 		_wave_spawned += 1
 		_wave_alive += 1
 		_spawn_timer = randf_range(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
 		_update_wave_hud()
+
+## Per-night zombie max HP. Section 2 (health scaling) replaces the body of this.
+func _zombie_hp_for_night() -> int:
+	return 100
 
 func _spawn_zombie() -> void:
 	var angle := randf() * TAU

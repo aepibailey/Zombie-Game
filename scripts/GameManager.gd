@@ -17,10 +17,6 @@ enum Phase { DAY, NIGHT }
 const DAY_LENGTH: float = 30.0
 const NIGHT_LENGTH: float = 60.0
 
-# Size of each night's zombie wave. v1 uses the same pool every night (no
-# escalation yet — that's a v2 feature). Read by the spawner in Main.gd.
-const NIGHT_ZOMBIE_COUNT: int = 5
-
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
 var night_number: int = 0        # incremented at the start of each night
@@ -51,10 +47,6 @@ func _start_phase(phase: int) -> void:
 	if phase == Phase.NIGHT:
 		night_number += 1
 	phase_changed.emit(phase)
-
-## The wave size for a given night. Constant for v1; a hook for future scaling.
-func zombies_for_night(_n: int) -> int:
-	return NIGHT_ZOMBIE_COUNT
 
 func is_day() -> bool:
 	return current_phase == Phase.DAY
