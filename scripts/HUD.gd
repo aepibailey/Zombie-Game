@@ -26,6 +26,7 @@ var _hitmarker_timer := 0.0
 var _wpn_name := ""
 var _wpn_mode := ""
 var _wpn_suppressed := false
+var _debug_label: Label
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
@@ -50,6 +51,7 @@ func _ready() -> void:
 	_build_all_clear()
 	_build_damage_vignette()
 	_build_hitmarker()
+	_build_debug_readout()
 
 	_msg_label = Label.new()
 	_msg_label.add_theme_font_size_override("font_size", 18)
@@ -179,6 +181,21 @@ func _build_damage_vignette() -> void:
 	_dmg_vignette.modulate.a = 0.0
 	add_child(_dmg_vignette)
 
+# Debug overlay (right side): distance to every zombie within footstep range.
+func _build_debug_readout() -> void:
+	_debug_label = Label.new()
+	_debug_label.add_theme_font_size_override("font_size", 14)
+	_debug_label.add_theme_color_override("font_color", Color(0.5, 1.0, 0.6))
+	_debug_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_debug_label.add_theme_constant_override("outline_size", 4)
+	_debug_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_debug_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_debug_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_debug_label.position = Vector2(-16, 12)
+	_debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_debug_label.visible = false
+	add_child(_debug_label)
+
 # Brief hitmarker shown when a shot connects with a zombie.
 func _build_hitmarker() -> void:
 	_hitmarker = Label.new()
@@ -283,6 +300,20 @@ func show_prompt(text: String) -> void:
 
 func hide_prompt() -> void:
 	_prompt_label.visible = false
+
+# --- Debug: audible-zombie distances ---------------------------------------
+func set_debug_audio(lines: PackedStringArray) -> void:
+	if lines.is_empty():
+		_debug_label.text = "AUDIO DEBUG — no zombies in range"
+	else:
+		_debug_label.text = "AUDIO DEBUG (%d in range)\n%s" % [
+			lines.size(), "\n".join(lines)]
+
+func set_debug_audio_visible(v: bool) -> void:
+	_debug_label.visible = v
+
+func debug_audio_visible() -> bool:
+	return _debug_label.visible
 
 # --- Combat feedback --------------------------------------------------------
 func flash_damage() -> void:

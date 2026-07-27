@@ -37,6 +37,9 @@ const KEY_FINISH_NIGHT := KEY_N
 # Night-vision toggle (v1: always-on, no battery — PROJECT_SPEC.md "NVGs").
 const KEY_NVG_TOGGLE := KEY_G
 
+# Debug: show distance to every zombie within footstep-audible range.
+const KEY_DEBUG_AUDIO := KEY_F3
+
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
 var _sun: DirectionalLight3D
@@ -306,6 +309,8 @@ func _begin_day() -> void:
 
 # --- Nightly wave: trickle spawn + all-clear -----------------------------
 func _process(delta: float) -> void:
+	if _hud and _hud.debug_audio_visible():
+		_update_audio_debug()
 	if GameManager.is_day() or _wave_spawned >= _wave_total:
 		return
 	_spawn_timer -= delta
@@ -317,6 +322,23 @@ func _process(delta: float) -> void:
 		_wave_alive += 1
 		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
+
+## Debug overlay: distance to every zombie inside its own footstep range, so
+## the ~20m audible threshold can be confirmed by walking toward one.
+func _update_audio_debug() -> void:
+	var lines := PackedStringArray()
+	var here := player.global_position
+	var rows: Array = []
+	for z in _zombies:
+		if not is_instance_valid(z):
+			continue
+		var d: float = here.distance_to(z.global_position)
+		if d <= z.footstep_range():
+			rows.append({"d": d, "moving": Vector2(z.velocity.x, z.velocity.z).length() > z.step_min_speed})
+	rows.sort_custom(func(a, b): return a["d"] < b["d"])
+	for row in rows:
+		lines.append("%5.1f m  %s" % [row["d"], "walking" if row["moving"] else "still"])
+	_hud.set_debug_audio(lines)
 
 ## Spread this night's pool across most of the night so bigger waves still
 ## arrive, instead of a fixed interval that runs out of night on late waves.
@@ -365,6 +387,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_NVG_TOGGLE:
 		_toggle_nvg()
+		return
+	if event.keycode == KEY_DEBUG_AUDIO:
+		_hud.set_debug_audio_visible(not _hud.debug_audio_visible())
 		return
 	if _hud and _hud.all_clear_visible():
 		if event.keycode == KEY_SKIP_TO_DAY:

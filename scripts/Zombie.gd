@@ -5,6 +5,21 @@ extends CharacterBody3D
 signal died   ## emitted just before this zombie frees itself (wave tracking)
 
 const SFX_DEATH := "res://audio/zombie_death.wav"
+const FOOTSTEP_DIR := "res://assets/audio/zombie/"
+const FOOTSTEP_COUNT := 5
+
+# --- Footstep audio (tunable per-instance in the inspector) ---------------
+## Attenuation: inverse-distance so proximity reads sharply in the last few
+## metres. First audible ~20m; tune by ear with unit_size / volume_db.
+@export var footstep_max_distance: float = 20.0
+@export var footstep_unit_size: float = 1.5
+@export var footstep_volume_db: float = 6.0
+## Step cadence is derived from ACTUAL velocity, interpolated between these two
+## anchors (wander speed -> chase speed), so steps never desync from movement.
+@export var step_interval_wander: float = 0.75
+@export var step_interval_chase: float = 0.45
+@export var step_min_speed: float = 0.15   # below this the zombie is standing still
+@export var step_pitch_variance: float = 0.08   # +/- 8%
 
 enum State { WANDER, INVESTIGATE, CHASE, ATTACK }
 
@@ -32,6 +47,11 @@ var last_hit_headshot := false
 var _hits_head := 0
 var _hits_body := 0
 
+# Footstep audio state.
+var _footstep_player: AudioStreamPlayer3D
+var _footstep_samples: Array = []
+var _step_timer := 0.0
+
 var _investigate_timer := 0.0
 var _attack_timer := 0.0
 var _repath_timer := 0.0
@@ -47,6 +67,7 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 func _ready() -> void:
 	add_to_group("zombies")
 	hp = max_hp   # spawner set max_hp for this night's scaling
+	_build_footsteps()
 	agent.path_desired_distance = 0.6
 	agent.target_desired_distance = 0.8
 	agent.radius = 0.5
@@ -100,6 +121,9 @@ func _physics_process(delta: float) -> void:
 			_do_attack(delta)
 
 	move_and_slide()
+	# After move_and_slide so cadence tracks ACTUAL movement — a zombie stuck
+	# against geometry goes quiet instead of running in place.
+	_update_footsteps(delta)
 
 # --- States ---------------------------------------------------------------
 func _do_wander(delta: float) -> void:
@@ -240,6 +264,51 @@ func _enter_chase() -> void:
 	var player = _get_player()
 	if player:
 		_last_known_player = player.global_position
+
+# --- Footstep audio -------------------------------------------------------
+func _build_footsteps() -> void:
+	_footstep_player = AudioStreamPlayer3D.new()
+	# Inverse-distance: loudness climbs sharply in the last few metres rather
+	# than fading linearly, so "it's close" is unmistakable.
+	_footstep_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	_footstep_player.max_distance = footstep_max_distance
+	_footstep_player.unit_size = footstep_unit_size
+	_footstep_player.volume_db = footstep_volume_db
+	_footstep_player.position = Vector3(0, 0.2, 0)   # at the feet
+	add_child(_footstep_player)
+
+	for i in range(1, FOOTSTEP_COUNT + 1):
+		var path := "%sfootstep_%02d.wav" % [FOOTSTEP_DIR, i]
+		if ResourceLoader.exists(path):
+			_footstep_samples.append(load(path))
+
+	# Random phase per zombie so a converging group sounds like many creatures,
+	# not one giant one stomping in lockstep.
+	_step_timer = randf() * step_interval_wander
+
+func _update_footsteps(delta: float) -> void:
+	if _footstep_samples.is_empty():
+		return
+	var speed := Vector2(velocity.x, velocity.z).length()
+	if speed < step_min_speed:
+		return   # standing still makes no sound
+
+	_step_timer -= delta
+	if _step_timer > 0.0:
+		return
+
+	# Cadence derived from real velocity: interpolate the two anchors between
+	# wander and chase speed, so a chasing zombie steps faster in real time.
+	var t: float = clampf(inverse_lerp(WANDER_SPEED, CHASE_SPEED, speed), 0.0, 1.0)
+	_step_timer = lerpf(step_interval_wander, step_interval_chase, t)
+
+	_footstep_player.stream = _footstep_samples[randi() % _footstep_samples.size()]
+	_footstep_player.pitch_scale = randf_range(1.0 - step_pitch_variance, 1.0 + step_pitch_variance)
+	_footstep_player.play()
+
+## Distance at which this zombie's steps become audible (for the debug overlay).
+func footstep_range() -> float:
+	return footstep_max_distance
 
 # --- Combat ---------------------------------------------------------------
 func take_damage(amount: int, headshot: bool) -> void:

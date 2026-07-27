@@ -129,6 +129,7 @@ func _ready() -> void:
 	laser_dot.visible = false
 	_set_mouse_captured(true)
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
+	_build_listener()
 	_build_viewmodel()
 	_build_audio()
 
@@ -590,6 +591,16 @@ func _build_viewmodel() -> void:
 	fmat.emission_energy_multiplier = 6.0
 	flash.material_override = fmat
 	_muzzle_flash.add_child(flash)
+
+## Explicit 3D audio listener, parented to the HEAD rather than the camera.
+## A Camera3D is the implicit listener, but: (a) an explicit node keeps the
+## listener pinned to the operator's head if we ever add a second camera
+## (viewmodel/cutscene), and (b) the head carries yaw+pitch but NOT the
+## per-shot camera shake/recoil, so directionality doesn't jitter when firing.
+func _build_listener() -> void:
+	var listener := AudioListener3D.new()
+	head.add_child(listener)
+	listener.make_current()
 
 func _build_audio() -> void:
 	_sfx_fire = _make_sfx(SFX_GUNSHOT, -6.0)
