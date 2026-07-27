@@ -29,6 +29,10 @@ var _wpn_suppressed := false
 var _debug_label: Label
 var _gain_label: Label
 var _prompt_owner = null
+var _dmg_dir: Label
+var _dmg_dir_timer := 0.0
+var _ifak_label: Label
+var _ifak_bar: ProgressBar
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
@@ -45,6 +49,7 @@ func _ready() -> void:
 	_points_label = _mk(panel)
 	_health_label = _mk(panel)
 	_ammo_label = _mk(panel)
+	_ifak_label = _mk(panel)
 	_state_label = _mk(panel)
 	_supp_label = _mk(panel)
 
@@ -54,6 +59,8 @@ func _ready() -> void:
 	_build_damage_vignette()
 	_build_hitmarker()
 	_build_debug_readout()
+	_build_damage_direction()
+	_build_ifak_bar()
 
 	_gain_label = _mk_centered(112, 18, Color(0.15, 0.15, 0.15))
 	_gain_label.text = "NVG — GAIN LIMIT"
@@ -203,6 +210,38 @@ func _build_debug_readout() -> void:
 	_debug_label.visible = false
 	add_child(_debug_label)
 
+# Directional damage marker (a wedge on a ring around screen centre).
+func _build_damage_direction() -> void:
+	_dmg_dir = Label.new()
+	_dmg_dir.text = "▲"
+	_dmg_dir.add_theme_font_size_override("font_size", 30)
+	_dmg_dir.add_theme_color_override("font_color", Color(1.0, 0.2, 0.15))
+	_dmg_dir.add_theme_color_override("font_outline_color", Color.BLACK)
+	_dmg_dir.add_theme_constant_override("outline_size", 5)
+	_dmg_dir.set_anchors_preset(Control.PRESET_CENTER)
+	_dmg_dir.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_dmg_dir.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_dmg_dir.pivot_offset = Vector2(10, 18)
+	_dmg_dir.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dmg_dir.visible = false
+	# Layer above the store panel so it reads while shopping.
+	add_child(_dmg_dir)
+
+# IFAK application progress bar, shown only while applying.
+func _build_ifak_bar() -> void:
+	_ifak_bar = ProgressBar.new()
+	_ifak_bar.min_value = 0.0
+	_ifak_bar.max_value = 1.0
+	_ifak_bar.show_percentage = false
+	_ifak_bar.custom_minimum_size = Vector2(240, 18)
+	_ifak_bar.set_anchors_preset(Control.PRESET_CENTER)
+	_ifak_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_ifak_bar.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_ifak_bar.position.y = 90
+	_ifak_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ifak_bar.visible = false
+	add_child(_ifak_bar)
+
 # Brief hitmarker shown when a shot connects with a zombie.
 func _build_hitmarker() -> void:
 	_hitmarker = Label.new()
@@ -239,6 +278,9 @@ func bind_player(player) -> void:
 	player.message.connect(show_message)
 	player.damaged.connect(flash_damage)
 	player.zombie_hit.connect(show_hitmarker)
+	player.ifak_changed.connect(_on_ifak_changed)
+	player.ifak_progress.connect(_on_ifak_progress)
+	_on_ifak_changed(player.ifaks, player.ifak_max_carry)
 	# The player's _ready() emitted its initial values before we connected,
 	# so pull the current state once to seed the labels.
 	_on_ammo_changed(player.ammo, player.reserve)
@@ -259,6 +301,11 @@ func _process(delta: float) -> void:
 		_hitmarker_timer -= delta
 		if _hitmarker_timer <= 0.0:
 			_hitmarker.visible = false
+	if _dmg_dir_timer > 0.0:
+		_dmg_dir_timer -= delta
+		_dmg_dir.modulate.a = clampf(_dmg_dir_timer / DMG_FLASH_TIME, 0.0, 1.0)
+		if _dmg_dir_timer <= 0.0:
+			_dmg_dir.visible = false
 
 func _on_time_updated(time_left: float, phase: int) -> void:
 	var t: int = maxi(0, int(ceil(time_left)))
@@ -284,6 +331,15 @@ func _on_ammo_changed(loaded: int, reserve: int) -> void:
 
 func _on_state_changed(state_name: String) -> void:
 	_state_label.text = "Move: %s" % state_name
+
+func _on_ifak_changed(count: int, max_count: int) -> void:
+	_ifak_label.text = "IFAK: %d / %d   [H]" % [count, max_count]
+	_ifak_label.add_theme_color_override("font_color",
+		Color(0.55, 0.55, 0.55) if count <= 0 else Color(1, 1, 1))
+
+func _on_ifak_progress(active: bool, progress: float) -> void:
+	_ifak_bar.visible = active
+	_ifak_bar.value = progress
 
 func _on_weapon_changed(display_name: String, fire_mode: String) -> void:
 	_wpn_name = display_name
@@ -340,9 +396,17 @@ func debug_audio_visible() -> bool:
 	return _debug_label.visible
 
 # --- Combat feedback --------------------------------------------------------
-func flash_damage() -> void:
+func flash_damage(dir_angle: float = 0.0) -> void:
 	_dmg_flash = DMG_FLASH_TIME
 	_dmg_vignette.modulate.a = DMG_MAX_ALPHA
+	# Directional marker: placed on a ring around screen centre at the angle
+	# the hit came from, so you know roughly where the attacker is even with
+	# the store open over the top of the view.
+	_dmg_dir_timer = DMG_FLASH_TIME
+	_dmg_dir.visible = true
+	var radius := 130.0
+	_dmg_dir.position = Vector2(sin(dir_angle) * radius, -cos(dir_angle) * radius)
+	_dmg_dir.rotation = dir_angle
 
 func show_hitmarker(headshot: bool = false, damage: int = 0, remaining_hp: int = 0) -> void:
 	# HEAD hits read gold, body hits white, with damage and remaining HP so

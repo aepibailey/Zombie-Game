@@ -9,7 +9,13 @@ signal state_changed(state_name: String)
 signal suppressor_changed(has_suppressor: bool)
 signal weapon_changed(display_name: String, fire_mode: String)
 signal message(text: String)
-signal damaged                       ## player took a hit (HUD flash / shake)
+signal ifak_changed(count: int, max_count: int)
+signal ifak_progress(active: bool, progress: float)
+## Emitted on death so any open modal UI (the store) can close itself cleanly.
+signal died_while_busy
+## Player took a hit. `dir_angle` is radians relative to facing (0 = ahead,
+## positive = to the right) so the HUD can show where it came from.
+signal damaged(dir_angle: float)
 signal zombie_hit(headshot: bool, damage: int, remaining_hp: int)
 
 enum MoveState { CROUCH, WALK, SPRINT }
@@ -84,6 +90,13 @@ const HIT_MASK := 1 | 4
 const STARTING_WEAPON := "m17"
 const MAX_HP := 100
 
+# --- IFAK ------------------------------------------------------------------
+## A 4-second commitment, not an instant heal: it forces the player to break
+## contact before patching up, rather than button-mashing through a fight.
+@export var ifak_heal: int = 40
+@export var ifak_max_carry: int = 3
+@export var ifak_apply_time: float = 4.0
+
 # Hip-fire accuracy penalty: each unaimed shot is aimed at a random point in a
 # screen-space circle (per-weapon `hip_spread_radius`) instead of dead-centre.
 # ADS ignores this and fires pinpoint down the laser.
@@ -137,6 +150,9 @@ var weapon: WeaponData
 var current_weapon_id := STARTING_WEAPON
 var owned: Array[String] = [STARTING_WEAPON]
 var owned_items: Array[String] = []   # non-weapon purchases (radio, etc.)
+var ifaks := 0
+var _ifak_applying := false
+var _ifak_timer := 0.0
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
@@ -221,6 +237,7 @@ func _physics_process(delta: float) -> void:
 	if control_enabled:
 		_handle_movement(delta)
 		_handle_noise(delta)
+		_update_ifak(delta)
 		# IR is invisible to zombies — no positional giveaway (spec).
 		if ads_active and not has_ir_laser():
 			_handle_laser_reveal()
@@ -261,12 +278,16 @@ func _handle_movement(_delta: float) -> void:
 		new_state = MoveState.SPRINT
 	else:
 		new_state = MoveState.WALK
+	# Applying an IFAK caps you at a walk. Note the SPRINT state is still set
+	# above when shift is held — _update_ifak reads that to cancel.
 
 	if new_state != move_state:
 		move_state = new_state
 		state_changed.emit(_state_label())
 
 	var speed: float = SPEED[move_state]
+	if _ifak_applying:
+		speed = minf(speed, SPEED[MoveState.WALK])   # walking speed maximum
 	var dir := (transform.basis * input_dir).normalized()
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
@@ -339,6 +360,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_B:
 				if control_enabled:
 					_toggle_fire_mode()
+			KEY_H:
+				if control_enabled:
+					_start_ifak()
 			KEY_1:
 				_try_equip_slot(0)
 			KEY_2:
@@ -353,12 +377,19 @@ func _unhandled_input(event: InputEvent) -> void:
 					_set_mouse_captured(not mouse_captured)
 
 func _toggle_ads() -> void:
+	if _ifak_applying:
+		return   # can't aim while patching up
 	ads_active = not ads_active
 	camera.fov = 55.0 if ads_active else 75.0
 	message.emit("ADS " + ("ON — red laser hot (10m tell)" if ads_active else "OFF"))
 
 # --- Weapon ---------------------------------------------------------------
 func _fire() -> void:
+	# Firing cancels an in-progress IFAK (nothing consumed) and does not shoot
+	# on that input — the cancel IS the action.
+	if _ifak_applying:
+		_cancel_ifak("fired")
+		return
 	if reloading:
 		# Tube-fed weapons abort the reload and fire immediately, as long as at
 		# least one shell has made it in. Core to how a shotgun plays.
@@ -419,10 +450,11 @@ func _fire() -> void:
 
 	var from := camera.project_ray_origin(screen_point)
 	var base_dir := camera.project_ray_normal(screen_point)
-	# Auto bloom widens the cone as the burst continues (applies in ADS too —
-	# that IS the auto penalty).
-	if bloom_deg > 0.0:
-		base_dir = _jitter_dir(base_dir, bloom_deg)
+	# Baseline mechanical accuracy, then auto bloom on top (bloom applies in
+	# ADS too — that IS the auto penalty).
+	var cone := weapon.ads_cone_deg + bloom_deg
+	if cone > 0.0:
+		base_dir = _jitter_dir(base_dir, cone)
 
 	# Shotguns fire multiple pellets, each jittered inside a cone.
 	for i in weapon.pellets:
@@ -458,10 +490,14 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 			target = col
 
 		if target != null and is_instance_valid(target):
-			var dealt: int = target.take_damage(weapon.body_damage, headshot)
+			# Damage falls off with distance from the muzzle.
+			var dist := from.distance_to(hit.position)
+			var mult := weapon.damage_mult_at(dist)
+			var dmg: int = maxi(1, int(round(weapon.body_damage * mult)))
+			var dealt: int = target.take_damage(dmg, headshot)
 			var remaining: int = maxi(0, target.hp)
-			print("[HIT] %s — %d dmg, %d HP remaining" % [
-				"HEAD" if headshot else "BODY", dealt, remaining])
+			print("[HIT] %s — %d dmg @ %.1fm (x%.2f falloff), %d HP remaining" % [
+				"HEAD" if headshot else "BODY", dealt, dist, mult, remaining])
 			zombie_hit.emit(headshot, dealt, remaining)
 			if _sfx_impact.stream:
 				_sfx_impact.play()
@@ -1074,17 +1110,26 @@ func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 	return p
 
 # --- Damage / life --------------------------------------------------------
-func take_damage(amount: int) -> void:
+func take_damage(amount: int, source_pos = null) -> void:
 	hp = maxi(0, hp - amount)
 	health_changed.emit(hp, MAX_HP)
 	add_shake(HURT_SHAKE)
-	damaged.emit()
+	# Direction the hit came from, in the player's own frame.
+	var ang := 0.0
+	if source_pos != null:
+		var local: Vector3 = global_transform.basis.inverse() * ((source_pos as Vector3) - global_position)
+		ang = atan2(local.x, -local.z)
+	damaged.emit(ang)
 	if _sfx_hurt.stream:
 		_sfx_hurt.play()
 	if hp <= 0:
 		_respawn()
 
 func _respawn() -> void:
+	# Dying with the store open must not soft-lock: force it shut (which
+	# restores control and mouse capture) before the normal death flow.
+	died_while_busy.emit()
+	_cancel_ifak("died")
 	message.emit("You died — respawning at base. Ammo is NOT replenished.")
 	hp = MAX_HP
 	# Ammo deliberately does NOT regenerate — not on death, not at dawn.
@@ -1108,6 +1153,61 @@ func has_suppressor() -> bool:
 
 func weapon_suppressed(weapon_id: String) -> bool:
 	return _suppressed.get(weapon_id, false)
+
+# --- IFAK -----------------------------------------------------------------
+func add_ifak(count: int = 1) -> bool:
+	if ifaks >= ifak_max_carry:
+		return false
+	ifaks = mini(ifak_max_carry, ifaks + count)
+	ifak_changed.emit(ifaks, ifak_max_carry)
+	return true
+
+func ifak_full() -> bool:
+	return ifaks >= ifak_max_carry
+
+func _start_ifak() -> void:
+	if _ifak_applying or ifaks <= 0:
+		return
+	# Blocked at full health rather than silently wasting the IFAK — a
+	# consumable this scarce should never be spent for nothing.
+	if hp >= MAX_HP:
+		message.emit("Already at full health.")
+		return
+	_ifak_applying = true
+	_ifak_timer = 0.0
+	# Aiming is dropped for the duration; firing/ADS are blocked while applying.
+	ads_active = false
+	camera.fov = 75.0
+	message.emit("Applying IFAK…")
+	ifak_progress.emit(true, 0.0)
+
+## Cancels without consuming — the IFAK is only spent on a completed application.
+func _cancel_ifak(reason: String) -> void:
+	if not _ifak_applying:
+		return
+	_ifak_applying = false
+	_ifak_timer = 0.0
+	ifak_progress.emit(false, 0.0)
+	message.emit("IFAK cancelled (%s)." % reason)
+
+func _update_ifak(delta: float) -> void:
+	if not _ifak_applying:
+		return
+	# Sprinting cancels the application.
+	if move_state == MoveState.SPRINT:
+		_cancel_ifak("sprinting")
+		return
+	_ifak_timer += delta
+	ifak_progress.emit(true, clampf(_ifak_timer / ifak_apply_time, 0.0, 1.0))
+	if _ifak_timer >= ifak_apply_time:
+		_ifak_applying = false
+		ifaks -= 1
+		hp = mini(MAX_HP, hp + ifak_heal)   # no overheal
+		ifaks = maxi(0, ifaks)
+		ifak_changed.emit(ifaks, ifak_max_carry)
+		health_changed.emit(hp, MAX_HP)
+		ifak_progress.emit(false, 0.0)
+		message.emit("IFAK applied — %d HP." % hp)
 
 # --- Store purchase API ---------------------------------------------------
 ## Owned check for any catalog item. Ammo is always repurchasable.
@@ -1138,6 +1238,16 @@ func apply_store_purchase(item) -> String:
 				return "Suppressor fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
 			owned_items.append(item.id)
 			return "%s acquired." % item.display_name
+		"consumable":
+			if item.id == "ifak":
+				add_ifak(1)
+				return "IFAK stowed (%d/%d)." % [ifaks, ifak_max_carry]
+	return ""
+
+## Consumables aren't "owned", but a full IFAK pouch blocks further purchase.
+func store_item_blocked(item) -> String:
+	if item.kind == "consumable" and item.id == "ifak" and ifak_full():
+		return "CARRYING %d/%d" % [ifaks, ifak_max_carry]
 	return ""
 
 ## Prerequisite satisfied? Prereqs may name a weapon id or a non-weapon item id.

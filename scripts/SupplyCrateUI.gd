@@ -11,6 +11,7 @@ const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
 
 var _player = null  # untyped: the player exposes a custom API off CharacterBody3D
 var _points_label: Label
+var _hp_label: Label
 var _status_label: Label
 var _tab_bar: HBoxContainer
 var _list: VBoxContainer
@@ -48,6 +49,16 @@ func _ready() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	# Points balance: always visible, on every tab.
+	# HP is prominent because the store no longer pauses the game — zombies can
+	# reach you while you shop.
+	_hp_label = Label.new()
+	_hp_label.add_theme_font_size_override("font_size", 20)
+	header.add_child(_hp_label)
+
+	var spacer := Label.new()
+	spacer.text = "   "
+	header.add_child(spacer)
+
 	_points_label = Label.new()
 	_points_label.add_theme_font_size_override("font_size", 20)
 	_points_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
@@ -125,6 +136,8 @@ func _cycle_tab(step: int) -> void:
 # --- Open / close ---------------------------------------------------------
 func open_crate(player) -> void:
 	_player = player
+	if not player.died_while_busy.is_connected(_on_player_died):
+		player.died_while_busy.connect(_on_player_died)
 	visible = true
 	# Cursor visible, camera look + movement disabled while shopping.
 	player.set_control_enabled(false)
@@ -143,6 +156,12 @@ func close_crate() -> void:
 
 func is_open() -> bool:
 	return visible
+
+## Player died mid-shop: shut cleanly so control and mouse capture are restored
+## and the normal death flow isn't blocked behind a modal.
+func _on_player_died() -> void:
+	if visible:
+		close_crate()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible or not (event is InputEventKey and event.pressed and not event.echo):
@@ -164,8 +183,22 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 # --- Rendering ------------------------------------------------------------
+func _process(_delta: float) -> void:
+	# The game keeps running while the store is open, so HP must stay live.
+	if visible and _player:
+		_update_hp_label()
+
+func _update_hp_label() -> void:
+	var hp: int = _player.hp
+	_hp_label.text = "HP: %d" % hp
+	var danger: bool = hp <= 40
+	_hp_label.add_theme_color_override("font_color",
+		Color(1.0, 0.35, 0.3) if danger else Color(0.6, 1.0, 0.6))
+
 func _refresh() -> void:
 	_points_label.text = "Points: %d" % PointsManager.points
+	if _player:
+		_update_hp_label()
 	for c in _categories:
 		_tab_buttons[c].button_pressed = (c == _current)
 	if _player == null:
@@ -206,6 +239,7 @@ func _add_group_header(text: String) -> void:
 func _add_row(item) -> void:
 	var owned: bool = _player.owns_store_item(item)
 	var locked_by := _missing_prerequisite(item)
+	var blocked := _player.store_item_blocked(item)   # e.g. "CARRYING 3/3"
 	var affordable: bool = PointsManager.points >= item.cost
 
 	var row := HBoxContainer.new()
@@ -235,8 +269,13 @@ func _add_row(item) -> void:
 	btn.custom_minimum_size = Vector2(150, 0)
 	row.add_child(btn)
 
-	# --- Four visual states ---
-	if owned:
+	# --- Visual states ---
+	if blocked != "":
+		btn.text = blocked
+		btn.disabled = true
+		row.modulate = Color(0.62, 0.62, 0.62)
+		name_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	elif owned:
 		btn.text = "OWNED"
 		btn.disabled = true
 		row.modulate = Color(0.62, 0.62, 0.62)
@@ -260,6 +299,10 @@ func _on_buy(item) -> void:
 	if _player == null:
 		return
 	if _player.owns_store_item(item):
+		return
+	var blocked := _player.store_item_blocked(item)
+	if blocked != "":
+		_fail("%s — %s" % [item.display_name, blocked])
 		return
 	var locked_by := _missing_prerequisite(item)
 	if locked_by != "":

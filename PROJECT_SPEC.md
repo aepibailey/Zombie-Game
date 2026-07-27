@@ -77,8 +77,30 @@ Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 |---|---|---|---|---|---|
 | Sig Sauer M17 | Pistol | 17 | Semi-auto | starter | 1 pt |
 | HK 416 | AR | 30 | Semi/Auto | 15 pts | 2 pts |
-| SPAS-12 | Auto shotgun | 8 | Semi-auto (8 pellets) | 20 pts | 2 pts |
+| SPAS-12 | Auto shotgun | 8 | Semi-auto (9 pellets) | 20 pts | 2 pts |
 | M249 SAW | Belt-fed | 100 | Auto | 30 pts | 4 pts |
+
+### Damage falloff (implemented)
+Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, then linear to `falloff_mid_mult` at `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond. Every hit logs its distance and multiplier.
+
+| Weapon | Full to | → mult @ range | → mult @ range |
+|---|---|---|---|
+| M17 | 25m | 0.70 @ 60m | 0.50 @ 100m |
+| HK 416 | 30m | 0.85 @ 85m | 0.85 @ 120m |
+| SPAS-12 | 10m | 0.40 @ 20m | 0.15 @ 30m |
+| M249 | 30m | 0.80 @ 85m | 0.80 @ 120m |
+
+### SPAS-12 close-range lethality (implemented)
+**9 pellets × 22 dmg** (198 at point blank), **3°** cone, each pellet raycast independently with the headshot multiplier applied per pellet.
+- **≤7m:** pattern ~0.7m across; 5+ pellets on a torso = 110+ dmg → **one-shot** a 100 HP zombie. At night 10 (132 HP) six pellets = 132 → still one-shot with margin.
+- **~12m:** falloff ×0.88, wider pattern → reliable **two-shot**.
+- **20m:** ×0.40 and a ~2m pattern → clearly a bad choice. **30m+:** ×0.15, useless.
+- Max range 40m; the proportional per-shell reload is unchanged.
+
+### Long-range viability (implemented)
+Weapon max ray distance was **not** the problem — M17 150m, HK 416 200m, SPAS 40m, M249 220m, all beyond the ~85m map diagonal.
+- **HK 416 semi-auto:** `ads_cone_deg = 0.1°` — effectively a laser at map scale — with only 15% damage loss at 85m. Full-auto penalties are unchanged, keeping semi the sharp long-range answer.
+- **M249:** bloom tightened to `bloom_min_deg 0.08` / `bloom_max_deg 0.8` so a **crouched** (1.1×) 3–5 round burst holds ~0.5m at 60m (torso-sized), while **moving** (3.0×) scatters to ~1.4m. The moving penalty is deliberately unchanged.
 
 Starting loadout: M17 only, per the operator-stranded premise. No attachments by default.
 
@@ -147,7 +169,7 @@ A temporary resupply until the purchasable supply-drop enabler exists.
 
 ## Store UI (implemented)
 The supply crate store is **tab-based and data-driven**, built from the `StoreCatalog` autoload.
-- **Tabs: WEAPONS / ATTACHMENTS / AMMO**, generated from `StoreCatalog.categories()`. Adding an item with a new `category` produces a working tab with **no UI code changes** (an `ENABLERS` tab will be added this way).
+- **Tabs: WEAPONS / ATTACHMENTS / SUPPLIES**, generated from `StoreCatalog.categories()`. SUPPLIES holds consumables — ammo (filtered to owned weapons) and the IFAK (always shown) — because both are rebought every few nights and represent the same kind of decision. Adding an item with a new `category` produces a working tab with **no UI code changes** (an `ENABLERS` tab will be added this way).
 - Catalog entries are `StoreItem` objects built in code rather than `.tres` files, because every entry is derived from the Arsenal roster — hand-authoring resources would duplicate that data and drift from it. The UI only reads `id / category / display_name / description / cost / requires / weapon_id / kind`, so entries can become Resources later without touching the UI.
 - **Filtering:** ATTACHMENTS and AMMO only list entries whose parent weapon is owned, grouped visually by weapon. AMMO shows the current reserve per entry.
 - **Four item states:** affordable (normal), unaffordable (dimmed, cost highlighted red), owned (`OWNED`, not repurchasable — ammo is always repurchasable), locked (greyed, `Requires: X`). The locked state is wired to the prerequisite system and dormant until enablers use it.
@@ -155,6 +177,23 @@ The supply crate store is **tab-based and data-driven**, built from the `StoreCa
 - **Navigation:** mouse click, number keys `1`/`2`/`3`, and `←`/`→`. Deliberately **not** bound to `E` (the interact key). Opens on `E` at the crate during Day only; `Esc` closes. Defaults to WEAPONS.
 - Purchases play a confirmation sound; failed (unaffordable/locked) purchases give distinct negative feedback rather than failing silently.
 - The **Radio** is a stopgap entry under WEAPONS; it moves to ENABLERS when those exist.
+
+## IFAK (implemented)
+The only way to recover health.
+- Heals **40 HP**, capped at 100 — no overheal. Max carry **3**; the store shows `CARRYING 3/3` and blocks a fourth.
+- Bound to **`H`** (verified free of collisions).
+- **Application takes 4s** (`ifak_apply_time`), not instant. During application the player is capped at walking speed and cannot fire or ADS. **Sprinting or firing cancels it** with no IFAK consumed and no healing — it's only spent on a completed application. A progress bar shows during application and the count is always on the HUD.
+- **Using at full HP is blocked** (with a message) rather than silently consuming the item: a consumable this scarce should never be spent for nothing.
+- Cost **15 points**, `StoreCatalog.IFAK_COST`. Basis: no per-night earnings telemetry exists (kill logs are per-kill and nothing aggregates them), so this is the specified fallback. For reference, a night of 6–12 kills at 1–3 pts each is roughly 12–25 pts, putting one IFAK at ~60–125% of a night — **at the expensive end**, and worth re-pricing once per-night earnings are actually measured.
+- Tunables: `ifak_heal`, `ifak_max_carry`, `ifak_apply_time` (`@export` on Player).
+
+## Crate at night (implemented)
+The Day gate is removed — the crate works in **both phases**.
+- **The game does not pause while the store is open.** Zombies keep moving, pathing and attacking; the player can be hit, damaged and killed mid-shop. That exposure is the cost of resupplying at night.
+- Movement and camera look stay disabled while shopping.
+- **Player HP is shown prominently in the store header**, live-updating and turning red at ≤40. Being hit while shopping triggers the screen flash plus a **directional damage marker** (a wedge on a ring around screen centre at the bearing of the attacker).
+- The store **does not auto-close on damage** — bailing is the player's decision.
+- Dying with the store open emits `died_while_busy`, which closes the UI cleanly (restoring control and mouse capture) before the normal death flow, avoiding a soft-lock.
 
 ## Economy
 - Points earned from kills are the only currency. Spent at the supply crate during Day phase.

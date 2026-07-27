@@ -197,7 +197,7 @@ func _do_attack(delta: float) -> void:
 	if _attack_timer <= 0.0:
 		_attack_timer = ATTACK_INTERVAL
 		if player.has_method("take_damage"):
-			player.take_damage(ATTACK_DAMAGE)
+			player.take_damage(ATTACK_DAMAGE, global_position)
 
 # --- Movement helper (nav agent w/ direct fallback) -----------------------
 func _move_toward(target: Vector3, speed: float, delta: float) -> void:

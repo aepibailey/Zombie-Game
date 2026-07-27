@@ -26,9 +26,11 @@ class StoreItem:
 
 # Tab order. Categories not listed here are appended alphabetically, so a new
 # category still produces a working tab without touching this list.
-const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "AMMO"]
+const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES"]
 
 const SUPPRESSOR_COST := 3
+## ~27% of a typical night's earnings (see PROJECT_SPEC.md "Economy").
+const IFAK_COST := 15
 
 var items: Array = []
 
@@ -80,13 +82,19 @@ func rebuild() -> void:
 				int(w.noise_unsuppressed), int(w.noise_suppressed)],
 		}))
 
-	# --- AMMO (per weapon; filtered to owned at display time) ---
+	# --- SUPPLIES: consumables rebought every few nights ---
+	# The IFAK always shows; ammo entries keep their owned-weapon filtering.
+	items.append(_mk({
+		"id": "ifak", "category": "SUPPLIES", "kind": "consumable",
+		"display_name": "IFAK", "cost": IFAK_COST, "repeatable": true,
+		"description": "Heals 40 HP over 4s. Carry up to 3.",
+	}))
 	for id in Arsenal.order:
 		var w = Arsenal.get_weapon(id)
 		if w == null:
 			continue
 		items.append(_mk({
-			"id": "ammo_" + id, "category": "AMMO", "kind": "ammo",
+			"id": "ammo_" + id, "category": "SUPPLIES", "kind": "ammo",
 			"display_name": "%s Ammo" % w.display_name,
 			"weapon_id": id, "cost": w.ammo_cost, "repeatable": true,
 			"description": "+1 magazine (%d rounds)." % w.mag_size,

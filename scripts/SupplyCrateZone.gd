@@ -30,7 +30,9 @@ func _toggle_crate() -> void:
 		return
 	if crate_ui.is_open():
 		crate_ui.close_crate()
-	elif _player_inside and GameManager.is_day() and _player != null:
+	elif _player_inside and _player != null:
+		# Usable in BOTH phases now — shopping at night is allowed, and the
+		# game keeps running while you do it.
 		crate_ui.open_crate(_player)
 
 func _on_body_entered(body: Node3D) -> void:
@@ -47,16 +49,16 @@ func _on_body_exited(body: Node3D) -> void:
 	if crate_ui:
 		crate_ui.close_crate()
 
-func _on_phase_changed(phase: int) -> void:
-	# Crate seals up at dusk.
-	if phase == GameManager.Phase.NIGHT and crate_ui:
-		crate_ui.close_crate()
+func _on_phase_changed(_phase: int) -> void:
+	# The crate no longer closes at dusk — it's usable in both phases.
+	pass
 
 func _update_prompt() -> void:
 	if hud == null:
 		return
 	var crate_open: bool = crate_ui != null and crate_ui.is_open()
-	if _player_inside and GameManager.is_day() and not crate_open:
-		hud.show_prompt("Press E to open the supply crate", self)
+	if _player_inside and not crate_open:
+		var suffix := "" if GameManager.is_day() else " (you are exposed)"
+		hud.show_prompt("Press E to open the supply crate" + suffix, self)
 	else:
 		hud.hide_prompt(self)

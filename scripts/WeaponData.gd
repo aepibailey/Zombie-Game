@@ -26,6 +26,30 @@ enum AutoPenalty { NONE, RAMP, STANCE }
 @export var body_damage: int = 34         # per pellet/round
 @export var pellets: int = 1              # >1 = shotgun spread
 @export var pellet_spread_deg: float = 0.0
+## Accuracy cone applied even when aiming down sights. 0 = pinpoint.
+@export var ads_cone_deg: float = 0.0
+
+# --- Damage falloff (piecewise linear over distance) ----------------------
+# Full damage out to `falloff_near`, then linearly to `falloff_mid_mult` at
+# `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond.
+# Defaults = no falloff at any range.
+@export var falloff_near: float = 9999.0
+@export var falloff_mid: float = 9999.0
+@export var falloff_mid_mult: float = 1.0
+@export var falloff_far: float = 9999.0
+@export var falloff_far_mult: float = 1.0
+
+## Damage multiplier at a given distance (metres).
+func damage_mult_at(distance: float) -> float:
+	if distance <= falloff_near:
+		return 1.0
+	if distance <= falloff_mid:
+		var span: float = maxf(0.001, falloff_mid - falloff_near)
+		return lerpf(1.0, falloff_mid_mult, (distance - falloff_near) / span)
+	if distance <= falloff_far:
+		var span2: float = maxf(0.001, falloff_far - falloff_mid)
+		return lerpf(falloff_mid_mult, falloff_far_mult, (distance - falloff_mid) / span2)
+	return falloff_far_mult
 
 @export var hip_spread_radius: float = 80.0   # screen-px scatter when not ADS
 @export var recoil_per_shot: float = 0.03     # vertical, semi-auto baseline
