@@ -30,6 +30,12 @@ signal closed
 const SFX_CONFIRM := "res://assets/audio/ui/ui_confirm.wav"
 const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
 
+## Typed so the flood-fill's loop variable is a Vector2i rather than a Variant
+## (an untyped array literal makes `d.x` uninferrable).
+var NEIGHBOURS: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+]
+
 var active := false
 
 var _cam: Camera3D
@@ -434,7 +440,7 @@ func _would_seal(t, pos: Vector3, yaw: float) -> bool:
 			return false
 		var cx := c / dim
 		var cz := c % dim
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		for d in NEIGHBOURS:
 			var nx := cx + d.x
 			var nz := cz + d.y
 			if nx < 0 or nz < 0 or nx >= dim or nz >= dim:

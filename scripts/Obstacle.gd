@@ -101,15 +101,19 @@ func _build_solid() -> void:
 	add_child(_solid)
 
 ## Footprint corners on the ground plane, for bounds and seal tests.
-func footprint_corners() -> Array:
+func footprint_corners() -> Array[Vector3]:
 	var size: Vector3 = obstacle_type.size
 	return corners_for(global_position, rotation.y, size)
 
-static func corners_for(origin: Vector3, yaw: float, size: Vector3) -> Array:
+## Returns a TYPED array so callers get Vector3 elements rather than Variants.
+static func corners_for(origin: Vector3, yaw: float, size: Vector3) -> Array[Vector3]:
 	var hx: float = size.x * 0.5
 	var hz: float = size.z * 0.5
-	var out: Array = []
-	for c in [Vector2(-hx, -hz), Vector2(hx, -hz), Vector2(hx, hz), Vector2(-hx, hz)]:
-		var rotated := c.rotated(yaw)
-		out.append(Vector3(origin.x + rotated.x, origin.y, origin.z + rotated.y))
+	var local: Array[Vector2] = [
+		Vector2(-hx, -hz), Vector2(hx, -hz), Vector2(hx, hz), Vector2(-hx, hz),
+	]
+	var out: Array[Vector3] = []
+	for c in local:
+		var r := c.rotated(yaw)
+		out.append(Vector3(origin.x + r.x, origin.y, origin.z + r.y))
 	return out
