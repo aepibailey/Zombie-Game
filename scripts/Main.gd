@@ -416,7 +416,7 @@ func _update_audio_debug() -> void:
 	rows.sort_custom(func(a, b): return a["d"] < b["d"])
 	for row in rows:
 		lines.append("%5.1f m  %s" % [row["d"], "walking" if row["moving"] else "still"])
-	_hud.set_debug_audio(lines)
+	_hud.set_debug_audio(lines, player.laser_debug_line())
 
 ## Spread this night's pool across most of the night so bigger waves still
 ## arrive, instead of a fixed interval that runs out of night on late waves.

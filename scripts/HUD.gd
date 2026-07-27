@@ -317,12 +317,15 @@ func hide_prompt(owner = null) -> void:
 	_prompt_label.visible = false
 
 # --- Debug: audible-zombie distances ---------------------------------------
-func set_debug_audio(lines: PackedStringArray) -> void:
+func set_debug_audio(lines: PackedStringArray, laser_line: String = "") -> void:
+	var text := ""
+	if laser_line != "":
+		text = laser_line + "\n\n"
 	if lines.is_empty():
-		_debug_label.text = "AUDIO DEBUG — no zombies in range"
+		text += "AUDIO DEBUG — no zombies in range"
 	else:
-		_debug_label.text = "AUDIO DEBUG (%d in range)\n%s" % [
-			lines.size(), "\n".join(lines)]
+		text += "AUDIO DEBUG (%d in range)\n%s" % [lines.size(), "\n".join(lines)]
+	_debug_label.text = text
 
 ## Shown while NVGs are gained-out in daylight, so the whiteout reads as
 ## intentional rather than a rendering bug.

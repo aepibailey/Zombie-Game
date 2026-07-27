@@ -62,7 +62,16 @@ const LASER_MAX_DRAW := 100.0
 ## is grown in world space so it never shrinks to sub-pixel at 60m+.
 ## 0.009 ~= 10px at 1080p.
 @export var dot_min_screen_frac: float = 0.009
+## Ceiling on apparent dot size so it can never grow big enough to obscure
+## what's being aimed at (~4.5% of viewport height).
+@export var dot_max_screen_frac: float = 0.045
 @export var beam_min_screen_frac: float = 0.0016
+## Beam length below which nothing is drawn — cheap guard against degenerate
+## geometry (a very short, very wide tube reads as a bright disc/hexagon).
+@export var beam_min_length: float = 0.1
+## Flip the no-hit fade gradient if it fades from the wrong end (CylinderMesh
+## V-axis direction is not worth hardcoding an assumption about).
+@export var beam_fade_flip: bool = false
 ## Soft halo drawn behind the core: radius multiple, and how quickly it fades.
 @export var dot_halo_scale: float = 3.2
 @export var dot_halo_falloff: float = 2.2   # higher = tighter core, softer edge
@@ -153,7 +162,11 @@ var _muzzle_flash: Node3D
 var _muzzle_marker: Marker3D
 var _viewmodel: Node3D
 var _laser_beam: MeshInstance3D
+var _laser_beam_mesh: CylinderMesh
 var _laser_beam_mat: StandardMaterial3D
+var _laser_fade_mat: StandardMaterial3D
+# Laser debug telemetry (shown in the F3 overlay).
+var _laser_dbg := "laser: idle"
 var _laser_dot: Node3D
 var _laser_core: MeshInstance3D
 var _laser_halo: MeshInstance3D
@@ -634,15 +647,27 @@ func _build_laser() -> void:
 	cyl.top_radius = 1.0
 	cyl.bottom_radius = 1.0
 	cyl.height = 1.0
-	cyl.radial_segments = 6
+	cyl.radial_segments = 12
 	cyl.rings = 0
+	# No end caps: a low-segment cap viewed face-on is exactly the bright
+	# polygon artefact this beam must never produce.
+	cyl.cap_top = false
+	cyl.cap_bottom = false
+	_laser_beam_mesh = cyl
 	_laser_beam.mesh = cyl
 	_laser_beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_laser_beam.top_level = true
 	_laser_beam_mat = _laser_material()
+	_laser_beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_laser_beam.material_override = _laser_beam_mat
 	_laser_beam.visible = false
 	add_child(_laser_beam)
+
+	# Separate material for the no-hit case: same colour, but alpha ramps out
+	# along the beam so it reads as fading into the dark.
+	_laser_fade_mat = _laser_material()
+	_laser_fade_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_laser_fade_mat.albedo_texture = _length_fade_texture()
 
 	# Dot: a bright core plus a soft falloff halo. Both are BILLBOARDED and
 	# additively blended so they read as scattered glow rather than a flat
@@ -670,6 +695,23 @@ func _build_laser() -> void:
 	_laser_dot_mat = _glow_material(_radial_falloff_texture(0.9))
 	_laser_core.material_override = _laser_dot_mat
 	_laser_dot.add_child(_laser_core)
+
+## Vertical white->transparent ramp used to fade the far end of a no-hit beam.
+func _length_fade_texture() -> GradientTexture2D:
+	var g := Gradient.new()
+	g.set_offset(0, 0.0)
+	g.set_color(0, Color(1, 1, 1, 1))
+	g.set_offset(1, 1.0)
+	g.set_color(1, Color(1, 1, 1, 0))
+	g.add_point(0.45, Color(1, 1, 1, 0.55))
+	var t := GradientTexture2D.new()
+	t.gradient = g
+	t.fill = GradientTexture2D.FILL_LINEAR
+	t.fill_from = Vector2(0.5, 0.0)
+	t.fill_to = Vector2(0.5, 1.0)
+	t.width = 8
+	t.height = 64
+	return t
 
 ## Radial white->transparent texture. `falloff` shapes the edge: higher values
 ## keep the centre solid longer and fade out more gradually.
@@ -717,6 +759,11 @@ func _laser_material() -> StandardMaterial3D:
 func has_ir_laser() -> bool:
 	return "ir_laser" in owned_items
 
+## One-line laser telemetry for the debug overlay: hit true/false, hit
+## distance, beam length and the computed radii.
+func laser_debug_line() -> String:
+	return _laser_dbg
+
 ## Red is always visible; IR renders only under NVGs (invisible to the naked
 ## eye, and invisible to zombies — see _handle_laser_reveal).
 func _laser_should_draw() -> bool:
@@ -728,6 +775,7 @@ func _update_laser() -> void:
 	if not _laser_should_draw():
 		_laser_beam.visible = false
 		_laser_dot.visible = false
+		_laser_dbg = "laser: off (not aiming)" if not ads_active else "laser: IR hidden (no NVG)"
 		return
 
 	var ir := has_ir_laser()
@@ -765,38 +813,67 @@ func _update_laser() -> void:
 
 	var seg := hit_point - from
 	var length := seg.length()
-	if length < 0.05:
+	# Guard rail: nothing legitimate produces a beam this short, and a very
+	# short beam with a scaled radius is exactly the disc/hexagon failure.
+	if length < beam_min_length:
 		_laser_beam.visible = false
 		_laser_dot.visible = false
+		_laser_dbg = "laser: hit=%s len=%.2f (SUPPRESSED: below min length)" % [
+			hit_something, length]
 		return
 
-	# Distance compensation: keep a minimum apparent size on screen so neither
-	# the beam nor the dot shrinks to sub-pixel across the map.
 	var eye := camera.global_position
-	var dot_dist := eye.distance_to(hit_point)
 	var screen_k := 2.0 * tan(deg_to_rad(camera.fov) * 0.5)
-	var core_size: float = maxf(dot_size, dot_min_screen_frac * dot_dist * screen_k)
-	var beam_radius: float = maxf(beam_r, beam_min_screen_frac * dot_dist * screen_k)
 
-	# Orient the cylinder (local +Y) along the beam.
+	# TAPERED radius: each end is sized for its own distance from the camera,
+	# so apparent thickness stays roughly constant along the beam instead of
+	# one uniform radius that's fat at the muzzle and thin at the far end.
+	var near_r := beam_r
+	var far_r := beam_r
+	if hit_something:
+		near_r = maxf(beam_r, beam_min_screen_frac * eye.distance_to(from) * screen_k)
+		far_r = maxf(beam_r, beam_min_screen_frac * eye.distance_to(hit_point) * screen_k)
+	# No hit: base radius at both ends (there's no surface to scale against),
+	# and the fade material ramps alpha out toward the far end.
+	_laser_beam.material_override = _laser_beam_mat if hit_something else _laser_fade_mat
+	if not hit_something:
+		_laser_fade_mat.albedo_color = Color(color.r, color.g, color.b, beam_a)
+		_laser_fade_mat.emission = color
+		_laser_fade_mat.emission_energy_multiplier = emission
+		var fade_dir: float = -1.0 if beam_fade_flip else 1.0
+		_laser_fade_mat.uv1_scale = Vector3(1.0, fade_dir, 1.0)
+
+	_laser_beam_mesh.bottom_radius = near_r   # -Y end = muzzle
+	_laser_beam_mesh.top_radius = far_r       # +Y end = hit point
+
+	# Orient the cylinder so its local +Y runs muzzle -> hit point.
 	_laser_beam.global_position = from + seg * 0.5
 	var up_ref := Vector3.UP
 	if absf(seg.normalized().dot(Vector3.UP)) > 0.99:
 		up_ref = Vector3.RIGHT
 	_laser_beam.look_at(hit_point, up_ref)
-	_laser_beam.rotate_object_local(Vector3.RIGHT, PI * 0.5)
-	_laser_beam.scale = Vector3(beam_radius, length, beam_radius)
+	_laser_beam.rotate_object_local(Vector3.RIGHT, -PI * 0.5)
+	# Radii live on the mesh, so only length is scaled here.
+	_laser_beam.scale = Vector3(1.0, length, 1.0)
 	_laser_beam.visible = true
 
-	# Dot: billboarded core + halo, nudged off the surface to avoid z-fighting.
-	# Only drawn where the beam actually terminates on geometry.
+	# Dot: only where the beam actually terminates on a surface. No hit = no
+	# dot at all, rather than one drawn at some arbitrary far point.
 	if hit_something:
+		var dot_dist := eye.distance_to(hit_point)
+		# Floor keeps it visible at 85m; ceiling stops it obscuring the target.
+		var min_world := dot_min_screen_frac * dot_dist * screen_k
+		var max_world := dot_max_screen_frac * dot_dist * screen_k
+		var core_size: float = clampf(dot_size, min_world, max_world)
 		_laser_dot.global_position = hit_point + normal * 0.02
 		_laser_core.scale = Vector3(core_size, core_size, 1.0)
 		_laser_halo.scale = Vector3(core_size * dot_halo_scale, core_size * dot_halo_scale, 1.0)
 		_laser_dot.visible = true
+		_laser_dbg = "laser: hit=true dist=%.1fm len=%.1fm r=%.3f/%.3f dot=%.3f" % [
+			dot_dist, length, near_r, far_r, core_size]
 	else:
 		_laser_dot.visible = false
+		_laser_dbg = "laser: hit=false len=%.1fm r=%.3f (no dot)" % [length, beam_r]
 
 # --- Tracer ---------------------------------------------------------------
 ## The true muzzle, taken from the Muzzle marker on the viewmodel. Because the
