@@ -91,10 +91,15 @@ Starting loadout: M17 only, per the operator-stranded premise. No attachments by
 **SPAS-12 — per-shell reload** (`shell_reload`): `reload_start` 0.35s + **0.55s per shell** + `reload_end` 0.35s. Two shells ≈ **1.8s**, a full eight ≈ **5.1s**. The reload is **interruptible** — firing after any completed shell cancels the remainder and fires immediately.
 
 ### Laser (implemented)
-Rendered as a **beam plus a terminal dot**, not just a dot. The beam is drawn muzzle → raycast hit and **ends at the hit** (never passes through geometry); the dot is a quad laid on the impact surface, aligned to its normal.
-- **Red** (default): visible **with or without NVGs** and dramatically brighter than IR — the obvious tradeoff against the 10m detection rule. Beam radius **0.012m**, alpha **0.35**, emission **4.0**, dot **0.04m**.
-- **IR** (attachment, 8 pts): rendered **only when NVGs are on**, and **invisible to zombies** — the 10m reveal is skipped entirely while it's equipped. Beam radius **0.006m**, alpha **0.15**, emission **1.2**, dot **0.025m**.
-- All eight values are `@export` on Player (`laser_red_*` / `laser_ir_*`) — starting points, tune by eye.
+Rendered as a **beam plus a terminal dot**. The **raycast originates at the camera** (so it matches point of aim); the **beam is drawn from a `Muzzle` Marker3D** on the weapon viewmodel to that hit point. The resulting offset — visible up close, converging at distance — is correct weapon-mounted-laser behaviour. Because the marker is a child of the viewmodel it inherits the ADS pose, recoil kick and bob, so the origin stays welded to the muzzle. If nothing is hit in range the beam draws to the max-range point and no dot is shown (there's no surface to paint).
+- **Red** (default): visible **with or without NVGs** and clearly brighter than IR at every range — the tradeoff against the 10m detection rule. Beam radius **0.012m**, alpha **0.35**, emission **7.0**, dot **0.075m**.
+- **IR** (attachment, 8 pts): rendered **only when NVGs are on**, and **invisible to zombies** — the 10m reveal is skipped entirely while equipped. Beam radius **0.006m**, alpha **0.15**, emission **2.2**, dot **0.045m**.
+- The laser ray uses the same mask as gunfire, so the dot lands on zombies (body and head hitboxes) as well as world geometry.
+
+**Long-range visibility.** A fixed world-space dot falls below a pixel at 60m, so both the dot and the beam get a **screen-space size floor**: below the threshold their world size is scaled up proportionally to distance (`world = frac × distance × 2·tan(fov/2)`). Defaults `dot_min_screen_frac = 0.009` (~10px at 1080p) and `beam_min_screen_frac = 0.0016`.
+
+**Dot appearance.** A bright **core** plus a soft **falloff halo**, both **billboarded** and **additively blended**, using a radial white→transparent gradient texture. Billboards were chosen over surface-aligned quads because a surface-aligned disc is back-face culled from one side and collapses to a line at grazing angles; a billboard always presents full-on and reads as scattered glow, and additive blending blooms naturally under the NVG glow pass. Tunables: `dot_halo_scale` (3.2), `dot_halo_falloff` (2.2), `dot_halo_alpha` (0.55).
+- All laser values are `@export` on Player (`laser_red_*` / `laser_ir_*` / `dot_*` / `beam_min_screen_frac`) — starting points, tune by eye.
 
 ### Suppressor audio (implemented)
 Each weapon has **two audio states**, selected purely by whether a suppressor is attached — **fully independent of the noise-radius logic** (40m → 8m). One attachment drives two separate systems.

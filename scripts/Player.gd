@@ -48,13 +48,25 @@ const LASER_MAX_DRAW := 100.0
 # obvious tradeoff against the 10m detection rule.
 @export var laser_red_beam_radius: float = 0.012
 @export var laser_red_beam_alpha: float = 0.35
-@export var laser_red_emission: float = 4.0
-@export var laser_red_dot_size: float = 0.04
-# IR: rendered ONLY when NVGs are on. Dim, thin, disciplined.
+@export var laser_red_emission: float = 7.0
+@export var laser_red_dot_size: float = 0.075
+# IR: rendered ONLY when NVGs are on. Dimmer than red at every range, so the
+# visibility-vs-stealth tradeoff stays real.
 @export var laser_ir_beam_radius: float = 0.006
 @export var laser_ir_beam_alpha: float = 0.15
-@export var laser_ir_emission: float = 1.2
-@export var laser_ir_dot_size: float = 0.025
+@export var laser_ir_emission: float = 2.2
+@export var laser_ir_dot_size: float = 0.045
+
+# --- Long-range visibility -------------------------------------------------
+## Minimum apparent size as a fraction of viewport height. Below this the dot
+## is grown in world space so it never shrinks to sub-pixel at 60m+.
+## 0.009 ~= 10px at 1080p.
+@export var dot_min_screen_frac: float = 0.009
+@export var beam_min_screen_frac: float = 0.0016
+## Soft halo drawn behind the core: radius multiple, and how quickly it fades.
+@export var dot_halo_scale: float = 3.2
+@export var dot_halo_falloff: float = 2.2   # higher = tighter core, softer edge
+@export var dot_halo_alpha: float = 0.55
 
 # --- Weapon tuning (per-weapon stats live in WeaponData / Arsenal) --------
 ## Weapon rays hit the world (layer 1) and zombie head hitboxes (layer 3).
@@ -138,11 +150,15 @@ var _reload_cancel := false # set when a shell reload is interrupted by firing
 var _muzzle_timer := 0.0
 var _vm_recoil := 0.0
 var _muzzle_flash: Node3D
+var _muzzle_marker: Marker3D
 var _viewmodel: Node3D
 var _laser_beam: MeshInstance3D
 var _laser_beam_mat: StandardMaterial3D
-var _laser_dot: MeshInstance3D
+var _laser_dot: Node3D
+var _laser_core: MeshInstance3D
+var _laser_halo: MeshInstance3D
 var _laser_dot_mat: StandardMaterial3D
+var _laser_halo_mat: StandardMaterial3D
 ## Set by Main when NVGs toggle — the IR laser is only rendered under NVGs.
 var nvg_active := false
 var _sfx_fire: AudioStreamPlayer
@@ -162,6 +178,10 @@ func _ready() -> void:
 	_build_laser()
 	_set_mouse_captured(true)
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
+	# Same mask as gunfire so the dot lands on zombies (bodies + head hitboxes)
+	# and not just world geometry.
+	laser_ray.collision_mask = HIT_MASK
+	laser_ray.collide_with_areas = true
 	_build_listener()
 	_build_viewmodel()
 	_build_audio()
@@ -624,17 +644,67 @@ func _build_laser() -> void:
 	_laser_beam.visible = false
 	add_child(_laser_beam)
 
-	# Dot: a quad laid flat on the impact surface (aligned to its normal).
-	_laser_dot = MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2.ONE
-	_laser_dot.mesh = quad
-	_laser_dot.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Dot: a bright core plus a soft falloff halo. Both are BILLBOARDED and
+	# additively blended so they read as scattered glow rather than a flat
+	# disc — and, critically, a billboard can't be back-face culled or vanish
+	# at grazing angles the way a surface-aligned quad does.
+	_laser_dot = Node3D.new()
 	_laser_dot.top_level = true
-	_laser_dot_mat = _laser_material()
-	_laser_dot.material_override = _laser_dot_mat
 	_laser_dot.visible = false
 	add_child(_laser_dot)
+
+	_laser_halo = MeshInstance3D.new()
+	var hquad := QuadMesh.new()
+	hquad.size = Vector2.ONE
+	_laser_halo.mesh = hquad
+	_laser_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_laser_halo_mat = _glow_material(_radial_falloff_texture(dot_halo_falloff))
+	_laser_halo.material_override = _laser_halo_mat
+	_laser_dot.add_child(_laser_halo)
+
+	_laser_core = MeshInstance3D.new()
+	var cquad := QuadMesh.new()
+	cquad.size = Vector2.ONE
+	_laser_core.mesh = cquad
+	_laser_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_laser_dot_mat = _glow_material(_radial_falloff_texture(0.9))
+	_laser_core.material_override = _laser_dot_mat
+	_laser_dot.add_child(_laser_core)
+
+## Radial white->transparent texture. `falloff` shapes the edge: higher values
+## keep the centre solid longer and fade out more gradually.
+func _radial_falloff_texture(falloff: float) -> GradientTexture2D:
+	var g := Gradient.new()
+	g.set_offset(0, 0.0)
+	g.set_color(0, Color(1, 1, 1, 1))
+	g.set_offset(1, 1.0)
+	g.set_color(1, Color(1, 1, 1, 0))
+	# Extra midpoint so the falloff curves instead of ramping linearly.
+	var mid: float = clampf(1.0 / maxf(1.0, falloff), 0.05, 0.95)
+	g.add_point(mid, Color(1, 1, 1, 0.45))
+
+	var t := GradientTexture2D.new()
+	t.gradient = g
+	t.fill = GradientTexture2D.FILL_RADIAL
+	t.fill_from = Vector2(0.5, 0.5)
+	t.fill_to = Vector2(1.0, 0.5)
+	t.width = 64
+	t.height = 64
+	return t
+
+## Additive, unshaded, billboarded — blooms naturally under the NVG glow pass.
+func _glow_material(tex: Texture2D) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.disable_receive_shadows = true
+	m.no_depth_test = false
+	m.albedo_texture = tex
+	m.emission_enabled = true
+	return m
 
 func _laser_material() -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -673,9 +743,13 @@ func _update_laser() -> void:
 	_laser_dot_mat.albedo_color = Color(color.r, color.g, color.b, 1.0)
 	_laser_dot_mat.emission = color
 	_laser_dot_mat.emission_energy_multiplier = emission
+	_laser_halo_mat.albedo_color = Color(color.r, color.g, color.b, dot_halo_alpha)
+	_laser_halo_mat.emission = color
+	_laser_halo_mat.emission_energy_multiplier = emission * 0.6
 
-	# The beam starts at the muzzle and STOPS at the hit — it never passes
-	# through geometry.
+	# The RAY comes from the camera (so it matches point of aim); the BEAM is
+	# drawn from the muzzle to that hit point. The resulting offset — large up
+	# close, converging at distance — is correct for a weapon-mounted laser.
 	var from := _muzzle_position()
 	laser_ray.force_raycast_update()
 	var hit_point: Vector3
@@ -685,6 +759,7 @@ func _update_laser() -> void:
 		hit_point = laser_ray.get_collision_point()
 		normal = laser_ray.get_collision_normal()
 	else:
+		# Nothing in range: draw to the max-range point along the ray.
 		hit_point = laser_ray.global_position + \
 			(-laser_ray.global_transform.basis.z) * LASER_MAX_DRAW
 
@@ -695,6 +770,14 @@ func _update_laser() -> void:
 		_laser_dot.visible = false
 		return
 
+	# Distance compensation: keep a minimum apparent size on screen so neither
+	# the beam nor the dot shrinks to sub-pixel across the map.
+	var eye := camera.global_position
+	var dot_dist := eye.distance_to(hit_point)
+	var screen_k := 2.0 * tan(deg_to_rad(camera.fov) * 0.5)
+	var core_size: float = maxf(dot_size, dot_min_screen_frac * dot_dist * screen_k)
+	var beam_radius: float = maxf(beam_r, beam_min_screen_frac * dot_dist * screen_k)
+
 	# Orient the cylinder (local +Y) along the beam.
 	_laser_beam.global_position = from + seg * 0.5
 	var up_ref := Vector3.UP
@@ -702,28 +785,27 @@ func _update_laser() -> void:
 		up_ref = Vector3.RIGHT
 	_laser_beam.look_at(hit_point, up_ref)
 	_laser_beam.rotate_object_local(Vector3.RIGHT, PI * 0.5)
-	_laser_beam.scale = Vector3(beam_r, length, beam_r)
+	_laser_beam.scale = Vector3(beam_radius, length, beam_radius)
 	_laser_beam.visible = true
 
-	# Dot sits on the surface, facing along its normal, nudged off the face to
-	# avoid z-fighting.
+	# Dot: billboarded core + halo, nudged off the surface to avoid z-fighting.
+	# Only drawn where the beam actually terminates on geometry.
 	if hit_something:
-		_laser_dot.global_position = hit_point + normal * 0.01
-		var dot_up := Vector3.UP
-		if absf(normal.dot(Vector3.UP)) > 0.99:
-			dot_up = Vector3.RIGHT
-		_laser_dot.look_at(hit_point + normal, dot_up)
-		_laser_dot.scale = Vector3(dot_size, dot_size, 1.0)
+		_laser_dot.global_position = hit_point + normal * 0.02
+		_laser_core.scale = Vector3(core_size, core_size, 1.0)
+		_laser_halo.scale = Vector3(core_size * dot_halo_scale, core_size * dot_halo_scale, 1.0)
 		_laser_dot.visible = true
 	else:
 		_laser_dot.visible = false
 
 # --- Tracer ---------------------------------------------------------------
-# Approximate muzzle: offset down/right/forward of the eye so the tracer reads
-# as coming from a held pistol rather than the centre of the screen.
+## The true muzzle, taken from the Muzzle marker on the viewmodel. Because the
+## marker is a child of the viewmodel it inherits the ADS pose, the recoil kick
+## and any bob for free — the origin stays welded to the weapon.
 func _muzzle_position() -> Vector3:
-	var b := camera.global_transform.basis
-	return camera.global_position + b * Vector3(0.2, -0.18, -0.35)
+	if _muzzle_marker:
+		return _muzzle_marker.global_position
+	return camera.global_position   # pre-_ready fallback
 
 func _spawn_tracer(from: Vector3, to: Vector3) -> void:
 	var length := from.distance_to(to)
@@ -816,6 +898,14 @@ func _build_viewmodel() -> void:
 	grip.position = Vector3(0, -0.08, 0.04)
 	grip.rotation_degrees = Vector3(18, 0, 0)
 	_viewmodel.add_child(grip)
+
+	# Muzzle marker: the authoritative origin for the laser beam and tracers.
+	# As a child of the viewmodel it inherits the ADS pose, recoil and bob, so
+	# the beam stays welded to the weapon in every state.
+	_muzzle_marker = Marker3D.new()
+	_muzzle_marker.name = "Muzzle"
+	_muzzle_marker.position = Vector3(0, 0.005, -0.17)
+	_viewmodel.add_child(_muzzle_marker)
 
 	# Muzzle flash lives at the front of the slide so recoil carries it.
 	_muzzle_flash = Node3D.new()
