@@ -52,6 +52,8 @@ var _zombies: Array = []
 var _hud: HUD
 var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
+var _pending_tent_zone: EngineersTentZone
+var _build_mode: BuildMode
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer
 var _nvg_whiteout: ColorRect
@@ -155,6 +157,9 @@ func _build_world() -> void:
 	# The air-dropped supply crate + its trigger zone.
 	_build_crate(Vector3(6, 0, 6))
 
+	# The Engineers' Tent, across the base from the crate.
+	_build_engineers_tent(Vector3(-7, 0, 7))
+
 	# Perimeter woods to break sightlines and give wander routes.
 	for i in TREE_COUNT:
 		var angle := randf() * TAU
@@ -243,6 +248,37 @@ func _build_crate(pos: Vector3) -> void:
 	add_child(zone)
 	_pending_crate_zone = zone
 
+## Khaki canvas tent with a peaked roof — deliberately nothing like the
+## crate's brown box, so the two are never confused at a glance.
+func _build_engineers_tent(pos: Vector3) -> void:
+	_add_box(self, Vector3(4.5, 2.2, 3.2), pos + Vector3(0, 1.1, 0), Color(0.55, 0.5, 0.3))
+
+	# Peaked roof: a 3-sided prism laid on its side.
+	var roof := MeshInstance3D.new()
+	var prism := CylinderMesh.new()
+	prism.top_radius = 2.0
+	prism.bottom_radius = 2.0
+	prism.height = 4.6
+	prism.radial_segments = 3
+	roof.mesh = prism
+	roof.position = pos + Vector3(0, 2.6, 0)
+	roof.rotation_degrees = Vector3(0, 0, 90)   # lay the prism along X
+	var roof_mat := StandardMaterial3D.new()
+	roof_mat.albedo_color = Color(0.35, 0.34, 0.22)
+	roof.material_override = roof_mat
+	add_child(roof)
+
+	var zone := EngineersTentZone.new()
+	zone.position = pos
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(6.5, 3, 5.2)
+	col.shape = shape
+	col.position.y = 1.5
+	zone.add_child(col)
+	add_child(zone)
+	_pending_tent_zone = zone
+
 # --- UI -------------------------------------------------------------------
 func _build_ui() -> void:
 	_build_nvg_overlay()
@@ -257,6 +293,13 @@ func _build_ui() -> void:
 	if _pending_crate_zone:
 		_pending_crate_zone.crate_ui = _crate_ui
 		_pending_crate_zone.hud = _hud
+
+	_build_mode = BuildMode.new()
+	add_child(_build_mode)
+	_build_mode.setup(player, _hud)
+	if _pending_tent_zone:
+		_pending_tent_zone.build_mode = _build_mode
+		_pending_tent_zone.hud = _hud
 
 func _build_nvg_overlay() -> void:
 	# Green tint sits under the HUD (layer 5) so HUD text stays readable.

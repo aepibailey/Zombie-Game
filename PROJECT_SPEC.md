@@ -217,6 +217,20 @@ The Day gate is removed — the crate works in **both phases**.
 - No separate "money" layer — keep it simple.
 - The crate's purchase flow supports an optional **prerequisite item** (`WeaponData.requires`): an item can require another to be owned first. Unused by weapons today; it exists so future enablers (Radio → UAV/Apache/supply drop) need no new plumbing.
 
+## Engineers' Tent & build mode (in progress)
+**Lore:** the engineers are civilian construction workers sheltering at the patrol base. They're too frightened to work at night, so the tent is **Day only** — unlike the supply crate, which is usable in both phases. They build fortifications for points.
+
+**Shell (implemented):**
+- An `EngineersTentZone` Area3D at `(-7, 0, 7)`, across the base from the crate. Khaki canvas box with a peaked roof — deliberately unlike the crate's brown box.
+- Opens with `E` during **Day**. At night it shows *"The engineers won't leave the tent after dark."* and does not open.
+- On entry the **day timer pauses** (`GameManager.set_paused`), the view lifts to a top-down camera, and the build UI opens. **The player body stays where it is** — only control is suspended.
+- The camera is **orthogonal**, not perspective: a build view wants consistent scale across the map, and zoom collapses to a single `size` value. Default `size = 72` frames the 60×60m map with margin.
+- **Pan** with WASD or middle-mouse drag (clamped to ±34m so the base can't be lost); **zoom** with the wheel or `[` / `]`, between 24 and 90.
+- `Esc` exits, restores the first-person camera, and resumes the timer. Re-enterable freely during a Day.
+- Tunables on the BuildMode node: `default_zoom`, `min_zoom`, `max_zoom`, `zoom_step`, `pan_speed`, `camera_height`, `pan_limit`.
+
+*Still to come: obstacle palette, ghost placement and validation, navmesh strategy, the four obstacle types, new zombie states, and pricing.*
+
 ## Roadmap
 Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.
 

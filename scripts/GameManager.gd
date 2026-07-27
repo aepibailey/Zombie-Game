@@ -21,6 +21,7 @@ const DAY_LENGTH: float = 30.0
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
 var night_number: int = 0        # incremented at the start of each night
+var paused := false              # true while build mode holds the clock
 
 func _ready() -> void:
 	_ensure_input_actions()
@@ -36,7 +37,13 @@ func _ensure_input_actions() -> void:
 		ev.physical_keycode = KEY_E
 		InputMap.action_add_event("interact", ev)
 
+## Halts the phase clock. Build mode uses this so planning costs no daylight.
+func set_paused(p: bool) -> void:
+	paused = p
+
 func _process(delta: float) -> void:
+	if paused:
+		return
 	time_left -= delta
 	time_updated.emit(time_left, current_phase)
 	if time_left <= 0.0:
