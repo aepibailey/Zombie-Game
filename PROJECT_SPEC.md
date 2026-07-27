@@ -246,7 +246,28 @@ The Day gate is removed — the crate works in **both phases**.
 | Zombie ditch | 10 × 2 × 1m | 35 | no | no |
 | Minefield | 10 × 5m | 50 | no | no |
 
-*Still to come: navmesh strategy, obstacle behaviour (destructible sandbags, entanglement, trapping, mines), the new zombie states, and repair/persistence.*
+### Navmesh strategy (implemented) — threaded rebake
+
+**Chosen: full `NavigationRegion3D.bake_navigation_mesh(on_thread = true)`, not `NavigationObstacle3D` carving.**
+
+Why carving was rejected:
+- `NavigationObstacle3D`'s **avoidance** mode (RVO) doesn't change the navmesh at all — agents steer locally around a radius. For a **10m wall** that's the wrong shape entirely: zombies would path *through* the wall and then grind along it, instead of routing around the end. Avoidance solves "don't bump into each other", not "this line is impassable".
+- Its **navmesh-affecting** mode is applied *during a bake* anyway, so it doesn't avoid the rebake — it just changes what the bake reads. Given the sandbags already have real static collision, a plain rebake gets the same result with one less moving part.
+
+Why a rebake is affordable here, including the unpaused case:
+- The bake runs **on a worker thread**. While it runs the **old navmesh stays live**, so a mid-night breach costs no frame hitch — zombies keep moving on stale paths for a few hundred ms and then re-route. That reads as "they notice the breach a moment later", which is the behaviour we want anyway.
+- Requests are **coalesced**: several placements, or several sections breaching at once, produce one bake rather than one each. A bake requested while another is running is queued behind it.
+- The startup bake is the only synchronous one, because nothing is moving yet and the first path query must not race it.
+
+Configuration:
+- The navmesh parses **`PARSED_GEOMETRY_STATIC_COLLIDERS` on collision layer 1**, not mesh instances. Only things with real collision block pathing — so a sandbag wall carves the navmesh, while the ditch's sunken visual and the minefield's marker plate (both collider-less) correctly do not.
+- Placed obstacles are parented to an `Obstacles` node **under the `NavigationRegion3D`** so rebakes see them.
+- Only `solid` obstacles trigger a rebake; wire, ditch and minefield don't change pathing.
+- Each bake logs its duration: `[NAVMESH] rebake finished in N ms (reason)`.
+
+**Also fixed here:** the supply crate and Engineers' Tent were parented to `Main` rather than the nav region, so they were never in the navmesh and zombies pathed straight through both. They're now nav-region children.
+
+*Still to come: obstacle behaviour (destructible sandbags, entanglement, trapping, mines), the new zombie states, and repair/persistence.*
 
 ## Roadmap
 Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.

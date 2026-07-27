@@ -48,6 +48,13 @@ var _sun: DirectionalLight3D
 var _env: Environment
 var _sky_mat: ProceduralSkyMaterial
 var _nav_region: NavigationRegion3D
+## Parent for placed obstacles — sits under the nav region so rebakes see them.
+var obstacles_root: Node3D
+var _nav_rebake_pending := false
+var _nav_rebake_queued := false
+var _nav_baking := false
+var _nav_bake_started_us := 0
+var _nav_rebake_reason := ""
 var _zombies: Array = []
 var _hud: HUD
 var _crate_ui: SupplyCrateUI
@@ -85,7 +92,11 @@ func _ready() -> void:
 
 	# Bake the navmesh after the geometry is in the tree, then let the
 	# NavigationServer sync for a frame before anything queries a path.
+	# Synchronous here only: nothing is moving yet, and the first path query
+	# must not race an unfinished bake.
 	await get_tree().physics_frame
+	_nav_rebake_reason = "initial bake"
+	_nav_bake_started_us = Time.get_ticks_usec()
 	_nav_region.bake_navigation_mesh(false)
 
 # --- Lighting / atmosphere -----------------------------------------------
@@ -140,8 +151,20 @@ func _build_world() -> void:
 	nav_mesh.agent_height = 1.8
 	nav_mesh.agent_max_climb = 0.5
 	nav_mesh.agent_max_slope = 45.0
+	# Parse STATIC COLLIDERS, not mesh instances. Only things with real
+	# collision should block pathing — which means a sandbag wall carves the
+	# navmesh while the ditch's sunken visual and the minefield's flat marker
+	# plate (both collider-less) correctly do not.
+	nav_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
+	nav_mesh.geometry_collision_mask = 1
 	_nav_region.navigation_mesh = nav_mesh
 	add_child(_nav_region)
+	_nav_region.bake_finished.connect(_on_navmesh_baked)
+
+	# Placed obstacles live UNDER the nav region so a rebake picks them up.
+	obstacles_root = Node3D.new()
+	obstacles_root.name = "Obstacles"
+	_nav_region.add_child(obstacles_root)
 
 	# Ground: 60x60 clearing.
 	_add_box(_nav_region, Vector3(MAP_HALF * 2.0, 1.0, MAP_HALF * 2.0),
@@ -231,8 +254,8 @@ func _add_tree(parent: Node, pos: Vector3) -> void:
 func _build_crate(pos: Vector3) -> void:
 	_crate_position = pos   # anchor for guaranteed resupply drops
 	# Blockout crate: a wooden box with a lighter lid. (No parachute for v1.)
-	_add_box(self, Vector3(1.6, 1.4, 1.6), pos + Vector3(0, 0.7, 0), Color(0.5, 0.35, 0.18))
-	_add_box(self, Vector3(1.7, 0.15, 1.7), pos + Vector3(0, 1.45, 0), Color(0.62, 0.46, 0.26))
+	_add_box(_nav_region, Vector3(1.6, 1.4, 1.6), pos + Vector3(0, 0.7, 0), Color(0.5, 0.35, 0.18))
+	_add_box(_nav_region, Vector3(1.7, 0.15, 1.7), pos + Vector3(0, 1.45, 0), Color(0.62, 0.46, 0.26))
 
 	var zone := SupplyCrateZone.new()
 	zone.position = pos
@@ -251,7 +274,7 @@ func _build_crate(pos: Vector3) -> void:
 ## Khaki canvas tent with a peaked roof — deliberately nothing like the
 ## crate's brown box, so the two are never confused at a glance.
 func _build_engineers_tent(pos: Vector3) -> void:
-	_add_box(self, Vector3(4.5, 2.2, 3.2), pos + Vector3(0, 1.1, 0), Color(0.55, 0.5, 0.3))
+	_add_box(_nav_region, Vector3(4.5, 2.2, 3.2), pos + Vector3(0, 1.1, 0), Color(0.55, 0.5, 0.3))
 
 	# Peaked roof: a 3-sided prism laid on its side.
 	var roof := MeshInstance3D.new()
@@ -296,7 +319,7 @@ func _build_ui() -> void:
 
 	_build_mode = BuildMode.new()
 	add_child(_build_mode)
-	_build_mode.setup(player, _hud)
+	_build_mode.setup(player, _hud, obstacles_root, self)
 	if _pending_tent_zone:
 		_pending_tent_zone.build_mode = _build_mode
 		_pending_tent_zone.hud = _hud
@@ -441,6 +464,44 @@ func _process(delta: float) -> void:
 		_wave_spawned += 1
 		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
+
+# --- Navmesh ---------------------------------------------------------------
+## Rebake the navigation mesh so zombies path around newly placed obstacles —
+## and back through the gap when a sandbag section is destroyed.
+##
+## THREADED on purpose: destruction happens mid-night in an unpaused context,
+## and a synchronous bake there would hitch the frame. While the thread runs
+## the OLD navmesh stays live, so zombies keep moving on stale paths for a
+## few hundred milliseconds and then re-route — which is exactly the desired
+## "they notice the breach a moment later" behaviour.
+##
+## Calls are coalesced: several placements or simultaneous breaches produce a
+## single bake rather than one each.
+func request_navmesh_rebake(reason: String = "") -> void:
+	_nav_rebake_reason = reason
+	if _nav_rebake_pending:
+		return
+	_nav_rebake_pending = true
+	_do_navmesh_rebake.call_deferred()
+
+func _do_navmesh_rebake() -> void:
+	_nav_rebake_pending = false
+	if _nav_baking:
+		# A bake is already running; queue one more pass behind it.
+		_nav_rebake_queued = true
+		return
+	_nav_baking = true
+	_nav_bake_started_us = Time.get_ticks_usec()
+	_nav_region.bake_navigation_mesh(true)   # on_thread
+
+func _on_navmesh_baked() -> void:
+	var ms := float(Time.get_ticks_usec() - _nav_bake_started_us) / 1000.0
+	print("[NAVMESH] rebake finished in %.1f ms%s" % [
+		ms, "  (%s)" % _nav_rebake_reason if _nav_rebake_reason != "" else ""])
+	_nav_baking = false
+	if _nav_rebake_queued:
+		_nav_rebake_queued = false
+		request_navmesh_rebake(_nav_rebake_reason)
 
 func _apply_hitbox_debug() -> void:
 	for z in _zombies:

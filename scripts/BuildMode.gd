@@ -59,15 +59,13 @@ var _ghost_valid := false
 var _ghost_pos := Vector3.ZERO
 var _placed: Array = []
 var _obstacles_root: Node3D
+var _world: Node = null
 var _sfx_confirm: AudioStreamPlayer
 var _sfx_deny: AudioStreamPlayer
 var _seal_cache_key := ""
 var _seal_cached := false
 
 func _ready() -> void:
-	_obstacles_root = Node3D.new()
-	_obstacles_root.name = "Obstacles"
-	add_child(_obstacles_root)
 	_build_camera()
 	_build_ui()
 	_sfx_confirm = _mk_sfx(SFX_CONFIRM)
@@ -83,9 +81,13 @@ func _mk_sfx(path: String) -> AudioStreamPlayer:
 	add_child(p)
 	return p
 
-func setup(player: Player, hud: HUD) -> void:
+## `obstacles_root` must live under the NavigationRegion3D so a rebake sees
+## placed obstacles; `world` is the node that owns the rebake request.
+func setup(player: Player, hud: HUD, obstacles_root: Node3D, world: Node) -> void:
 	_player = player
 	_hud = hud
+	_obstacles_root = obstacles_root
+	_world = world
 
 func _build_camera() -> void:
 	_cam = Camera3D.new()
@@ -479,6 +481,9 @@ func _try_place() -> void:
 	if _sfx_confirm.stream:
 		_sfx_confirm.play()
 	_seal_cache_key = ""      # roster changed; recompute the seal test
+	# Only solid obstacles change pathing, so only they need a rebake.
+	if t.solid and _world and _world.has_method("request_navmesh_rebake"):
+		_world.request_navmesh_rebake("placed %s" % t.id)
 	_refresh()
 
 func placed_obstacles() -> Array:
