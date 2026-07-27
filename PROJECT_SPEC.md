@@ -13,13 +13,20 @@ A lone Tier 1 operator holds a patrol base in the woods after everyone else is g
 ## Core Loop: Day/Night Cycle
 - **Day**: safe. The supply crate is open — spend points on weapons/attachments/ammo. No zombies spawn or move (they're wherever they ended the night, dormant).
 - **Night**: zombies spawn in the woods and activate. Player must survive until dawn.
-- Current playtest cadence: **30s day / 60s night** (`GameManager.DAY_LENGTH` / `NIGHT_LENGTH`). Spec default night is 6 min; shortened for iteration.
+- Current playtest cadence: **30s day / 120s night** (`GameManager.DAY_LENGTH` / `NIGHT_LENGTH`). Spec default night is 6 min. Night length is the most-tuned value, so it's an editable var rather than a const.
 
 ### Night scaling (implemented)
 Escalation is live (formerly a v2 item). Tunables are `@export` vars on the **Main** node.
 - **Spawn count per night:** `spawn_count = base_spawn + spawn_per_night * (night_number - 1)` → `base_spawn = 6`, `spawn_per_night = 3` (Night 1 = 6, Night 2 = 9, Night 3 = 12, …).
 - **Concurrent cap:** never more than `max_concurrent = 20` zombies alive at once; remaining spawns queue and trickle in as others die.
-- Zombies trickle in; the whole allotment never appears at once. The spawn interval **scales with pool size** so bigger nights still deliver: the pool is spread over `spawn_window_frac = 0.75` of the night, clamped to `spawn_interval_min = 0.6s` … `spawn_interval_max = 9.0s`, with `spawn_jitter = ±35%` per spawn.
+- Zombies trickle in; the whole allotment never appears at once. The spawn interval is **derived from night length and pool size**, never hardcoded: the pool is spread over `spawn_window_frac = 0.75` of the night, clamped to `spawn_interval_min = 0.6s` … `spawn_interval_max = 20.0s`, with `spawn_jitter = ±35%` per spawn. At 120s nights that gives a 90s spawn window and a 30s tail for cleanup: **Night 1 = 15.0s, Night 3 = 7.5s, Night 5 = 5.0s, Night 10 = 2.7s**.
+
+### All-clear (implemented)
+- **`Main.alive_count()` is the single source of truth** — derived by walking the zombie roster each call, never a running counter. Both the HUD readout and the all-clear condition read it, so they cannot disagree.
+- It uses `Zombie.is_alive()` (a `_dead` flag) rather than `is_instance_valid()`, because `queue_free()` is deferred and a corpse stays valid for the rest of the frame.
+- The prompt requires **both**: the spawn queue exhausted **and** alive count exactly zero. Zombies in any state count as alive.
+- **Safety re-check** every frame: if the prompt is showing while anything is alive, it's retracted automatically — a future regression becomes a flicker, not a game-breaking prompt.
+- Every all-clear evaluation prints queue remaining, alive count, and each live zombie's state.
 - Survivors left alive at dawn carry over and are folded into the next night's total.
 - A debug line prints at each night start: night number, total to spawn, cap, zombie HP, and the computed spawn interval.
 

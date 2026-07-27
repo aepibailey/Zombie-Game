@@ -60,6 +60,7 @@ var _target_pos: Vector3 = Vector3.ZERO      # fixed nav goal (wander pt or nois
 var _last_noise_radius := 0.0                # radius of the noise being investigated
 var _last_known_player: Vector3 = Vector3.ZERO
 var _hit_flash := 0.0                         # brief white flash timer when shot
+var _dead := false                            # set once, in _die()
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
@@ -335,6 +336,21 @@ func take_damage(amount: int, headshot: bool) -> int:
 		_die()
 	return dmg
 
+## True until this zombie has actually died. `queue_free()` is deferred, so a
+## corpse stays instance-valid for the rest of the frame — callers must use
+## this rather than is_instance_valid() to decide whether it still counts.
+func is_alive() -> bool:
+	return not _dead
+
+## Human-readable current state, for the all-clear debug line.
+func state_name() -> String:
+	match state:
+		State.WANDER: return "WANDER"
+		State.INVESTIGATE: return "INVESTIGATE"
+		State.CHASE: return "CHASE"
+		State.ATTACK: return "ATTACK"
+		_: return "UNKNOWN(%d)" % state
+
 ## Toggle translucent hitbox volumes (debug affordance).
 func set_hitbox_debug(on: bool) -> void:
 	if _hitbox_debug == null and on:
@@ -378,6 +394,14 @@ func _flash_white() -> void:
 		body_mesh.material_override.albedo_color = Color(1, 1, 1)
 
 func _die() -> void:
+	# Re-entry guard. queue_free() is DEFERRED, so this node stays valid for the
+	# rest of the frame — and a shotgun blast delivers all 9 pellets within a
+	# single frame. Without this, every pellet landing after the killing one
+	# re-ran the whole death path: duplicate `died` signals (which drove the
+	# wave's alive count below zero) and duplicate point awards.
+	if _dead:
+		return
+	_dead = true
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
 	# Shots-to-kill telemetry for tuning the HP step size.

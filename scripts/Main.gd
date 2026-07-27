@@ -21,7 +21,7 @@ const TREE_COUNT := 44
 const FIRST_SPAWN_DELAY := 1.5
 @export var spawn_window_frac: float = 0.75   # fraction of the night to spawn over
 @export var spawn_interval_min: float = 0.6   # floor, so huge nights stay sane
-@export var spawn_interval_max: float = 9.0   # ceiling, so tiny nights still trickle
+@export var spawn_interval_max: float = 20.0  # ceiling, so tiny nights still trickle
 @export var spawn_jitter: float = 0.35        # ±35% randomisation per spawn
 
 # --- Zombie health scaling (tunable) --------------------------------------
@@ -66,7 +66,6 @@ var _crate_position := Vector3.ZERO
 # --- Nightly wave state ---------------------------------------------------
 var _wave_total := 0            # zombies to spawn this night
 var _wave_spawned := 0          # how many have spawned so far
-var _wave_alive := 0            # how many are currently alive
 var _spawn_timer := 0.0         # countdown to the next trickle spawn
 var _spawn_interval := 4.0      # this night's base interval (scaled to pool size)
 var _all_clear_shown := false   # prompt fires once per all-clear event
@@ -337,7 +336,7 @@ func _begin_night() -> void:
 	var new_pool: int = base_spawn + spawn_per_night * (GameManager.night_number - 1)
 	_wave_total = carryover + new_pool
 	_wave_spawned = carryover
-	_wave_alive = carryover
+	# alive count is derived (see alive_count()), never tracked separately.
 	_spawn_timer = FIRST_SPAWN_DELAY
 	_spawn_interval = _compute_spawn_interval(new_pool)
 	_all_clear_shown = false
@@ -384,15 +383,19 @@ func _process(delta: float) -> void:
 	_update_nvg_daylight(delta)
 	if _hud and _hud.debug_audio_visible():
 		_update_audio_debug()
+	# Safety net: if the prompt is up while something is still alive, retract it.
+	# Runs every frame so a stale prompt can't persist even if no death fires.
+	if _all_clear_shown and not GameManager.is_day() and alive_count() > 0:
+		_check_all_clear()
+
 	if GameManager.is_day() or _wave_spawned >= _wave_total:
 		return
 	_spawn_timer -= delta
 	# Remaining spawns queue while we're at the concurrent cap; the timer stays
 	# elapsed so the next slot fills as soon as a zombie dies.
-	if _spawn_timer <= 0.0 and _wave_alive < max_concurrent:
+	if _spawn_timer <= 0.0 and alive_count() < max_concurrent:
 		_spawn_zombie()
 		_wave_spawned += 1
-		_wave_alive += 1
 		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
 
@@ -446,20 +449,56 @@ func _spawn_zombie() -> void:
 		z.set_hitbox_debug(true)
 	_zombies.append(z)
 
+## THE single source of truth for "how many zombies are alive". Derived from
+## the actual roster every time rather than a running counter, so it cannot
+## drift out of step with reality. Both the HUD and the all-clear read this.
+## Uses is_alive() rather than is_instance_valid() because queue_free() is
+## deferred — a corpse stays valid for the rest of the frame.
+func alive_count() -> int:
+	var n := 0
+	for z in _zombies:
+		if is_instance_valid(z) and z.is_alive():
+			n += 1
+	return n
+
 func _on_zombie_died() -> void:
-	_wave_alive = maxi(0, _wave_alive - 1)
+	_prune_zombies()
 	_update_wave_hud()
 	_check_all_clear()
 
 func _check_all_clear() -> void:
-	if GameManager.is_day() or _all_clear_shown:
+	if GameManager.is_day():
 		return
-	if _wave_spawned >= _wave_total and _wave_alive <= 0:
+	var alive := alive_count()
+	var remaining := maxi(0, _wave_total - _wave_spawned)
+
+	# Safety re-check: if the prompt is up but something is still alive, pull
+	# it down. Unreachable while the condition below is correct — this turns a
+	# future regression into a flicker instead of a game-breaking prompt.
+	if _all_clear_shown and alive > 0:
+		_all_clear_shown = false
+		_hud.hide_all_clear()
+		print("[ALL-CLEAR] retracted — %d still alive" % alive)
+		return
+	if _all_clear_shown:
+		return
+
+	# BOTH conditions required: the spawn queue is exhausted AND nothing is
+	# left alive. Neither alone is sufficient.
+	if remaining <= 0 and alive <= 0:
 		_all_clear_shown = true
 		_hud.show_all_clear(char(KEY_SKIP_TO_DAY), char(KEY_FINISH_NIGHT))
+		print("[ALL-CLEAR] shown — queue remaining 0, alive 0")
+	else:
+		var states: Array = []
+		for z in _zombies:
+			if is_instance_valid(z) and z.is_alive():
+				states.append(z.state_name())
+		print("[ALL-CLEAR] not yet — queue remaining %d, alive %d, states: %s" % [
+			remaining, alive, ", ".join(states) if states.size() > 0 else "none"])
 
 func _update_wave_hud() -> void:
-	_hud.set_wave_status(GameManager.night_number, _wave_spawned, _wave_total, _wave_alive)
+	_hud.set_wave_status(GameManager.night_number, _wave_spawned, _wave_total, alive_count())
 
 # --- Global key input (NVG toggle + all-clear prompt) --------------------
 func _unhandled_input(event: InputEvent) -> void:
