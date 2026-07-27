@@ -92,7 +92,10 @@ func _physics_process(_delta: float) -> void:
 		return
 	_inside = _inside.filter(func(z): return is_instance_valid(z) and z.is_alive())
 	for z in _inside:
-		var local := (z.global_position - global_position).rotated(Vector3.UP, -rotation.y)
+		# Explicit: `z` comes from an untyped array, so its global_position is
+		# a Variant and the expression has no inferrable type.
+		var zpos: Vector3 = z.global_position
+		var local: Vector3 = (zpos - global_position).rotated(Vector3.UP, -rotation.y)
 		for m in _mines:
 			if not m["live"]:
 				continue
