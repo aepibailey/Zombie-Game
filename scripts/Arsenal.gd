@@ -23,6 +23,11 @@ func _ready() -> void:
 		"fire_interval": 0.09, "reload_time": 2.0,
 		"body_damage": 30, "hip_spread_radius": 55.0, "recoil_per_shot": 0.025,
 		"max_range": 200.0, "noise_unsuppressed": 45.0, "noise_suppressed": 10.0, "cost": 15,
+		# Full auto walks off target fast; semi stays the precise choice at range.
+		"auto_penalty": WeaponData.AutoPenalty.RAMP,
+		"auto_recoil_start_mult": 1.4, "auto_recoil_growth": 0.12,
+		"auto_recoil_max_mult": 3.5, "horizontal_recoil": 0.014,
+		"bloom_min_deg": 0.3, "bloom_max_deg": 4.0, "bloom_shots_to_max": 10,
 	})
 	_add({
 		"id": "spas12", "display_name": "SPAS-12", "fire_mode": WeaponData.FireMode.SEMI,
@@ -31,6 +36,9 @@ func _ready() -> void:
 		"body_damage": 14, "pellets": 8, "pellet_spread_deg": 4.0,
 		"hip_spread_radius": 45.0, "recoil_per_shot": 0.09,
 		"max_range": 40.0, "noise_unsuppressed": 50.0, "noise_suppressed": 12.0, "cost": 20,
+		# Tube-fed: 0.35s in + 0.55s/shell + 0.35s out, interruptible by firing.
+		"shell_reload": true, "shell_time": 0.55,
+		"reload_start": 0.35, "reload_end": 0.35,
 	})
 	_add({
 		"id": "m249", "display_name": "M249 SAW", "fire_mode": WeaponData.FireMode.AUTO,
@@ -38,6 +46,11 @@ func _ready() -> void:
 		"fire_interval": 0.08, "reload_time": 5.0,
 		"body_damage": 28, "hip_spread_radius": 110.0, "recoil_per_shot": 0.03,
 		"max_range": 220.0, "noise_unsuppressed": 55.0, "noise_suppressed": 14.0, "cost": 30,
+		# Penalty is driven by stance, not shot count: controllable prone-ish
+		# (crouched), sloppy standing, near-useless on the move.
+		"auto_penalty": WeaponData.AutoPenalty.STANCE,
+		"horizontal_recoil": 0.016,
+		"bloom_min_deg": 0.3, "bloom_max_deg": 4.0, "bloom_shots_to_max": 10,
 	})
 
 func _add(dict: Dictionary) -> void:

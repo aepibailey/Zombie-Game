@@ -82,6 +82,37 @@ Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 
 Starting loadout: M17 only, per the operator-stranded premise. No attachments by default.
 
+### Weapon handling (implemented)
+**Full-auto penalty** (`WeaponData.auto_penalty`). Semi-auto is unaffected and stays the precise choice at range.
+- **HK 416 — `RAMP`:** vertical recoil starts at **1.4x** the semi value and climbs **12% per consecutive shot**, capping at **3.5x**. Horizontal recoil is random left/right per shot on the same curve, so the muzzle *walks* unpredictably rather than straight up. Cone bloom runs **0.3° → 4.0° over 10 consecutive shots**. The accumulator resets after **0.4s** without firing (`auto_reset_time`).
+- **M249 SAW — `STANCE`:** same recoil/bloom system, but the multiplier is driven by stance and re-evaluated **per shot in real time**: moving **3.0x**, standing still **1.5x**, crouched **1.1x** (`stance_mult_moving` / `_standing` / `_crouched`, `@export` on Player). Starting to move mid-burst degrades control immediately.
+- Bloom applies in ADS too — that *is* the penalty.
+
+**SPAS-12 — per-shell reload** (`shell_reload`): `reload_start` 0.35s + **0.55s per shell** + `reload_end` 0.35s. Two shells ≈ **1.8s**, a full eight ≈ **5.1s**. The reload is **interruptible** — firing after any completed shell cancels the remainder and fires immediately.
+
+### Laser (implemented)
+Rendered as a **beam plus a terminal dot**, not just a dot. The beam is drawn muzzle → raycast hit and **ends at the hit** (never passes through geometry); the dot is a quad laid on the impact surface, aligned to its normal.
+- **Red** (default): visible **with or without NVGs** and dramatically brighter than IR — the obvious tradeoff against the 10m detection rule. Beam radius **0.012m**, alpha **0.35**, emission **4.0**, dot **0.04m**.
+- **IR** (attachment, 8 pts): rendered **only when NVGs are on**, and **invisible to zombies** — the 10m reveal is skipped entirely while it's equipped. Beam radius **0.006m**, alpha **0.15**, emission **1.2**, dot **0.025m**.
+- All eight values are `@export` on Player (`laser_red_*` / `laser_ir_*`) — starting points, tune by eye.
+
+### Suppressor audio (implemented)
+Each weapon has **two audio states**, selected purely by whether a suppressor is attached — **fully independent of the noise-radius logic** (40m → 8m). One attachment drives two separate systems.
+- Unsuppressed: the existing report, unchanged.
+- Suppressed: routed through a runtime-created **"Suppressed" audio bus** (low-pass at 900Hz + compressor for a shortened tail), ~13dB quieter and pitched for a snappier decay, with the **mechanical action mixed up** so it reads as mostly slide/bolt noise. Placeholder built from the existing sample via bus effects.
+
+### NVGs in daylight (implemented)
+Leaving NVGs on during Day ramps to a heavy **gain-limit whiteout** over ~0.5s: near-opaque white overlay plus a large glow/bloom boost. Navigable but precise aiming is effectively impossible. A **`NVG — GAIN LIMIT`** HUD indicator shows while active so it reads as intentional. Clears immediately when NVGs are toggled off or Night begins.
+
+### Guaranteed ammo drops (implemented — stopgap)
+A temporary resupply until the purchasable supply-drop enabler exists.
+- Spawns at the **dawn following nights 3, 5 and 10** (`EnablerManager.guaranteed_drop_nights`, an editable array). Scheduling deliberately lives **outside** the drop scene so the whole stopgap can be disabled wholesale.
+- Grants **1 magazine per owned weapon** (nothing for unowned), always via `AmmoManager.grant_ammo()`.
+- **Placement:** random within `drop_radius` (5m) of the crate, at least **2m from the player**, on flat walkable ground, with a box-shape check rejecting anything intersecting geometry. Re-rolls up to **10 times**, then falls back to a fixed known-good offset.
+- Available for the whole Day and **persists if uncollected** — it never despawns at nightfall.
+- Visually distinct from the crate (emissive orange cylinder + tall beacon, readable under NVGs). Collect with `E`; grants are logged and summarised on the HUD. A `RESUPPLY — DROPPED NEAR BASE` message fires at the dawn it spawns.
+- `SupplyDrop` is a **reusable scene** taking a contents config, spawn anchor, and radius — the future purchasable enabler instances the same scene with the player as anchor.
+
 ### Ammunition scarcity (implemented)
 - **Every weapon starts with exactly 2 magazines total — one loaded, one spare** (`WeaponData.starting_mags = 2`). M17 = 17+17, HK416 = 30+30, SPAS-12 = 8+8, M249 = 100+100.
 - Weapons bought at the crate arrive with the same 2 magazines — no more.
@@ -121,8 +152,12 @@ The supply crate store is **tab-based and data-driven**, built from the `StoreCa
 - No separate "money" layer — keep it simple.
 - The crate's purchase flow supports an optional **prerequisite item** (`WeaponData.requires`): an item can require another to be owned first. Unused by weapons today; it exists so future enablers (Radio → UAV/Apache/supply drop) need no new plumbing.
 
+## Roadmap
+Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.
+
 ## NVGs
 - v1: always-on toggle, no battery mechanic. (Battery-limited NVGs flagged as a v2 tension mechanic.)
+- Daylight use is punished — see "NVGs in daylight" above.
 - Green-tint post-process shader, reduced far-clip / grain for atmosphere.
 
 ## Map (v1)

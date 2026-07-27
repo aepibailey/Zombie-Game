@@ -43,6 +43,19 @@ const WOODS_INNER_RADIUS := 22.0        # beyond this from map centre = woods
 const LASER_REVEAL_RANGE := 10.0
 const LASER_MAX_DRAW := 100.0
 
+# --- Laser appearance (tune these by eye in the Inspector) ----------------
+# RED: visible with or without NVGs, dramatically brighter than IR — the
+# obvious tradeoff against the 10m detection rule.
+@export var laser_red_beam_radius: float = 0.012
+@export var laser_red_beam_alpha: float = 0.35
+@export var laser_red_emission: float = 4.0
+@export var laser_red_dot_size: float = 0.04
+# IR: rendered ONLY when NVGs are on. Dim, thin, disciplined.
+@export var laser_ir_beam_radius: float = 0.006
+@export var laser_ir_beam_alpha: float = 0.15
+@export var laser_ir_emission: float = 1.2
+@export var laser_ir_dot_size: float = 0.025
+
 # --- Weapon tuning (per-weapon stats live in WeaponData / Arsenal) --------
 ## Weapon rays hit the world (layer 1) and zombie head hitboxes (layer 3).
 ## Other Area3Ds (e.g. the supply crate trigger) live on layer 2 and are ignored.
@@ -67,6 +80,12 @@ const MAX_SHAKE_POS := 0.05          # metres at full trauma
 const MAX_RECOIL := 0.12
 const RECOIL_RECOVER := 12.0
 const MUZZLE_FLASH_TIME := 0.05
+
+# Stance multipliers for STANCE-penalty weapons (M249). Applied in real time,
+# so starting to move mid-burst degrades control immediately.
+@export var stance_mult_moving: float = 3.0
+@export var stance_mult_standing: float = 1.5
+@export var stance_mult_crouched: float = 1.1
 
 # First-person weapon viewmodel (camera-local placement).
 const VM_HIP_POS := Vector3(0.22, -0.22, -0.45)
@@ -112,24 +131,35 @@ var _spawn_point := Vector3.ZERO
 # Feedback runtime state.
 var _shake_trauma := 0.0
 var _recoil := 0.0
+var _recoil_h := 0.0        # horizontal muzzle walk (auto weapons)
+var _auto_shots := 0        # consecutive auto shots (drives RAMP + bloom)
+var _auto_idle := 0.0       # time since the last shot
+var _reload_cancel := false # set when a shell reload is interrupted by firing
 var _muzzle_timer := 0.0
 var _vm_recoil := 0.0
 var _muzzle_flash: Node3D
 var _viewmodel: Node3D
+var _laser_beam: MeshInstance3D
+var _laser_beam_mat: StandardMaterial3D
+var _laser_dot: MeshInstance3D
+var _laser_dot_mat: StandardMaterial3D
+## Set by Main when NVGs toggle — the IR laser is only rendered under NVGs.
+var nvg_active := false
 var _sfx_fire: AudioStreamPlayer
+var _sfx_fire_supp: AudioStreamPlayer
+var _sfx_action: AudioStreamPlayer
 var _sfx_hurt: AudioStreamPlayer
 var _sfx_impact: AudioStreamPlayer
 
 @onready var head: Node3D = $Head
 @onready var camera: Camera3D = $Head/Camera3D
 @onready var laser_ray: RayCast3D = $Head/Camera3D/LaserRay
-@onready var laser_dot: MeshInstance3D = $LaserDot
 
 func _ready() -> void:
 	add_to_group("player")
 	_spawn_point = global_position
 	camera.current = true
-	laser_dot.visible = false
+	_build_laser()
 	_set_mouse_captured(true)
 	laser_ray.target_position = Vector3(0, 0, -LASER_MAX_DRAW)
 	_build_listener()
@@ -158,7 +188,8 @@ func _physics_process(delta: float) -> void:
 	if control_enabled:
 		_handle_movement(delta)
 		_handle_noise(delta)
-		if ads_active:
+		# IR is invisible to zombies — no positional giveaway (spec).
+		if ads_active and not has_ir_laser():
 			_handle_laser_reveal()
 		# Full-auto: keep firing while the trigger is held (rate-limited in _fire).
 		if _wants_auto_fire() and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
@@ -174,7 +205,7 @@ func _physics_process(delta: float) -> void:
 	head.position.y = lerpf(head.position.y, target_y, delta * HEAD_LERP)
 
 	_update_feedback(delta)
-	_update_laser_dot()
+	_update_laser()
 
 func _handle_movement(_delta: float) -> void:
 	var input_dir := Vector3.ZERO
@@ -295,7 +326,15 @@ func _toggle_ads() -> void:
 
 # --- Weapon ---------------------------------------------------------------
 func _fire() -> void:
-	if reloading or fire_cooldown > 0.0:
+	if reloading:
+		# Tube-fed weapons abort the reload and fire immediately, as long as at
+		# least one shell has made it in. Core to how a shotgun plays.
+		if weapon.shell_reload and ammo > 0:
+			_reload_cancel = true
+			reloading = false
+		else:
+			return
+	if fire_cooldown > 0.0:
 		return
 	if ammo <= 0:
 		message.emit("*click* — empty. Press R to reload.")
@@ -305,16 +344,34 @@ func _fire() -> void:
 	fire_cooldown = weapon.fire_interval
 	ammo_changed.emit(ammo, reserve)
 
+	# Full-auto penalty: vertical kick scaled, plus unpredictable horizontal
+	# walk. Semi-auto is unaffected (multiplier stays 1.0).
+	var penalty := _auto_penalty_mult()
+	var bloom_deg := _current_bloom_deg()
+	_auto_shots += 1
+	_auto_idle = 0.0
+
 	# Fire feedback: muzzle flash, recoil kick, a touch of shake, and the report.
 	_muzzle_flash.visible = true
 	_muzzle_timer = MUZZLE_FLASH_TIME
-	_recoil = minf(MAX_RECOIL, _recoil + weapon.recoil_per_shot)
+	_recoil = minf(MAX_RECOIL, _recoil + weapon.recoil_per_shot * penalty)
+	_recoil_h += randf_range(-1.0, 1.0) * weapon.horizontal_recoil * penalty
+	_recoil_h = clampf(_recoil_h, -MAX_RECOIL, MAX_RECOIL)
 	_vm_recoil = VM_RECOIL_KICK
 	add_shake(FIRE_SHAKE)
-	if _sfx_fire.stream:
-		_sfx_fire.play()
 
 	var suppressed: bool = _suppressed.get(current_weapon_id, false)
+
+	# AUDIO state — keyed off the attachment only.
+	if suppressed:
+		if _sfx_fire_supp.stream:
+			_sfx_fire_supp.play()
+		if _sfx_action.stream:
+			_sfx_action.play()   # action noise dominates the suppressed mix
+	elif _sfx_fire.stream:
+		_sfx_fire.play()
+
+	# NOISE RADIUS — a separate system that happens to read the same attachment.
 	var noise_radius := weapon.noise_suppressed if suppressed else weapon.noise_unsuppressed
 	NoiseManager.emit_noise(global_position, noise_radius)
 
@@ -329,6 +386,10 @@ func _fire() -> void:
 
 	var from := camera.project_ray_origin(screen_point)
 	var base_dir := camera.project_ray_normal(screen_point)
+	# Auto bloom widens the cone as the burst continues (applies in ADS too —
+	# that IS the auto penalty).
+	if bloom_deg > 0.0:
+		base_dir = _jitter_dir(base_dir, bloom_deg)
 
 	# Shotguns fire multiple pellets, each jittered inside a cone.
 	for i in weapon.pellets:
@@ -374,6 +435,44 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 
 	_spawn_tracer(_muzzle_position(), impact)
 
+# --- Full-auto penalty ----------------------------------------------------
+## Recoil multiplier for this shot. 1.0 for semi-auto and NONE-penalty weapons.
+func _auto_penalty_mult() -> float:
+	if weapon == null or not _wants_auto_fire():
+		return 1.0
+	match weapon.auto_penalty:
+		WeaponData.AutoPenalty.RAMP:
+			# 1.4x on the first auto shot, +12% per consecutive shot, cap 3.5x.
+			var m: float = weapon.auto_recoil_start_mult * pow(
+				1.0 + weapon.auto_recoil_growth, float(_auto_shots))
+			return minf(m, weapon.auto_recoil_max_mult)
+		WeaponData.AutoPenalty.STANCE:
+			return _stance_mult()
+		_:
+			return 1.0
+
+## Real-time stance multiplier — re-evaluated per shot, so moving mid-burst
+## degrades control immediately and settles back when you stop.
+func _stance_mult() -> float:
+	if is_crouching:
+		return stance_mult_crouched
+	if is_moving:
+		return stance_mult_moving
+	return stance_mult_standing
+
+## Cone bloom in degrees for the shot about to be fired.
+func _current_bloom_deg() -> float:
+	if weapon == null or not _wants_auto_fire():
+		return 0.0
+	if weapon.auto_penalty == WeaponData.AutoPenalty.NONE:
+		return 0.0
+	var t: float = clampf(float(_auto_shots) / float(maxi(1, weapon.bloom_shots_to_max)), 0.0, 1.0)
+	var deg: float = lerpf(weapon.bloom_min_deg, weapon.bloom_max_deg, t)
+	# Stance weapons scale bloom by stance as well as recoil.
+	if weapon.auto_penalty == WeaponData.AutoPenalty.STANCE:
+		deg *= _stance_mult()
+	return deg
+
 # Random direction within a cone of the given half-angle (degrees).
 func _jitter_dir(dir: Vector3, spread_deg: float) -> Vector3:
 	var a := deg_to_rad(spread_deg)
@@ -387,6 +486,10 @@ func _jitter_dir(dir: Vector3, spread_deg: float) -> Vector3:
 func _reload() -> void:
 	if reloading or ammo >= weapon.mag_size or reserve <= 0:
 		return
+	if weapon.shell_reload:
+		_reload_shells()
+		return
+
 	reloading = true
 	var id := current_weapon_id
 	message.emit("Reloading…")
@@ -399,6 +502,31 @@ func _reload() -> void:
 	reserve = AmmoManager.get_reserve(id)
 	reloading = false
 	ammo_changed.emit(ammo, reserve)
+
+## Tube-fed reload: one shell at a time, so topping up 2 shells is far quicker
+## than filling all 8. Interruptible — firing after any completed shell aborts
+## the rest (see _fire).
+func _reload_shells() -> void:
+	reloading = true
+	_reload_cancel = false
+	var id := current_weapon_id
+	message.emit("Loading shells…")
+
+	await get_tree().create_timer(weapon.reload_start).timeout
+	while reloading and not _reload_cancel and current_weapon_id == id:
+		if ammo >= weapon.mag_size or AmmoManager.get_reserve(id) <= 0:
+			break
+		await get_tree().create_timer(weapon.shell_time).timeout
+		if _reload_cancel or current_weapon_id != id:
+			break
+		ammo += AmmoManager.take(id, 1)
+		reserve = AmmoManager.get_reserve(id)
+		ammo_changed.emit(ammo, reserve)
+
+	if not _reload_cancel and current_weapon_id == id:
+		await get_tree().create_timer(weapon.reload_end).timeout
+	if current_weapon_id == id:
+		reloading = false
 
 # --- Weapon inventory -----------------------------------------------------
 func _equip(id: String) -> void:
@@ -478,17 +606,117 @@ func _fire_mode_label() -> String:
 func owned_weapons() -> Array:
 	return owned
 
-func _update_laser_dot() -> void:
+# --- Laser (beam + terminal dot) -----------------------------------------
+func _build_laser() -> void:
+	# Beam: a unit-height cylinder scaled to the hit distance each frame.
+	_laser_beam = MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 1.0
+	cyl.bottom_radius = 1.0
+	cyl.height = 1.0
+	cyl.radial_segments = 6
+	cyl.rings = 0
+	_laser_beam.mesh = cyl
+	_laser_beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_laser_beam.top_level = true
+	_laser_beam_mat = _laser_material()
+	_laser_beam.material_override = _laser_beam_mat
+	_laser_beam.visible = false
+	add_child(_laser_beam)
+
+	# Dot: a quad laid flat on the impact surface (aligned to its normal).
+	_laser_dot = MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE
+	_laser_dot.mesh = quad
+	_laser_dot.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_laser_dot.top_level = true
+	_laser_dot_mat = _laser_material()
+	_laser_dot.material_override = _laser_dot_mat
+	_laser_dot.visible = false
+	add_child(_laser_dot)
+
+func _laser_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.emission_enabled = true
+	m.disable_receive_shadows = true
+	return m
+
+func has_ir_laser() -> bool:
+	return "ir_laser" in owned_items
+
+## Red is always visible; IR renders only under NVGs (invisible to the naked
+## eye, and invisible to zombies — see _handle_laser_reveal).
+func _laser_should_draw() -> bool:
 	if not ads_active:
-		laser_dot.visible = false
+		return false
+	return nvg_active if has_ir_laser() else true
+
+func _update_laser() -> void:
+	if not _laser_should_draw():
+		_laser_beam.visible = false
+		_laser_dot.visible = false
 		return
+
+	var ir := has_ir_laser()
+	var color := Color(0.6, 1.0, 0.6) if ir else Color(1.0, 0.05, 0.05)
+	var beam_r: float = laser_ir_beam_radius if ir else laser_red_beam_radius
+	var beam_a: float = laser_ir_beam_alpha if ir else laser_red_beam_alpha
+	var emission: float = laser_ir_emission if ir else laser_red_emission
+	var dot_size: float = laser_ir_dot_size if ir else laser_red_dot_size
+
+	_laser_beam_mat.albedo_color = Color(color.r, color.g, color.b, beam_a)
+	_laser_beam_mat.emission = color
+	_laser_beam_mat.emission_energy_multiplier = emission
+	_laser_dot_mat.albedo_color = Color(color.r, color.g, color.b, 1.0)
+	_laser_dot_mat.emission = color
+	_laser_dot_mat.emission_energy_multiplier = emission
+
+	# The beam starts at the muzzle and STOPS at the hit — it never passes
+	# through geometry.
+	var from := _muzzle_position()
 	laser_ray.force_raycast_update()
-	if laser_ray.is_colliding():
-		laser_dot.global_position = laser_ray.get_collision_point()
+	var hit_point: Vector3
+	var normal := Vector3.UP
+	var hit_something := laser_ray.is_colliding()
+	if hit_something:
+		hit_point = laser_ray.get_collision_point()
+		normal = laser_ray.get_collision_normal()
 	else:
-		laser_dot.global_position = laser_ray.global_position + \
+		hit_point = laser_ray.global_position + \
 			(-laser_ray.global_transform.basis.z) * LASER_MAX_DRAW
-	laser_dot.visible = true
+
+	var seg := hit_point - from
+	var length := seg.length()
+	if length < 0.05:
+		_laser_beam.visible = false
+		_laser_dot.visible = false
+		return
+
+	# Orient the cylinder (local +Y) along the beam.
+	_laser_beam.global_position = from + seg * 0.5
+	var up_ref := Vector3.UP
+	if absf(seg.normalized().dot(Vector3.UP)) > 0.99:
+		up_ref = Vector3.RIGHT
+	_laser_beam.look_at(hit_point, up_ref)
+	_laser_beam.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+	_laser_beam.scale = Vector3(beam_r, length, beam_r)
+	_laser_beam.visible = true
+
+	# Dot sits on the surface, facing along its normal, nudged off the face to
+	# avoid z-fighting.
+	if hit_something:
+		_laser_dot.global_position = hit_point + normal * 0.01
+		var dot_up := Vector3.UP
+		if absf(normal.dot(Vector3.UP)) > 0.99:
+			dot_up = Vector3.RIGHT
+		_laser_dot.look_at(hit_point + normal, dot_up)
+		_laser_dot.scale = Vector3(dot_size, dot_size, 1.0)
+		_laser_dot.visible = true
+	else:
+		_laser_dot.visible = false
 
 # --- Tracer ---------------------------------------------------------------
 # Approximate muzzle: offset down/right/forward of the eye so the tracer reads
@@ -534,13 +762,19 @@ func add_shake(amount: float) -> void:
 func _update_feedback(delta: float) -> void:
 	# Recoil and trauma bleed back toward rest.
 	_recoil = lerpf(_recoil, 0.0, delta * RECOIL_RECOVER)
+	_recoil_h = lerpf(_recoil_h, 0.0, delta * RECOIL_RECOVER)
 	_shake_trauma = maxf(0.0, _shake_trauma - SHAKE_DECAY * delta)
+
+	# The auto ramp clears after a short pause in fire.
+	_auto_idle += delta
+	if weapon and _auto_idle > weapon.auto_reset_time:
+		_auto_shots = 0
 
 	# Camera-local shake + recoil (independent of head mouse-look and ADS fov).
 	var shake := _shake_trauma * _shake_trauma
 	camera.rotation = Vector3(
 		-_recoil + randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT,
-		randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT,
+		_recoil_h + randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT,
 		randf_range(-1.0, 1.0) * shake * MAX_SHAKE_ROT * 0.5)
 	camera.position = Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), 0.0) * shake * MAX_SHAKE_POS
 
@@ -619,10 +853,49 @@ func _build_listener() -> void:
 	head.add_child(listener)
 	listener.make_current()
 
+## Two audio states per weapon, driven by the suppressor attachment but kept
+## COMPLETELY SEPARATE from the noise-radius logic (40m -> 8m). One attachment
+## drives two independent systems.
+##
+## The suppressed report is the same sample routed through a dedicated bus with
+## a low-pass + shortened tail, and the mechanical action (slide/bolt) mixed up
+## so it reads as "mostly action noise" — placeholder until real recordings.
+const BUS_SUPPRESSED := "Suppressed"
+
 func _build_audio() -> void:
+	_ensure_suppressed_bus()
 	_sfx_fire = _make_sfx(SFX_GUNSHOT, -6.0)
+	_sfx_fire_supp = _make_sfx(SFX_GUNSHOT, -19.0)
+	_sfx_fire_supp.bus = BUS_SUPPRESSED
+	_sfx_fire_supp.pitch_scale = 1.25   # shorter, snappier tail
+	# Mechanical action, more prominent in the suppressed mix.
+	_sfx_action = _make_sfx(SFX_IMPACT, -8.0)
+	_sfx_action.pitch_scale = 1.9
 	_sfx_hurt = _make_sfx(SFX_HURT, 0.0)
 	_sfx_impact = _make_sfx(SFX_IMPACT, -3.0)
+
+## Creates the "Suppressed" bus (low-pass + damped) at runtime if the project
+## doesn't already define one, so no .tscn/bus-layout authoring is required.
+func _ensure_suppressed_bus() -> void:
+	if AudioServer.get_bus_index(BUS_SUPPRESSED) != -1:
+		return
+	var idx := AudioServer.bus_count
+	AudioServer.add_bus(idx)
+	AudioServer.set_bus_name(idx, BUS_SUPPRESSED)
+	AudioServer.set_bus_send(idx, "Master")
+
+	var lp := AudioEffectLowPassFilter.new()
+	lp.cutoff_hz = 900.0        # muffled
+	lp.resonance = 0.2
+	AudioServer.add_bus_effect(idx, lp)
+
+	# Tighten the tail so it stops abruptly instead of ringing out.
+	var comp := AudioEffectCompressor.new()
+	comp.threshold = -22.0
+	comp.ratio = 8.0
+	comp.attack_us = 20.0
+	comp.release_ms = 60.0
+	AudioServer.add_bus_effect(idx, comp)
 
 func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()

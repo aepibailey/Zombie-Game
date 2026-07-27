@@ -5,6 +5,11 @@ class_name WeaponData
 ## built in the Arsenal autoload. See PROJECT_SPEC.md "Weapons".
 
 enum FireMode { SEMI, AUTO, BOTH }   # BOTH = selectable (HK416)
+## How the full-auto penalty multiplier is derived.
+##   NONE   — no auto penalty (semi-only weapons)
+##   RAMP   — climbs per consecutive shot (HK 416)
+##   STANCE — driven by player stance/movement in real time (M249)
+enum AutoPenalty { NONE, RAMP, STANCE }
 
 @export var id: String = ""
 @export var display_name: String = ""
@@ -23,8 +28,27 @@ enum FireMode { SEMI, AUTO, BOTH }   # BOTH = selectable (HK416)
 @export var pellet_spread_deg: float = 0.0
 
 @export var hip_spread_radius: float = 80.0   # screen-px scatter when not ADS
-@export var recoil_per_shot: float = 0.03
+@export var recoil_per_shot: float = 0.03     # vertical, semi-auto baseline
 @export var max_range: float = 150.0
+
+# --- Full-auto penalty (see AutoPenalty) ---------------------------------
+@export var auto_penalty: AutoPenalty = AutoPenalty.NONE
+@export var auto_recoil_start_mult: float = 1.4   # RAMP: first auto shot
+@export var auto_recoil_growth: float = 0.12      # RAMP: +12% per consecutive shot
+@export var auto_recoil_max_mult: float = 3.5     # RAMP: cap
+@export var horizontal_recoil: float = 0.012      # random left/right per shot
+@export var bloom_min_deg: float = 0.3            # cone at rest
+@export var bloom_max_deg: float = 4.0            # cone at full ramp
+@export var bloom_shots_to_max: int = 10
+@export var auto_reset_time: float = 0.4          # idle time that clears the ramp
+
+# --- Tube-fed (per-shell) reload -----------------------------------------
+## When true the weapon reloads one shell at a time and can be interrupted by
+## firing after any completed shell (SPAS-12).
+@export var shell_reload: bool = false
+@export var shell_time: float = 0.55
+@export var reload_start: float = 0.35
+@export var reload_end: float = 0.35
 
 @export var noise_unsuppressed: float = 40.0
 @export var noise_suppressed: float = 8.0

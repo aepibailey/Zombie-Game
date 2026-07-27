@@ -59,7 +59,15 @@ func rebuild() -> void:
 		"description": "Comms link. Prerequisite for future support enablers.",
 	}))
 
-	# --- ATTACHMENTS (per weapon; filtered to owned at display time) ---
+	# --- ATTACHMENTS ---
+	# Global (not per-weapon) attachment: replaces the red laser.
+	items.append(_mk({
+		"id": "ir_laser", "category": "ATTACHMENTS", "kind": "attachment",
+		"display_name": "IR Laser", "cost": 8,
+		"description": "Replaces the red laser. Invisible to zombies; needs NVGs to see.",
+	}))
+
+	# Per-weapon attachments (filtered to owned weapons at display time).
 	for id in Arsenal.order:
 		var w = Arsenal.get_weapon(id)
 		if w == null:

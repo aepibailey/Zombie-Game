@@ -57,6 +57,6 @@ func _update_prompt() -> void:
 		return
 	var crate_open: bool = crate_ui != null and crate_ui.is_open()
 	if _player_inside and GameManager.is_day() and not crate_open:
-		hud.show_prompt("Press E to open the supply crate")
+		hud.show_prompt("Press E to open the supply crate", self)
 	else:
-		hud.hide_prompt()
+		hud.hide_prompt(self)

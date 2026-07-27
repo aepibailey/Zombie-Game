@@ -54,7 +54,14 @@ var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer
+var _nvg_whiteout: ColorRect
+var _gain_limit := 0.0          # 0 = normal, 1 = full daylight whiteout
 var _hitbox_debug_on := false
+
+const NVG_GAIN_RAMP := 0.5      # seconds to ramp into/out of the whiteout
+
+@export var drop_radius: float = 5.0   # resupply lands within this of the crate
+var _crate_position := Vector3.ZERO
 
 # --- Nightly wave state ---------------------------------------------------
 var _wave_total := 0            # zombies to spawn this night
@@ -218,6 +225,7 @@ func _add_tree(parent: Node, pos: Vector3) -> void:
 	parent.add_child(body)
 
 func _build_crate(pos: Vector3) -> void:
+	_crate_position = pos   # anchor for guaranteed resupply drops
 	# Blockout crate: a wooden box with a lighter lid. (No parachute for v1.)
 	_add_box(self, Vector3(1.6, 1.4, 1.6), pos + Vector3(0, 0.7, 0), Color(0.5, 0.35, 0.18))
 	_add_box(self, Vector3(1.7, 0.15, 1.7), pos + Vector3(0, 1.45, 0), Color(0.62, 0.46, 0.26))
@@ -263,16 +271,55 @@ func _build_nvg_overlay() -> void:
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_nvg_overlay.add_child(rect)
 
+	# Daylight gain-limit whiteout, layered over the green tint.
+	_nvg_whiteout = ColorRect.new()
+	_nvg_whiteout.color = Color(0.85, 1.0, 0.88, 0.0)
+	_nvg_whiteout.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_nvg_whiteout.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_nvg_whiteout.visible = false
+	_nvg_overlay.add_child(_nvg_whiteout)
+
 func _toggle_nvg() -> void:
 	_nvg_on = not _nvg_on
 	_nvg_overlay.visible = _nvg_on
+	player.nvg_active = _nvg_on      # IR laser only renders under NVGs
 	_apply_lighting(GameManager.is_day())
+	if not _nvg_on:
+		_clear_gain_limit()
 	_hud.show_message("NVGs " + ("ON" if _nvg_on else "OFF"))
+
+## NVGs in daylight: the tube gains out and blows the image to white. Punishing
+## (aiming is effectively impossible) but still navigable.
+func _update_nvg_daylight(delta: float) -> void:
+	var overexposed := _nvg_on and GameManager.is_day()
+	var target := 1.0 if overexposed else 0.0
+	if is_equal_approx(_gain_limit, target):
+		if overexposed:
+			_hud.set_gain_limit(true)
+		return
+	# ~0.5s ramp, matching an auto-gain circuit catching up.
+	_gain_limit = move_toward(_gain_limit, target, delta / NVG_GAIN_RAMP)
+	_apply_gain_limit()
+
+func _apply_gain_limit() -> void:
+	var t := _gain_limit
+	# Crushed contrast + blown highlights, layered over the green tint.
+	_nvg_whiteout.color = Color(0.85, 1.0, 0.88, 0.92 * t)
+	_nvg_whiteout.visible = t > 0.001
+	_env.glow_enabled = t > 0.001
+	_env.glow_intensity = 1.2 + 5.0 * t
+	_env.glow_bloom = 0.6 * t
+	_hud.set_gain_limit(t > 0.05)
+
+func _clear_gain_limit() -> void:
+	_gain_limit = 0.0
+	_apply_gain_limit()
 
 # --- Phase handling -------------------------------------------------------
 func _on_phase_changed(phase: int) -> void:
 	_apply_lighting(phase == GameManager.Phase.DAY)
 	if phase == GameManager.Phase.NIGHT:
+		_clear_gain_limit()   # whiteout ends immediately at nightfall
 		_begin_night()
 	else:
 		_begin_day()
@@ -311,10 +358,30 @@ func _begin_day() -> void:
 		z.set_active(false)
 	_hud.hide_all_clear()
 	_update_wave_hud()
-	_hud.show_message("DAY — safe. Open the supply crate to spend points.")
+
+	# Guaranteed resupply at the dawn following certain nights. The schedule
+	# lives on EnablerManager so this stopgap can be switched off wholesale
+	# once the purchasable supply-drop enabler exists.
+	if EnablerManager.is_guaranteed_drop_night(GameManager.night_number):
+		_spawn_supply_drop()
+	else:
+		_hud.show_message("DAY — safe. Open the supply crate to spend points.")
+
+## Instances the reusable SupplyDrop scene near the crate. The future
+## purchasable enabler instances the same scene with a different anchor.
+func _spawn_supply_drop() -> void:
+	var drop := SupplyDrop.new()
+	drop.setup(_hud, {"magazines": 1})
+	add_child(drop)
+	drop.global_position = SupplyDrop.find_spawn_point(
+		get_world_3d(), _crate_position, drop_radius, player.global_position)
+	_hud.show_message("RESUPPLY — DROPPED NEAR BASE")
+	print("[RESUPPLY] drop spawned at %s (night %d)" % [
+		drop.global_position, GameManager.night_number])
 
 # --- Nightly wave: trickle spawn + all-clear -----------------------------
 func _process(delta: float) -> void:
+	_update_nvg_daylight(delta)
 	if _hud and _hud.debug_audio_visible():
 		_update_audio_debug()
 	if GameManager.is_day() or _wave_spawned >= _wave_total:

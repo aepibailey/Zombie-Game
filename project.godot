@@ -20,6 +20,7 @@ GameManager="*res://scripts/GameManager.gd"
 Arsenal="*res://scripts/Arsenal.gd"
 AmmoManager="*res://scripts/AmmoManager.gd"
 StoreCatalog="*res://scripts/StoreCatalog.gd"
+EnablerManager="*res://scripts/EnablerManager.gd"
 
 [input]
 

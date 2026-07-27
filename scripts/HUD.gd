@@ -27,6 +27,8 @@ var _wpn_name := ""
 var _wpn_mode := ""
 var _wpn_suppressed := false
 var _debug_label: Label
+var _gain_label: Label
+var _prompt_owner = null
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
@@ -52,6 +54,11 @@ func _ready() -> void:
 	_build_damage_vignette()
 	_build_hitmarker()
 	_build_debug_readout()
+
+	_gain_label = _mk_centered(112, 18, Color(0.15, 0.15, 0.15))
+	_gain_label.text = "NVG — GAIN LIMIT"
+	_gain_label.add_theme_color_override("font_outline_color", Color(1, 1, 1))
+	_gain_label.visible = false
 
 	_msg_label = Label.new()
 	_msg_label.add_theme_font_size_override("font_size", 18)
@@ -295,11 +302,18 @@ func show_message(text: String) -> void:
 	_msg_label.text = text
 	_msg_timer = 2.5
 
-func show_prompt(text: String) -> void:
+func show_prompt(text: String, owner = null) -> void:
+	_prompt_owner = owner
 	_prompt_label.text = text
 	_prompt_label.visible = true
 
-func hide_prompt() -> void:
+## Only the node that raised the prompt may clear it, so overlapping
+## interactables (the crate and a supply drop landing beside it) don't fight
+## over the prompt every frame.
+func hide_prompt(owner = null) -> void:
+	if owner != null and _prompt_owner != null and owner != _prompt_owner:
+		return
+	_prompt_owner = null
 	_prompt_label.visible = false
 
 # --- Debug: audible-zombie distances ---------------------------------------
@@ -309,6 +323,12 @@ func set_debug_audio(lines: PackedStringArray) -> void:
 	else:
 		_debug_label.text = "AUDIO DEBUG (%d in range)\n%s" % [
 			lines.size(), "\n".join(lines)]
+
+## Shown while NVGs are gained-out in daylight, so the whiteout reads as
+## intentional rather than a rendering bug.
+func set_gain_limit(on: bool) -> void:
+	if _gain_label:
+		_gain_label.visible = on
 
 func set_debug_audio_visible(v: bool) -> void:
 	_debug_label.visible = v
