@@ -1,28 +1,54 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/Zombie.gd" id="1_zombie"]
 
-[sub_resource type="CapsuleShape3D" id="cap"]
+[sub_resource type="CapsuleShape3D" id="bodyshape"]
 radius = 0.4
-height = 1.8
+height = 1.56
 
-[sub_resource type="CapsuleMesh" id="capmesh"]
+[sub_resource type="CapsuleMesh" id="bodymesh"]
 radius = 0.4
-height = 1.8
+height = 1.56
 
 [sub_resource type="StandardMaterial3D" id="zmat"]
 albedo_color = Color(0.25, 0.6, 0.25, 1)
+
+[sub_resource type="SphereShape3D" id="headshape"]
+radius = 0.12
+
+[sub_resource type="SphereMesh" id="headmesh"]
+radius = 0.12
+height = 0.24
+
+[sub_resource type="StandardMaterial3D" id="headmat"]
+albedo_color = Color(1, 0.1, 0.7, 1)
+emission_enabled = true
+emission = Color(1, 0.1, 0.7, 1)
+emission_energy_multiplier = 2.5
 
 [node name="Zombie" type="CharacterBody3D"]
 script = ExtResource("1_zombie")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-shape = SubResource("cap")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78, 0)
+shape = SubResource("bodyshape")
 
 [node name="Body" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-mesh = SubResource("capmesh")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78, 0)
+mesh = SubResource("bodymesh")
 material_override = SubResource("zmat")
+
+[node name="HeadHitbox" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.68, 0)
+collision_layer = 4
+collision_mask = 0
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="HeadHitbox"]
+shape = SubResource("headshape")
+
+[node name="HeadMesh" type="MeshInstance3D" parent="HeadHitbox"]
+mesh = SubResource("headmesh")
+material_override = SubResource("headmat")
 
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]

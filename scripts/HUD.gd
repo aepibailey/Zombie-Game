@@ -30,7 +30,7 @@ var _debug_label: Label
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
-const HITMARKER_TIME := 0.12
+const HITMARKER_TIME := 0.6
 
 func _ready() -> void:
 	layer = 10
@@ -199,14 +199,15 @@ func _build_debug_readout() -> void:
 # Brief hitmarker shown when a shot connects with a zombie.
 func _build_hitmarker() -> void:
 	_hitmarker = Label.new()
-	_hitmarker.text = "X"
-	_hitmarker.add_theme_font_size_override("font_size", 24)
+	_hitmarker.add_theme_font_size_override("font_size", 20)
 	_hitmarker.add_theme_color_override("font_color", Color(1, 1, 1))
 	_hitmarker.add_theme_color_override("font_outline_color", Color.BLACK)
 	_hitmarker.add_theme_constant_override("outline_size", 4)
+	_hitmarker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hitmarker.set_anchors_preset(Control.PRESET_CENTER)
 	_hitmarker.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_hitmarker.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_hitmarker.position.y = -46   # above centre so it never covers the aim point
 	_hitmarker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hitmarker.visible = false
 	add_child(_hitmarker)
@@ -320,7 +321,13 @@ func flash_damage() -> void:
 	_dmg_flash = DMG_FLASH_TIME
 	_dmg_vignette.modulate.a = DMG_MAX_ALPHA
 
-func show_hitmarker() -> void:
+func show_hitmarker(headshot: bool = false, damage: int = 0, remaining_hp: int = 0) -> void:
+	# HEAD hits read gold, body hits white, with damage and remaining HP so
+	# headshot mechanics are verifiable at a glance.
+	_hitmarker.text = "%s  %d dmg  (%d HP)" % [
+		"HEAD" if headshot else "BODY", damage, remaining_hp]
+	_hitmarker.add_theme_color_override("font_color",
+		Color(1.0, 0.85, 0.2) if headshot else Color(1, 1, 1))
 	_hitmarker.visible = true
 	_hitmarker_timer = HITMARKER_TIME
 

@@ -33,6 +33,9 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
 | `F3` | Debug: list audible zombies + their distance |
+| `F4` | Debug: show zombie head/body hitbox volumes |
+
+In the store: `1`/`2`/`3` or `←`/`→` switch tabs, `Esc` closes.
 
 `E` is bound via a remappable **Input Map** action (`interact`) in Project
 Settings, not hardcoded.

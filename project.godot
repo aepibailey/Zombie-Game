@@ -19,6 +19,7 @@ PointsManager="*res://scripts/PointsManager.gd"
 GameManager="*res://scripts/GameManager.gd"
 Arsenal="*res://scripts/Arsenal.gd"
 AmmoManager="*res://scripts/AmmoManager.gd"
+StoreCatalog="*res://scripts/StoreCatalog.gd"
 
 [input]
 

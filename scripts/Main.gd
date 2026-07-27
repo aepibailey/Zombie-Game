@@ -39,6 +39,8 @@ const KEY_NVG_TOGGLE := KEY_G
 
 # Debug: show distance to every zombie within footstep-audible range.
 const KEY_DEBUG_AUDIO := KEY_F3
+# Debug: translucent head/body hitbox volumes on every zombie.
+const KEY_DEBUG_HITBOX := KEY_F4
 
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
@@ -52,6 +54,7 @@ var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer
+var _hitbox_debug_on := false
 
 # --- Nightly wave state ---------------------------------------------------
 var _wave_total := 0            # zombies to spawn this night
@@ -221,6 +224,9 @@ func _build_crate(pos: Vector3) -> void:
 
 	var zone := SupplyCrateZone.new()
 	zone.position = pos
+	# Layer 2 keeps the trigger out of the weapon ray's mask (world + heads).
+	zone.collision_layer = 2
+	zone.collision_mask = 1     # still detects the player body
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(4, 3, 4)
@@ -323,6 +329,11 @@ func _process(delta: float) -> void:
 		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
 
+func _apply_hitbox_debug() -> void:
+	for z in _zombies:
+		if is_instance_valid(z):
+			z.set_hitbox_debug(_hitbox_debug_on)
+
 ## Debug overlay: distance to every zombie inside its own footstep range, so
 ## the ~20m audible threshold can be confirmed by walking toward one.
 func _update_audio_debug() -> void:
@@ -364,6 +375,8 @@ func _spawn_zombie() -> void:
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
 	z.died.connect(_on_zombie_died)
 	z.set_active(true)
+	if _hitbox_debug_on:
+		z.set_hitbox_debug(true)
 	_zombies.append(z)
 
 func _on_zombie_died() -> void:
@@ -390,6 +403,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_DEBUG_AUDIO:
 		_hud.set_debug_audio_visible(not _hud.debug_audio_visible())
+		return
+	if event.keycode == KEY_DEBUG_HITBOX:
+		_hitbox_debug_on = not _hitbox_debug_on
+		_apply_hitbox_debug()
+		_hud.show_message("Hitbox debug " + ("ON" if _hitbox_debug_on else "OFF"))
 		return
 	if _hud and _hud.all_clear_visible():
 		if event.keycode == KEY_SKIP_TO_DAY:

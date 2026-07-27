@@ -110,16 +110,50 @@ def write_wav(path, samples, sr):
         w.writeframes(frames)
 
 
+UI_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "audio", "ui",
+)
+
+
+def make_tone(freqs, dur, sr, decay=0.06, level=0.5):
+    """Short shaped tone (or two-tone) for UI feedback."""
+    n = int(sr * dur)
+    out = []
+    for i in range(n):
+        t = i / sr
+        env = min(1.0, t / 0.004) * math.exp(-t / decay)
+        s = 0.0
+        for f in freqs:
+            s += math.sin(2.0 * math.pi * f * t)
+        out.append((s / len(freqs)) * env * level)
+    return out
+
+
+def make_ui_sounds(sr):
+    """Rising two-note confirm, low buzzy deny."""
+    confirm = make_tone([880], 0.09, sr) + make_tone([1320], 0.12, sr)
+    deny = make_tone([160, 190], 0.18, sr, decay=0.05, level=0.6)
+    return {"ui_confirm.wav": confirm, "ui_deny.wav": deny}
+
+
 def main():
     cfg = CONFIG
+    sr = cfg["sample_rate"]
     os.makedirs(OUT_DIR, exist_ok=True)
     rng = random.Random(cfg["seed"])
     for i in range(1, cfg["count"] + 1):
         samples = make_footstep(rng, cfg)
         path = os.path.join(OUT_DIR, "footstep_%02d.wav" % i)
-        write_wav(path, samples, cfg["sample_rate"])
+        write_wav(path, samples, sr)
         print("wrote %s (%d samples, %.0fms)" % (
-            path, len(samples), 1000.0 * len(samples) / cfg["sample_rate"]))
+            path, len(samples), 1000.0 * len(samples) / sr))
+
+    os.makedirs(UI_DIR, exist_ok=True)
+    for name, samples in make_ui_sounds(sr).items():
+        path = os.path.join(UI_DIR, name)
+        write_wav(path, samples, sr)
+        print("wrote %s (%d samples)" % (path, len(samples)))
 
 
 if __name__ == "__main__":

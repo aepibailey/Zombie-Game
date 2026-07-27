@@ -96,6 +96,26 @@ Starting loadout: M17 only, per the operator-stranded premise. No attachments by
 - **IR Laser** — replaces red laser; invisible to zombies, NVG-only visibility for the player.
 - (More attachments added as weapons are added — optics, extended mags, etc.)
 
+## Zombie geometry & hitboxes (implemented)
+- The zombie is two visually distinct parts: a **body capsule** (r 0.4, height 1.56, centred y=0.78) and a **head sphere** (r 0.12, centred y=1.68) in bright emissive magenta so it's unambiguous at 40m under NVGs. Total height stays **1.8m**.
+- **Boundary resolution:** the body capsule is shortened to end at the neck (y=1.56) and the head sphere spans 1.56–1.80, so the two shapes **do not overlap volumetrically** — they meet at a single tangent point. With closest-hit raycasting, any ray entering the head region returns the head and nothing else; a ray blocked by the torso correctly returns the body.
+- The head is its own `Area3D` on **collision layer 3** (`monitoring = false`, mask 0) so it costs nothing at runtime and never affects movement collision. The supply-crate trigger was moved to **layer 2** so weapon rays don't pick it up.
+- Weapon rays use `collision_mask = 1|4` with `collide_with_areas = true`. **Headshots are determined by which collider was hit** — the old hit-height inference (`HEAD_LOCAL_Y`) has been removed entirely.
+- Scoring is unchanged: head = **2x damage** and a headshot kill awards **3 points**; body = 1x and **1 point**.
+- Every hit prints `[HIT] HEAD|BODY — N dmg, N HP remaining` and shows the same on-screen briefly. Shots-to-kill logging on death still works and splits head vs body.
+- **`F4`** toggles translucent head/body hitbox volumes; **`F3`** toggles the audible-zombie distance overlay.
+
+## Store UI (implemented)
+The supply crate store is **tab-based and data-driven**, built from the `StoreCatalog` autoload.
+- **Tabs: WEAPONS / ATTACHMENTS / AMMO**, generated from `StoreCatalog.categories()`. Adding an item with a new `category` produces a working tab with **no UI code changes** (an `ENABLERS` tab will be added this way).
+- Catalog entries are `StoreItem` objects built in code rather than `.tres` files, because every entry is derived from the Arsenal roster — hand-authoring resources would duplicate that data and drift from it. The UI only reads `id / category / display_name / description / cost / requires / weapon_id / kind`, so entries can become Resources later without touching the UI.
+- **Filtering:** ATTACHMENTS and AMMO only list entries whose parent weapon is owned, grouped visually by weapon. AMMO shows the current reserve per entry.
+- **Four item states:** affordable (normal), unaffordable (dimmed, cost highlighted red), owned (`OWNED`, not repurchasable — ammo is always repurchasable), locked (greyed, `Requires: X`). The locked state is wired to the prerequisite system and dormant until enablers use it.
+- Points balance is always visible on every tab and updates immediately on purchase.
+- **Navigation:** mouse click, number keys `1`/`2`/`3`, and `←`/`→`. Deliberately **not** bound to `E` (the interact key). Opens on `E` at the crate during Day only; `Esc` closes. Defaults to WEAPONS.
+- Purchases play a confirmation sound; failed (unaffordable/locked) purchases give distinct negative feedback rather than failing silently.
+- The **Radio** is a stopgap entry under WEAPONS; it moves to ENABLERS when those exist.
+
 ## Economy
 - Points earned from kills are the only currency. Spent at the supply crate during Day phase.
 - No separate "money" layer — keep it simple.

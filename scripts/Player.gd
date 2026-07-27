@@ -10,7 +10,7 @@ signal suppressor_changed(has_suppressor: bool)
 signal weapon_changed(display_name: String, fire_mode: String)
 signal message(text: String)
 signal damaged                       ## player took a hit (HUD flash / shake)
-signal zombie_hit                    ## a shot connected with a zombie (hitmarker)
+signal zombie_hit(headshot: bool, damage: int, remaining_hp: int)
 
 enum MoveState { CROUCH, WALK, SPRINT }
 
@@ -44,7 +44,9 @@ const LASER_REVEAL_RANGE := 10.0
 const LASER_MAX_DRAW := 100.0
 
 # --- Weapon tuning (per-weapon stats live in WeaponData / Arsenal) --------
-const HEAD_LOCAL_Y := 1.45              # hit height (feet-relative) = headshot
+## Weapon rays hit the world (layer 1) and zombie head hitboxes (layer 3).
+## Other Area3Ds (e.g. the supply crate trigger) live on layer 2 and are ignored.
+const HIT_MASK := 1 | 4
 const STARTING_WEAPON := "m17"
 const MAX_HP := 100
 
@@ -94,6 +96,7 @@ var hp := MAX_HP
 var weapon: WeaponData
 var current_weapon_id := STARTING_WEAPON
 var owned: Array[String] = [STARTING_WEAPON]
+var owned_items: Array[String] = []   # non-weapon purchases (radio, etc.)
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
@@ -340,18 +343,32 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 	var space := get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(from, to)
 	q.exclude = [self]
+	# World/bodies (layer 1) + zombie head hitboxes (layer 3). Areas are opted
+	# into so the head Area3D can be hit; other areas sit on other layers.
+	q.collision_mask = HIT_MASK
+	q.collide_with_areas = true
 	var hit := space.intersect_ray(q)
 
 	var impact := to
 	if hit:
 		impact = hit.position
-		var col = hit.collider  # Variant: may be world or a zombie
-		if col and col.is_in_group("zombies"):
-			var local_y: float = hit.position.y - col.global_position.y
-			var headshot: bool = local_y >= HEAD_LOCAL_Y
-			if col.has_method("take_damage"):
-				col.take_damage(weapon.body_damage, headshot)
-			zombie_hit.emit()       # hitmarker
+		# Head vs body comes from WHICH collider was hit — the head hitbox is a
+		# distinct Area3D — not from inferring a hit height.
+		var col = hit.collider
+		var target = null
+		var headshot := false
+		if col and col.is_in_group("zombie_heads"):
+			target = col.get_meta("zombie", null)
+			headshot = true
+		elif col and col.is_in_group("zombies"):
+			target = col
+
+		if target != null and is_instance_valid(target):
+			var dealt: int = target.take_damage(weapon.body_damage, headshot)
+			var remaining: int = maxi(0, target.hp)
+			print("[HIT] %s — %d dmg, %d HP remaining" % [
+				"HEAD" if headshot else "BODY", dealt, remaining])
+			zombie_hit.emit(headshot, dealt, remaining)
 			if _sfx_impact.stream:
 				_sfx_impact.play()
 
@@ -636,16 +653,56 @@ func _respawn() -> void:
 	health_changed.emit(hp, MAX_HP)
 
 # --- Attachment pipeline --------------------------------------------------
-## Suppressor is fitted to the CURRENTLY equipped weapon (proves per-weapon
-## attachments). `_res` is accepted for compatibility with the crate shop.
-func attach_suppressor(_res = null) -> void:
-	_suppressed[current_weapon_id] = true
-	suppressor_changed.emit(true)
+## Fit a suppressor to a specific weapon (defaults to the equipped one).
+func attach_suppressor(weapon_id: String = "") -> void:
+	var id := weapon_id if weapon_id != "" else current_weapon_id
+	_suppressed[id] = true
+	var w := Arsenal.get_weapon(id)
+	if id == current_weapon_id:
+		suppressor_changed.emit(true)
 	message.emit("Suppressor fitted to %s — now %dm." % [
-		weapon.display_name, int(weapon.noise_suppressed)])
+		w.display_name, int(w.noise_suppressed)])
 
 func has_suppressor() -> bool:
 	return _suppressed.get(current_weapon_id, false)
+
+func weapon_suppressed(weapon_id: String) -> bool:
+	return _suppressed.get(weapon_id, false)
+
+# --- Store purchase API ---------------------------------------------------
+## Owned check for any catalog item. Ammo is always repurchasable.
+func owns_store_item(item) -> bool:
+	match item.kind:
+		"weapon":
+			return item.weapon_id in owned
+		"attachment":
+			if item.weapon_id != "":
+				return weapon_suppressed(item.weapon_id)
+			return item.id in owned_items
+		_:
+			return false
+
+## Applies a purchased item's effect. Returns a short status line for the UI.
+func apply_store_purchase(item) -> String:
+	match item.kind:
+		"weapon":
+			acquire_weapon(item.weapon_id)
+			return "%s acquired & equipped." % item.display_name
+		"ammo":
+			# All ammo grants route through AmmoManager.
+			var rounds: int = AmmoManager.grant_ammo(item.weapon_id, 1)
+			return "+%d rounds of %s." % [rounds, item.display_name]
+		"attachment":
+			if item.weapon_id != "":
+				attach_suppressor(item.weapon_id)
+				return "Suppressor fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
+			owned_items.append(item.id)
+			return "%s acquired." % item.display_name
+	return ""
+
+## Prerequisite satisfied? Prereqs may name a weapon id or a non-weapon item id.
+func owns_item_id(id: String) -> bool:
+	return id in owned or id in owned_items
 
 # --- Helpers --------------------------------------------------------------
 func set_control_enabled(enabled: bool) -> void:

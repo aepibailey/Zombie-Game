@@ -51,6 +51,7 @@ var _hits_body := 0
 var _footstep_player: AudioStreamPlayer3D
 var _footstep_samples: Array = []
 var _step_timer := 0.0
+var _hitbox_debug: Node3D
 
 var _investigate_timer := 0.0
 var _attack_timer := 0.0
@@ -63,9 +64,14 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
 @onready var body_mesh: MeshInstance3D = $Body
+@onready var head_hitbox: Area3D = $HeadHitbox
 
 func _ready() -> void:
 	add_to_group("zombies")
+	# The head Area3D is tagged so weapon rays can identify a headshot from the
+	# collider itself — no hit-height guessing.
+	head_hitbox.add_to_group("zombie_heads")
+	head_hitbox.set_meta("zombie", self)
 	hp = max_hp   # spawner set max_hp for this night's scaling
 	_build_footsteps()
 	agent.path_desired_distance = 0.6
@@ -311,7 +317,8 @@ func footstep_range() -> float:
 	return footstep_max_distance
 
 # --- Combat ---------------------------------------------------------------
-func take_damage(amount: int, headshot: bool) -> void:
+## Returns the damage actually dealt, so the shooter can report it.
+func take_damage(amount: int, headshot: bool) -> int:
 	var dmg := amount * (HEADSHOT_MULT if headshot else 1)
 	hp -= dmg
 	last_hit_headshot = headshot
@@ -325,6 +332,44 @@ func take_damage(amount: int, headshot: bool) -> void:
 		_enter_chase()
 	if hp <= 0:
 		_die()
+	return dmg
+
+## Toggle translucent hitbox volumes (debug affordance).
+func set_hitbox_debug(on: bool) -> void:
+	if _hitbox_debug == null and on:
+		_build_hitbox_debug()
+	if _hitbox_debug:
+		_hitbox_debug.visible = on
+
+func _build_hitbox_debug() -> void:
+	_hitbox_debug = Node3D.new()
+	add_child(_hitbox_debug)
+
+	var body_vis := MeshInstance3D.new()
+	var bm := CapsuleMesh.new()
+	bm.radius = 0.4
+	bm.height = 1.56
+	body_vis.mesh = bm
+	body_vis.position = Vector3(0, 0.78, 0)
+	body_vis.material_override = _debug_material(Color(0.2, 0.6, 1.0, 0.25))
+	_hitbox_debug.add_child(body_vis)
+
+	var head_vis := MeshInstance3D.new()
+	var hm := SphereMesh.new()
+	hm.radius = 0.12
+	hm.height = 0.24
+	head_vis.mesh = hm
+	head_vis.position = Vector3(0, 1.68, 0)
+	head_vis.material_override = _debug_material(Color(1.0, 0.9, 0.1, 0.45))
+	_hitbox_debug.add_child(head_vis)
+
+func _debug_material(color: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_color = color
+	return m
 
 func _flash_white() -> void:
 	_hit_flash = 0.12
