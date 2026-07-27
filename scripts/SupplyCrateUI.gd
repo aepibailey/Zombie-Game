@@ -12,6 +12,7 @@ var _points_label: Label
 var _status_label: Label
 var _supp_button: Button
 var _weapon_buttons: Dictionary = {}   # weapon id -> Button
+var _ammo_buttons: Dictionary = {}     # weapon id -> Button (buy 1 magazine)
 
 func _ready() -> void:
 	layer = 20
@@ -21,7 +22,7 @@ func _ready() -> void:
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	panel.custom_minimum_size = Vector2(440, 340)
+	panel.custom_minimum_size = Vector2(520, 560)
 	add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -48,6 +49,16 @@ func _ready() -> void:
 		var btn := Button.new()
 		btn.pressed.connect(_on_buy_weapon.bind(id))
 		_weapon_buttons[id] = btn
+		vb.add_child(btn)
+
+	var sep := HSeparator.new()
+	vb.add_child(sep)
+
+	# One ammo button per weapon — priced per magazine, only useful once owned.
+	for id in Arsenal.order:
+		var btn := Button.new()
+		btn.pressed.connect(_on_buy_ammo.bind(id))
+		_ammo_buttons[id] = btn
 		vb.add_child(btn)
 
 	_supp_button = Button.new()
@@ -109,6 +120,18 @@ func _refresh() -> void:
 			btn.disabled = PointsManager.points < w.cost
 			btn.text = "Buy %s — %d pts" % [w.display_name, w.cost]
 
+	# Ammo: one magazine at a time, only for weapons you actually own.
+	for id in Arsenal.order:
+		var w = Arsenal.get_weapon(id)
+		var btn: Button = _ammo_buttons[id]
+		if id in owned:
+			btn.disabled = PointsManager.points < w.ammo_cost
+			btn.text = "%s ammo: +1 mag (%d rds) — %d pts  [reserve %d]" % [
+				w.display_name, w.mag_size, w.ammo_cost, AmmoManager.get_reserve(id)]
+		else:
+			btn.disabled = true
+			btn.text = "%s ammo — weapon not owned" % w.display_name
+
 	if _player.has_suppressor():
 		_supp_button.disabled = true
 		_supp_button.text = "%s — suppressed" % _player.weapon.display_name
@@ -120,12 +143,43 @@ func _on_buy_weapon(id: String) -> void:
 	if _player == null or id in _player.owned_weapons():
 		return
 	var w = Arsenal.get_weapon(id)
+	# Generic prerequisite gate — unused by weapons today, but this is the hook
+	# future enablers (e.g. UAV requires Radio) purchase through unchanged.
+	var missing := _missing_prerequisite(w)
+	if missing != "":
+		_status_label.text = "Requires %s first." % missing
+		return
 	if PointsManager.spend_points(w.cost):
 		_player.acquire_weapon(id)
-		_status_label.text = "%s acquired & equipped." % w.display_name
+		_status_label.text = "%s acquired & equipped (%d mags)." % [w.display_name, w.starting_mags]
 	else:
 		_status_label.text = "Not enough points."
 	_refresh()
+
+func _on_buy_ammo(id: String) -> void:
+	if _player == null or not (id in _player.owned_weapons()):
+		return
+	var w = Arsenal.get_weapon(id)
+	if PointsManager.spend_points(w.ammo_cost):
+		# ALL ammo grants route through AmmoManager — never a direct write.
+		var rounds: int = AmmoManager.grant_ammo(id, 1)
+		_status_label.text = "+%d rounds of %s ammo." % [rounds, w.display_name]
+	else:
+		_status_label.text = "Not enough points."
+	_refresh()
+
+## Returns the display name of an unmet prerequisite, or "" if satisfiable.
+## Items may declare `requires` (an id the player must already own).
+func _missing_prerequisite(item) -> String:
+	if item == null:
+		return ""
+	var req: String = item.requires
+	if req == "":
+		return ""
+	if req in _player.owned_weapons():
+		return ""
+	var req_item = Arsenal.get_weapon(req)
+	return req_item.display_name if req_item else str(req)
 
 func _on_buy_suppressor() -> void:
 	if _player == null or _player.has_suppressor():

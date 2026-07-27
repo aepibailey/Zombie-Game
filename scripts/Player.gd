@@ -89,18 +89,17 @@ var ads_active := false
 
 var hp := MAX_HP
 
-# Weapon state. `ammo`/`reserve` mirror the CURRENT weapon; per-weapon values
-# are stashed in the dictionaries so switching preserves each gun's ammo.
+# Weapon state. `ammo`/`reserve` mirror the CURRENT weapon. Loaded magazines
+# live here per weapon; RESERVE ammo is owned by the AmmoManager autoload.
 var weapon: WeaponData
 var current_weapon_id := STARTING_WEAPON
 var owned: Array[String] = [STARTING_WEAPON]
-var ammo := 0
-var reserve := 0
+var ammo := 0                         # rounds in the current weapon's magazine
+var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
 var fire_cooldown := 0.0
 var _auto_selected := false           # for BOTH-mode weapons: is auto selected?
 var _mag: Dictionary = {}             # weapon id -> loaded rounds
-var _reserve: Dictionary = {}         # weapon id -> reserve rounds
 var _suppressed: Dictionary = {}      # weapon id -> bool
 
 var _footstep_timer := 0.0
@@ -133,12 +132,11 @@ func _ready() -> void:
 	_build_viewmodel()
 	_build_audio()
 
-	# Starting loadout: M17 only (operator-stranded premise).
-	var w := Arsenal.get_weapon(STARTING_WEAPON)
-	_mag[STARTING_WEAPON] = w.mag_size
-	_reserve[STARTING_WEAPON] = w.spare_ammo
-	_suppressed[STARTING_WEAPON] = false
+	# Starting loadout: M17 only, 2 mags total (one loaded, one spare).
+	_grant_starting_ammo(STARTING_WEAPON)
 	_equip(STARTING_WEAPON)
+	# Reserve changes (crate purchases, supply drops) keep the HUD honest.
+	AmmoManager.reserve_changed.connect(_on_reserve_changed)
 
 	# Prime the HUD.
 	health_changed.emit(hp, MAX_HP)
@@ -377,10 +375,10 @@ func _reload() -> void:
 	await get_tree().create_timer(weapon.reload_time).timeout
 	if not reloading or current_weapon_id != id:
 		return   # cancelled by a weapon switch mid-reload
+	# Reserve is owned by AmmoManager — pull the rounds from it.
 	var needed := weapon.mag_size - ammo
-	var take: int = mini(needed, reserve)
-	ammo += take
-	reserve -= take
+	ammo += AmmoManager.take(id, needed)
+	reserve = AmmoManager.get_reserve(id)
 	reloading = false
 	ammo_changed.emit(ammo, reserve)
 
@@ -388,14 +386,13 @@ func _reload() -> void:
 func _equip(id: String) -> void:
 	if weapon and id == current_weapon_id:
 		return
-	# Stash the outgoing weapon's ammo before swapping.
+	# Stash the outgoing weapon's loaded magazine before swapping.
 	if weapon:
 		_mag[current_weapon_id] = ammo
-		_reserve[current_weapon_id] = reserve
 	current_weapon_id = id
 	weapon = Arsenal.get_weapon(id)
 	ammo = _mag.get(id, weapon.mag_size)
-	reserve = _reserve.get(id, weapon.spare_ammo)
+	reserve = AmmoManager.get_reserve(id)
 	reloading = false
 	fire_cooldown = 0.0
 	_auto_selected = weapon.fire_mode == WeaponData.FireMode.AUTO
@@ -410,10 +407,23 @@ func acquire_weapon(id: String) -> void:
 	if w == null:
 		return
 	owned.append(id)
-	_mag[id] = w.mag_size
-	_reserve[id] = w.spare_ammo
-	_suppressed[id] = false
+	_grant_starting_ammo(id)
 	_equip(id)
+
+## Loads one magazine into the weapon and routes the remaining starting mags
+## through AmmoManager — the single ammo-granting path.
+func _grant_starting_ammo(id: String) -> void:
+	var w := Arsenal.get_weapon(id)
+	if w == null:
+		return
+	_mag[id] = w.mag_size
+	_suppressed[id] = false
+	AmmoManager.grant_ammo(id, maxi(0, w.starting_mags - 1))
+
+func _on_reserve_changed(weapon_id: String, rounds: int) -> void:
+	if weapon_id == current_weapon_id:
+		reserve = rounds
+		ammo_changed.emit(ammo, reserve)
 
 func _try_equip_slot(index: int) -> void:
 	if not control_enabled or index >= Arsenal.order.size():
@@ -607,15 +617,12 @@ func take_damage(amount: int) -> void:
 		_respawn()
 
 func _respawn() -> void:
-	message.emit("You died — respawning at base.")
+	message.emit("You died — respawning at base. Ammo is NOT replenished.")
 	hp = MAX_HP
-	# Top the current weapon back up (owned weapons and attachments are kept).
-	ammo = weapon.mag_size
-	reserve = weapon.spare_ammo
+	# Ammo deliberately does NOT regenerate — not on death, not at dawn.
 	global_position = _spawn_point
 	velocity = Vector3.ZERO
 	health_changed.emit(hp, MAX_HP)
-	ammo_changed.emit(ammo, reserve)
 
 # --- Attachment pipeline --------------------------------------------------
 ## Suppressor is fitted to the CURRENTLY equipped weapon (proves per-weapon

@@ -60,15 +60,25 @@ State machine:
 - Headshot kill: **3 points** (not additive — headshot kill always awards 3 total)
 - Player HP: **100**, zombie melee hit: **20 dmg** (placeholder, tune by playtest)
 
-## Weapons (full roster — v1 ships pistol only, see Scope below)
-| Weapon | Type | Mag size | Fire mode |
-|---|---|---|---|
-| Sig Sauer M17 | Pistol | 17 | Semi-auto |
-| HK 416 | AR | 30 | Semi/Auto |
-| SPAS-12 | Auto shotgun | 8 | Semi-auto |
-| M249 SAW | Belt-fed | 100/200 belt | Auto |
+## Weapons (full roster — all four implemented)
+Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 
-Starting loadout: M17 + a few spare mags only, per the operator-stranded premise. No attachments by default.
+| Weapon | Type | Mag size | Fire mode | Cost | Ammo cost / mag |
+|---|---|---|---|---|---|
+| Sig Sauer M17 | Pistol | 17 | Semi-auto | starter | 1 pt |
+| HK 416 | AR | 30 | Semi/Auto | 15 pts | 2 pts |
+| SPAS-12 | Auto shotgun | 8 | Semi-auto (8 pellets) | 20 pts | 2 pts |
+| M249 SAW | Belt-fed | 100 | Auto | 30 pts | 4 pts |
+
+Starting loadout: M17 only, per the operator-stranded premise. No attachments by default.
+
+### Ammunition scarcity (implemented)
+- **Every weapon starts with exactly 2 magazines total — one loaded, one spare** (`WeaponData.starting_mags = 2`). M17 = 17+17, HK416 = 30+30, SPAS-12 = 8+8, M249 = 100+100.
+- Weapons bought at the crate arrive with the same 2 magazines — no more.
+- **Ammo does not regenerate.** Not between nights, and not on death/respawn. What you have at dawn is what you have.
+- Ammo is bought separately at the crate, **priced per magazine** (`WeaponData.ammo_cost`).
+- **All ammo granting routes through the single function `AmmoManager.grant_ammo(weapon_id, magazines)`** — starting loadout, crate purchases, and any future supply drop / enabler. Nothing else writes reserve ammo. `AmmoManager` (autoload) owns reserve pools; the Player owns only the currently-loaded magazine per weapon.
+- HUD shows `mag / reserve` for the equipped weapon; the reserve turns **red at 0**.
 
 ## Attachments (spend points at tent)
 - **Suppressor** — reduces gunshot noise radius drastically (40m → 8m); zombies within LOS won't clock the shot as a "you" event unless already alerted.
@@ -77,8 +87,9 @@ Starting loadout: M17 + a few spare mags only, per the operator-stranded premise
 - (More attachments added as weapons are added — optics, extended mags, etc.)
 
 ## Economy
-- Points earned from kills are the only currency. Spent directly at the tent during Day phase.
-- No separate "money" layer for v1 — keep it simple.
+- Points earned from kills are the only currency. Spent at the supply crate during Day phase.
+- No separate "money" layer — keep it simple.
+- The crate's purchase flow supports an optional **prerequisite item** (`WeaponData.requires`): an item can require another to be owned first. Unused by weapons today; it exists so future enablers (Radio → UAV/Apache/supply drop) need no new plumbing.
 
 ## NVGs
 - v1: always-on toggle, no battery mechanic. (Battery-limited NVGs flagged as a v2 tension mechanic.)

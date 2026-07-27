@@ -54,6 +54,11 @@ You start with the M17; buy the rest at the crate and switch with `1`–`4`:
 Ammo, suppressor state, and reloads are tracked **per weapon**. The suppressor
 fits the currently-equipped gun (per-weapon attachment).
 
+**Ammo is scarce:** every weapon (starting or purchased) arrives with just **2
+magazines — one loaded, one spare**, and ammo **never regenerates** (not at dawn,
+not on death). Buy more by the magazine at the crate. All granting goes through
+`AmmoManager.grant_ammo()`; the HUD's reserve count turns red at zero.
+
 **Nights** spawn an escalating pool of zombies — `base_spawn + spawn_per_night *
 (night_number - 1)` (6, 9, 12, … tunable on the Main node), capped at
 `max_concurrent` alive at once — that trickle in over the night. Any zombies

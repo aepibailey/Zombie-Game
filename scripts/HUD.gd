@@ -252,7 +252,10 @@ func _on_health_changed(hp: int, max_hp: int) -> void:
 	_health_label.text = "HP: %d / %d" % [hp, max_hp]
 
 func _on_ammo_changed(loaded: int, reserve: int) -> void:
+	# mag / reserve. Reserve turns red at zero so "no spare mags" is unmissable.
 	_ammo_label.text = "Ammo: %d / %d" % [loaded, reserve]
+	_ammo_label.add_theme_color_override("font_color",
+		Color(1.0, 0.35, 0.3) if reserve <= 0 else Color(1, 1, 1))
 
 func _on_state_changed(state_name: String) -> void:
 	_state_label.text = "Move: %s" % state_name

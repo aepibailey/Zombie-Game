@@ -11,7 +11,10 @@ enum FireMode { SEMI, AUTO, BOTH }   # BOTH = selectable (HK416)
 @export var fire_mode: FireMode = FireMode.SEMI
 
 @export var mag_size: int = 17
-@export var spare_ammo: int = 85          # reserve granted when first acquired
+## Magazines granted when the weapon is first acquired, INCLUDING the loaded
+## one. 2 = one in the gun, one spare (ammo is deliberately scarce).
+@export var starting_mags: int = 2
+@export var ammo_cost: int = 1            # points per magazine at the crate
 @export var fire_interval: float = 0.15   # seconds between shots (rate of fire)
 @export var reload_time: float = 1.6
 
@@ -27,3 +30,7 @@ enum FireMode { SEMI, AUTO, BOTH }   # BOTH = selectable (HK416)
 @export var noise_suppressed: float = 8.0
 
 @export var cost: int = 0                 # points to buy at the crate (0 = starter)
+## Optional purchase prerequisite: an item id the player must already own.
+## Unused by weapons today; the crate's purchase flow honours it so future
+## enablers (UAV/Apache/supply drop requiring the Radio) need no new plumbing.
+@export var requires: String = ""
