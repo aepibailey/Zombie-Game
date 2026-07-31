@@ -284,11 +284,15 @@ Configuration:
 - **Wire is a hard barrier to the PLAYER** (this *replaces* the original "no effect on the player" rule). You cannot walk through it, jump it (1.8m), or mantle it. Implemented with a `StaticBody3D` on a dedicated **player-barrier collision layer (5)** that only the player's `collision_mask` includes. That one choice satisfies every constraint at once: zombie bodies mask layer 1 so they still walk in and get held; the navmesh parses layer 1 so wire stays **navmesh-passable** (carving it would break both the held-in-wire mechanic and the seal logic); weapon rays mask 1|4 so **bullets pass straight through**; and the mantle surface probes mask layer 1 so wire can never be a climb target. The mantle *destination* check does include the barrier layer, so a mantle over something else can't drop the player inside wire either.
 - Because wire can trap the player, placement adds **two separate rejections** with distinct messages: **`CAN'T BUILD ON YOURSELF`** if the volume would land on the player, and **`WOULD TRAP PLAYER`** if it would leave the player with no route to the map edge. Both are hard rejections, unlike the informational seal notice.
 
-**Zombie ditch — 35 pts, permanent, indestructible.** 10 × 2 deep × 1m.
-- Built as a **recessed visual plus a trigger volume** — no real geometry is cut. Runtime CSG subtraction isn't worth it for a box-shaped hole.
-- Traps **6** zombies (`capacity`) as **Trapped** — alive, milling at the bottom, unable to attack.
+**Zombie ditch — 35 pts, permanent, indestructible.** 10m long, 1m across, **2m revetment walls**.
+- **The trench is formed by 2m walls above ground, not by a hole.** Cutting real geometry is out of scope, and the ground is a single solid box spanning y −1…0 — so there is nowhere to put a "2m deep" floor. The walls give the same containment and the same 2m climb without digging.
+- Walls sit on a dedicated **solid-but-non-navmesh collision layer (6)**: the navmesh parses layer 1 only, so zombies still **path into** the trench, but once inside they physically cannot climb out. Both actors' masks include it; the player mantles the wall at exactly the 2.0m limit, so getting out takes real effort.
+- Traps **6** zombies (`capacity`) as **Trapped** — alive, stationary, unable to attack, **fully visible and killable from the lip**. Head and body hitboxes are untouched, so the 2× headshot multiplier and normal point awards apply. Killing one frees a capacity slot.
+- Trapped zombies are **parked**: no gravity and no `move_and_slide`, so nothing can shove or sink them.
 - Once full, later zombies cross over the pile at **40%** speed while crossing, with **no lingering penalty** — they climbed over bodies, they weren't injured.
-- The player can fall in and mantle out. At 2m it sits **exactly at the mantle limit**, so it takes real effort.
+- The revetment is deliberately **not** on the weapon-ray mask, so the ditch's own geometry can never block a shot fired into it.
+
+> **Fixed bug (was: zombies vanished in ditches).** The trap transition teleported the zombie to `y = ditch_y − 2.0 + 0.2 = −1.8`, which is *below the ground collider's bottom face at −1.0*. The zombie fell out of the world forever: unhittable, but still alive, so it also held a ditch slot and blocked the all-clear. The teleport is gone — zombies now stay exactly where they walked in.
 
 **Minefield — 50 pts, most expensive.** 10 × 5m, **20 mines** (~1 per 2.5 m²), boundary marked with emissive posts.
 - **Player-safe** — the engineers marked the field.

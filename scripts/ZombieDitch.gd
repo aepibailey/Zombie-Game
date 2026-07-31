@@ -20,7 +20,50 @@ var _trigger: Area3D
 func setup(t) -> void:
 	super.setup(t)
 	add_to_group("ditches")
+	_build_revetment()
 	_build_trigger()
+
+## The trench is formed by 2m revetment walls ABOVE ground, not by a hole.
+##
+## There is no hole to dig: the ground is one solid box spanning y -1..0, and
+## cutting real geometry is explicitly out of scope. The original "teleport the
+## zombie 2m down" put it at y = -1.8 — below the ground collider entirely —
+## so it fell out of the world forever, which is exactly the reported bug.
+##
+## Walls sit on SOLID_NO_NAV_LAYER so the navmesh ignores them (zombies still
+## path *into* the trench) while physically containing anything inside. At 2m
+## they're exactly at the player's mantle limit, so climbing out is possible
+## but effortful — which is the behaviour the spec asked for.
+func _build_revetment() -> void:
+	var size: Vector3 = obstacle_type.size
+	var wall_h: float = size.y            # 2m
+	var t: float = 0.25
+	var offset: float = size.z * 0.5 + t * 0.5
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.30, 0.26, 0.19)
+
+	for side in [-1.0, 1.0]:
+		var body := StaticBody3D.new()
+		body.collision_layer = Obstacle.SOLID_NO_NAV_LAYER
+		body.collision_mask = 0
+		body.position = Vector3(0, 0, side * offset)
+
+		var mesh := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(size.x, wall_h, t)
+		mesh.mesh = box
+		mesh.material_override = mat
+		mesh.position.y = wall_h * 0.5
+		body.add_child(mesh)
+
+		var col := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(size.x, wall_h, t)
+		col.shape = shape
+		col.position.y = wall_h * 0.5
+		body.add_child(col)
+		add_child(body)
 
 func _build_trigger() -> void:
 	var size: Vector3 = obstacle_type.size
@@ -55,10 +98,11 @@ func _on_entered(body: Node3D) -> void:
 	_prune()
 	if trapped.size() < capacity:
 		trapped.append(z)
+		# NO teleport. The previous version dropped the zombie to y = -1.8,
+		# which is below the ground collider (-1.0 .. 0.0), so it fell out of
+		# the world and became unhittable. It stays exactly where it walked in,
+		# on the trench floor, fully visible and shootable from the lip.
 		z.enter_trapped(self)
-		# Drop to the bottom of the trench.
-		var floor_y: float = global_position.y - obstacle_type.size.y + 0.2
-		z.global_position = Vector3(z.global_position.x, floor_y, z.global_position.z)
 	else:
 		z.set_temp_slow(crossing_speed_mult)
 

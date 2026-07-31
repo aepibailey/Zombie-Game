@@ -227,7 +227,7 @@ func _ready() -> void:
 	add_to_group("player")
 	# Collide with the world (layer 1) AND player-only barriers (layer 5, used
 	# by C-wire). Zombies mask layer 1 only, so wire stops us and not them.
-	collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER
+	collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER | Obstacle.SOLID_NO_NAV_LAYER
 	_spawn_point = global_position
 	camera.current = true
 	_build_laser()
@@ -1228,8 +1228,10 @@ func _find_mantle_target() -> Dictionary:
 	var fwd := -global_transform.basis.z
 	var chest := global_position + Vector3(0, MANTLE_CHEST_Y, 0)
 
+	# World + the ditch revetment (so it can be climbed out of), but NOT the
+	# player-barrier layer — wire must never be a mantle target.
 	var q1 := PhysicsRayQueryParameters3D.create(chest, chest + fwd * mantle_reach)
-	q1.collision_mask = 1
+	q1.collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
 	q1.exclude = [get_rid()]
 	var face := space.intersect_ray(q1)
 	if not face:
@@ -1245,7 +1247,7 @@ func _find_mantle_target() -> Dictionary:
 	probe.y = global_position.y + mantle_max_height + 0.35
 	var q2 := PhysicsRayQueryParameters3D.create(
 		probe, probe + Vector3(0, -(mantle_max_height + 0.7), 0))
-	q2.collision_mask = 1
+	q2.collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
 	q2.exclude = [get_rid()]
 	var ledge := space.intersect_ray(q2)
 	if not ledge:
@@ -1275,7 +1277,7 @@ func _capsule_blocked(space: PhysicsDirectSpaceState3D, foot_pos: Vector3) -> bo
 	# The surface probes deliberately mask layer 1 only, so wire can never be
 	# a mantle TARGET. The destination check adds the barrier layer so a
 	# mantle over something else can never drop us INSIDE wire either.
-	params.collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER
+	params.collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER | Obstacle.SOLID_NO_NAV_LAYER
 	params.exclude = [get_rid()]
 	return space.intersect_shape(params, 1).size() > 0
 

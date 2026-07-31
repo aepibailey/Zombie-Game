@@ -18,6 +18,11 @@ const FOOTPRINT_LAYER := 8      # collision layer 4
 ##   - the mantle probes mask layer 1, so it can never be climbed
 ## Only the player's collision_mask includes it.
 const PLAYER_BARRIER_LAYER := 16
+## Collision layer 6. Solid to BOTH actors, but deliberately invisible to the
+## navmesh (which parses layer 1 only). Used by the ditch revetment walls:
+## zombies must still *path into* the trench, so the walls cannot be baked —
+## but once inside, they physically cannot climb back out.
+const SOLID_NO_NAV_LAYER := 32
 
 var type_id: String = ""
 var obstacle_type                # ObstacleCatalog.ObstacleType

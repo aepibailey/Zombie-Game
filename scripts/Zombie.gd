@@ -99,6 +99,9 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 
 func _ready() -> void:
 	add_to_group("zombies")
+	# World (layer 1) plus the ditch revetment (layer 6). NOT the player-only
+	# barrier layer — wire must stay walk-into-able for the entangle mechanic.
+	collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
 	# The head Area3D is tagged so weapon rays can identify a headshot from the
 	# collider itself — no hit-height guessing.
 	head_hitbox.add_to_group("zombie_heads")
@@ -133,6 +136,13 @@ func _physics_process(delta: float) -> void:
 		_hit_flash -= delta
 		if _hit_flash <= 0.0:
 			_refresh_tint()
+
+	# A trapped zombie is parked outright: no gravity, no move_and_slide, so
+	# nothing can shove or sink it. It stays exactly where it fell in, visible
+	# and shootable, until killed.
+	if state == State.TRAPPED:
+		velocity = Vector3.ZERO
+		return
 
 	# Gravity keeps them grounded.
 	if not is_on_floor():
