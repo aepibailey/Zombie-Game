@@ -225,6 +225,9 @@ var _sfx_impact: AudioStreamPlayer
 
 func _ready() -> void:
 	add_to_group("player")
+	# Collide with the world (layer 1) AND player-only barriers (layer 5, used
+	# by C-wire). Zombies mask layer 1 only, so wire stops us and not them.
+	collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER
 	_spawn_point = global_position
 	camera.current = true
 	_build_laser()
@@ -1269,7 +1272,10 @@ func _capsule_blocked(space: PhysicsDirectSpaceState3D, foot_pos: Vector3) -> bo
 	var params := PhysicsShapeQueryParameters3D.new()
 	params.shape = shape
 	params.transform = Transform3D(Basis.IDENTITY, foot_pos + Vector3(0, 0.9, 0))
-	params.collision_mask = 1
+	# The surface probes deliberately mask layer 1 only, so wire can never be
+	# a mantle TARGET. The destination check adds the barrier layer so a
+	# mantle over something else can never drop us INSIDE wire either.
+	params.collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER
 	params.exclude = [get_rid()]
 	return space.intersect_shape(params, 1).size() > 0
 

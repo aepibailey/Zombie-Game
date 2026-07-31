@@ -280,7 +280,9 @@ Configuration:
 **Triple-strand C-wire — 20 pts, permanent, indestructible.** 10 × 1.8 × 1m.
 - Holds **4** zombies (`capacity`) permanently as **Entangled** — alive, immobile, and still able to swing if the player comes within melee range. Don't hug your own wire.
 - Once full the section is trampled and further zombies push through at **40%** speed (`inside_speed_mult`), keeping a **permanent −15%** (`exit_speed_penalty`) on exit. The wire shreds them on the way past even when it can't hold them.
-- Killing an entangled zombie frees its slot. **No effect on the player.**
+- Killing an entangled zombie frees its slot.
+- **Wire is a hard barrier to the PLAYER** (this *replaces* the original "no effect on the player" rule). You cannot walk through it, jump it (1.8m), or mantle it. Implemented with a `StaticBody3D` on a dedicated **player-barrier collision layer (5)** that only the player's `collision_mask` includes. That one choice satisfies every constraint at once: zombie bodies mask layer 1 so they still walk in and get held; the navmesh parses layer 1 so wire stays **navmesh-passable** (carving it would break both the held-in-wire mechanic and the seal logic); weapon rays mask 1|4 so **bullets pass straight through**; and the mantle surface probes mask layer 1 so wire can never be a climb target. The mantle *destination* check does include the barrier layer, so a mantle over something else can't drop the player inside wire either.
+- Because wire can trap the player, placement adds **two separate rejections** with distinct messages: **`CAN'T BUILD ON YOURSELF`** if the volume would land on the player, and **`WOULD TRAP PLAYER`** if it would leave the player with no route to the map edge. Both are hard rejections, unlike the informational seal notice.
 
 **Zombie ditch — 35 pts, permanent, indestructible.** 10 × 2 deep × 1m.
 - Built as a **recessed visual plus a trigger volume** — no real geometry is cut. Runtime CSG subtraction isn't worth it for a box-shaped hole.

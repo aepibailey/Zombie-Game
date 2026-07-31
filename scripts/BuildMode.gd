@@ -353,6 +353,13 @@ func _validate(t, pos: Vector3, yaw: float) -> Dictionary:
 	if blocker != "":
 		return {"valid": false, "reason": "Overlaps %s" % blocker}
 
+	# Two DISTINCT player-safety checks, deliberately not merged: one is
+	# "you're standing in it", the other is "you'd be walled in".
+	if t.blocks_player and _overlaps_player(t, pos, yaw):
+		return {"valid": false, "reason": "CAN'T BUILD ON YOURSELF"}
+	if _would_trap_player(t, pos, yaw):
+		return {"valid": false, "reason": "WOULD TRAP PLAYER"}
+
 	return {"valid": true, "reason": "%s — %d pts" % [t.display_name, t.cost]}
 
 ## Returns a human-readable description of the first blocking collider, or "".
@@ -394,54 +401,51 @@ func _overlap_blocker(space: PhysicsDirectSpaceState3D, t, pos: Vector3, yaw: fl
 		return "existing structures"
 	return ""
 
-## Coarse flood-fill: can a zombie still reach the base centre from the map
-## edge if this obstacle is placed? Purely informational.
-func _would_seal(t, pos: Vector3, yaw: float) -> bool:
-	var key := "%d_%d_%d_%d" % [
-		int(pos.x), int(pos.z), int(rad_to_deg(yaw)), _placed.size()]
-	if key == _seal_cache_key:
-		return _seal_cached
-	_seal_cache_key = key
+const SEAL_CELL := 2.0
 
-	const CELL := 2.0
-	var half := int(map_half_extent / CELL)
+## Coarse flood-fill on a 2m grid: is `target` still connected to the map edge
+## once `runs` are treated as walls? Shared by both connectivity checks —
+## the zombie "perimeter sealed" notice and the player "would trap" rejection —
+## which differ only in which obstacles count as walls and where they start.
+func _reaches_border(runs: Array, target: Vector3) -> bool:
+	var half := int(map_half_extent / SEAL_CELL)
 	var dim := half * 2 + 1
 
-	# Mark blocked cells from every pathing-blocking obstacle, plus the ghost.
 	var blocked := {}
-	var runs: Array = []
-	for o in _placed:
-		if is_instance_valid(o) and o.obstacle_type.blocks_pathing:
-			runs.append({"pos": o.global_position, "yaw": o.rotation.y, "size": o.obstacle_type.size})
-	runs.append({"pos": pos, "yaw": yaw, "size": t.size})
-
 	for r in runs:
 		var s: Vector3 = r["size"]
-		var steps: int = int(ceil(s.x / (CELL * 0.5)))
+		var rpos: Vector3 = r["pos"]
+		var ryaw: float = r["yaw"]
+		# Walk the run's length, marking every cell it covers.
+		var steps: int = int(ceil(s.x / (SEAL_CELL * 0.5)))
 		for i in range(steps + 1):
 			var along: float = -s.x * 0.5 + s.x * (float(i) / float(maxi(1, steps)))
-			var offset := Vector2(along, 0.0).rotated(r["yaw"] as float)
-			var wx: float = (r["pos"] as Vector3).x + offset.x
-			var wz: float = (r["pos"] as Vector3).z + offset.y
-			var gx := int(round(wx / CELL)) + half
-			var gz := int(round(wz / CELL)) + half
-			blocked[gx * dim + gz] = true
+			var offset := Vector2(along, 0.0).rotated(ryaw)
+			var gx := int(round((rpos.x + offset.x) / SEAL_CELL)) + half
+			var gz := int(round((rpos.z + offset.y) / SEAL_CELL)) + half
+			if gx >= 0 and gz >= 0 and gx < dim and gz < dim:
+				blocked[gx * dim + gz] = true
+
+	var tx: int = clampi(int(round(target.x / SEAL_CELL)) + half, 0, dim - 1)
+	var tz: int = clampi(int(round(target.z / SEAL_CELL)) + half, 0, dim - 1)
+	var target_cell := tx * dim + tz
+	# A wall laid straight through the target cell isn't a connectivity answer.
+	if blocked.has(target_cell):
+		return true
 
 	# Flood from the map border inward.
 	var seen := {}
 	var queue: Array = []
 	for i in range(dim):
-		for cell in [i * dim + 0, i * dim + (dim - 1), 0 * dim + i, (dim - 1) * dim + i]:
+		for cell in [i * dim, i * dim + (dim - 1), i, (dim - 1) * dim + i]:
 			if not blocked.has(cell) and not seen.has(cell):
 				seen[cell] = true
 				queue.append(cell)
 
-	var centre_cell := half * dim + half
 	while queue.size() > 0:
 		var c: int = queue.pop_back()
-		if c == centre_cell:
-			_seal_cached = false      # base still reachable
-			return false
+		if c == target_cell:
+			return true
 		var cx := c / dim
 		var cz := c % dim
 		for d in NEIGHBOURS:
@@ -454,9 +458,48 @@ func _would_seal(t, pos: Vector3, yaw: float) -> bool:
 				continue
 			seen[n] = true
 			queue.append(n)
+	return false
 
-	_seal_cached = true
-	return true
+func _runs_for(pos: Vector3, yaw: float, t, player_barriers: bool) -> Array:
+	var runs: Array = []
+	for o in _placed:
+		if not is_instance_valid(o):
+			continue
+		var counts: bool = o.obstacle_type.blocks_player if player_barriers \
+			else o.obstacle_type.blocks_pathing
+		if counts:
+			runs.append({"pos": o.global_position, "yaw": o.rotation.y,
+				"size": o.obstacle_type.size})
+	runs.append({"pos": pos, "yaw": yaw, "size": t.size})
+	return runs
+
+## Would this placement cut the base off from the map edge for ZOMBIES?
+## Informational only — sealing is explicitly allowed.
+func _would_seal(t, pos: Vector3, yaw: float) -> bool:
+	var key := "%d_%d_%d_%d" % [
+		int(pos.x), int(pos.z), int(rad_to_deg(yaw)), _placed.size()]
+	if key == _seal_cache_key:
+		return _seal_cached
+	_seal_cache_key = key
+	_seal_cached = not _reaches_border(_runs_for(pos, yaw, t, false), Vector3.ZERO)
+	return _seal_cached
+
+## Would this placement leave the PLAYER with no route to the map edge?
+## Unlike sealing, this is a hard rejection — wire is a barrier the player
+## cannot climb, so walling yourself in is unrecoverable.
+func _would_trap_player(t, pos: Vector3, yaw: float) -> bool:
+	if _player == null or not t.blocks_player:
+		return false
+	return not _reaches_border(_runs_for(pos, yaw, t, true), _player.global_position)
+
+## Would the obstacle's volume land on top of the player?
+func _overlaps_player(t, pos: Vector3, yaw: float) -> bool:
+	if _player == null:
+		return false
+	var local := (_player.global_position - pos).rotated(Vector3.UP, -yaw)
+	var half_x: float = t.size.x * 0.5 + 0.5    # + player radius margin
+	var half_z: float = t.size.z * 0.5 + 0.5
+	return absf(local.x) <= half_x and absf(local.z) <= half_z
 
 # --- Placement ------------------------------------------------------------
 func _try_place() -> void:

@@ -18,7 +18,25 @@ var _trigger: Area3D
 func setup(t) -> void:
 	super.setup(t)
 	add_to_group("cwire")
+	_build_player_barrier()
 	_build_trigger()
+
+## Wire is a hard barrier to the PLAYER only — it sits on the dedicated
+## player-barrier layer, so zombies still walk in and get held, the navmesh
+## still treats it as passable, bullets still pass through, and the mantle
+## probes (which mask layer 1) can never find a surface to climb.
+func _build_player_barrier() -> void:
+	var size: Vector3 = obstacle_type.size
+	var body := StaticBody3D.new()
+	body.collision_layer = Obstacle.PLAYER_BARRIER_LAYER
+	body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	col.position.y = size.y * 0.5
+	body.add_child(col)
+	add_child(body)
 
 func _build_trigger() -> void:
 	var size: Vector3 = obstacle_type.size

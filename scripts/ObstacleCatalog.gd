@@ -17,6 +17,10 @@ class ObstacleType:
 	var solid: bool = false
 	## Blocks zombie pathing — drives the "perimeter sealed" notice.
 	var blocks_pathing: bool = false
+	## Blocks the PLAYER — drives the "would trap player" rejection. Sandbags
+	## are solid but only 1m, so the player mantles them and is never trapped;
+	## the ditch can be mantled out of. Only wire is a true player barrier.
+	var blocks_player: bool = false
 	var description: String = ""
 
 const ORDER := ["sandbags", "cwire", "ditch", "minefield"]
@@ -33,8 +37,8 @@ func _ready() -> void:
 	_add({
 		"id": "cwire", "display_name": "Triple-strand C-wire", "cost": 20,
 		"size": Vector3(10, 1.8, 1.0), "color": Color(0.7, 0.72, 0.75),
-		"solid": false, "blocks_pathing": false,
-		"description": "Entangles up to 4. Permanent. No effect on you.",
+		"solid": false, "blocks_pathing": false, "blocks_player": true,
+		"description": "Entangles up to 4. Permanent. Blocks YOU — you can't climb it.",
 	})
 	_add({
 		"id": "ditch", "display_name": "Zombie ditch", "cost": 35,

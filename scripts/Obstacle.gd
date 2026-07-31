@@ -9,6 +9,15 @@ class_name Obstacle
 ## placements without physically blocking anything.
 
 const FOOTPRINT_LAYER := 8      # collision layer 4
+## Collision layer 5. A barrier on this layer blocks the PLAYER ONLY:
+##   - zombie bodies mask layer 1, so they walk through it untouched
+##   - the navmesh parses layer 1, so it stays navmesh-passable (essential —
+##     carving it would break both the held-in-wire mechanic and the
+##     seal-perimeter logic)
+##   - weapon rays mask 1|4, so bullets pass straight through
+##   - the mantle probes mask layer 1, so it can never be climbed
+## Only the player's collision_mask includes it.
+const PLAYER_BARRIER_LAYER := 16
 
 var type_id: String = ""
 var obstacle_type                # ObstacleCatalog.ObstacleType
