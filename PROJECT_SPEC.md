@@ -223,7 +223,47 @@ The Day gate is removed — the crate works in **both phases**.
 
 ## Economy
 - Points earned from kills are the only currency. Spent at the supply crate during Day phase.
+- **Award: 1 point per body-shot kill, 3 per headshot kill.** Mine kills award 1.
 - No separate "money" layer — keep it simple.
+
+**Full price list (single reference — see the tech-debt note below):**
+
+| Item | Cost | Repeatable |
+|---|---|---|
+| Sig Sauer M17 | 0 (starting) | — |
+| HK 416 | 15 | no |
+| SPAS-12 | 20 | no |
+| M249 SAW | 30 | no |
+| Radio | 10 | no |
+| IR Laser | 8 | no |
+| Suppressor (any weapon) | 3 | no |
+| IFAK | 15 | yes |
+| M17 ammo (1 mag, 17 rds) | 1 | yes |
+| HK 416 ammo (1 mag, 30 rds) | 2 | yes |
+| SPAS-12 ammo (1 mag, 8 rds) | 2 | yes |
+| M249 ammo (1 belt, 100 rds) | 4 | yes |
+| Sandbags | 10 | yes |
+| Triple-strand C-wire | 40 | yes |
+| Zombie ditch | 60 | yes |
+| Minefield | 70 | yes |
+| Mine replenishment (to 20) | 10 | yes |
+
+**Per-night earnings telemetry (implemented).** `PointsManager` tracks `earned_this_night` / `spent_this_night`, reset by `Main._begin_night()` and logged at dawn as
+`[ECONOMY] night N earned X pts, spent Y, balance Z`.
+This is the **first** earnings data the project has had — every price above was set by feel, not from measurement.
+
+**Theoretical income ceiling.** The night pool is `6 + 3 × (night − 1)`, so a perfect night with every kill a headshot caps at `3 × pool`:
+
+| Night | Pool | Max (all headshots) | Realistic (mixed) |
+|---|---|---|---|
+| 1 | 6 | 18 | ~8–12 |
+| 3 | 12 | 36 | ~16–24 |
+| 5 | 18 | 54 | ~24–36 |
+| 8 | 27 | 81 | ~36–54 |
+
+Carried-over survivors add to a later night's total, so the real curve runs slightly above this.
+
+> **Tech debt (flagged, deliberately not refactored):** obstacle prices live in `ObstacleCatalog.gd`, weapon and ammo prices in `Arsenal.gd`, store-only prices (`SUPPRESSOR_COST`, `IFAK_COST`, Radio, IR Laser) in `StoreCatalog.gd`, and **mine replenishment in `BuildMode.gd` (`REPLENISH_COST`)** — the one price that lives nowhere near the others. Worth consolidating into a single pricing table once the numbers stop moving.
 - The crate's purchase flow supports an optional **prerequisite item** (`WeaponData.requires`): an item can require another to be owned first. Unused by weapons today; it exists so future enablers (Radio → UAV/Apache/supply drop) need no new plumbing.
 
 ## Engineers' Tent & build mode (in progress)
@@ -318,6 +358,20 @@ Added to Wander / Investigate / Chase / Attack:
 - **AttackStructure** — entered from Chase when a navmesh path to the player stops short. Targets the nearest intact sandbag section, and **re-checks reachability every second**, abandoning the wall the moment a route opens elsewhere. Being shot no longer breaks a zombie out of Entangled/Trapped, since it has nowhere to go.
 
 Speed modifiers **stack multiplicatively** with a floor: permanent (mine survivor ×0.5, wire exit ×0.85) compound for life; temporary (inside wire ×0.4, crossing a full ditch ×0.4) apply only inside the volume. Total is clamped to **`min_speed_mult` = 0.30** — a mined-then-wired zombie never approaches zero and becomes a de-facto permanent obstacle.
+
+### Obstacle persistence (implemented)
+Obstacles survive between nights, and — the point of doing this now rather than later — they survive a **scene change**, so the multi-level work can't silently lose the base.
+
+- **`GameState` (autoload)** holds the run as plain data: `obstacles` (an Array of Dictionaries), `night_number`, `points`. Every value is `String` / `float` / `Vector3` / `bool` / `Array`, so the snapshot is already safe to hand to `var_to_str`, `JSON`, or `FileAccess` without further conversion. **No node references cross a transition.**
+- Each obstacle serialises itself: `Obstacle.to_dict()` carries `type` / `pos` / `yaw`, and subclasses override to merge their own mutable state.
+  - **Sandbags persist with their current health** — a wall left at 40% comes back at 40%, not repaired.
+  - **Minefields persist per-mine**, as a `live` array, so a half-spent field comes back half-spent with the right marker and readout state.
+  - **C-wire and ditches are permanent and carry no mutable state** — entangled and trapped zombies are transient by definition, so a restored section comes back empty.
+- **Destroyed sandbag sections stay destroyed.** They're removed from the roster on destruction, so they're simply absent from the snapshot — no "destroyed" flag to get out of sync.
+- **Capture** runs at every phase boundary (`Main.capture_state()` from `_on_phase_changed`), so `GameState` is always current and a transition never has to hunt for a safe moment to serialise. `Main.capture_state()` is public for whatever drives a level change later.
+- **Restore** runs inside `Main._build_ui()` — *before* the initial navmesh bake in `_ready()` — so restored sandbags are baked in on the first pass and no extra rebake is needed.
+- Restored obstacles are **adopted by `BuildMode`** (`adopt()`), not merely spawned: they're appended to `_placed`, so they count against the **30-obstacle cap**, and restored sandbags reconnect `destroyed_section` so a later breach still triggers a rebake.
+- `GameState.has_snapshot()` guards the whole path, so a cold boot is never stomped by an empty snapshot.
 
 ## Roadmap
 Support enablers (Radio → UAV / Apache / Supply Drop) are **planned, not built**. See [docs/ROADMAP.md](docs/ROADMAP.md) for the concept, the radio-as-prerequisite structure, the compatibility checklist, and known friction to resolve before building them.

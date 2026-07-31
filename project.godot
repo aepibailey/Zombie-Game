@@ -22,6 +22,7 @@ AmmoManager="*res://scripts/AmmoManager.gd"
 StoreCatalog="*res://scripts/StoreCatalog.gd"
 EnablerManager="*res://scripts/EnablerManager.gd"
 ObstacleCatalog="*res://scripts/ObstacleCatalog.gd"
+GameState="*res://scripts/GameState.gd"
 
 [input]
 

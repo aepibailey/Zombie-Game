@@ -216,3 +216,33 @@ func replenish() -> void:
 
 func is_spent() -> bool:
 	return mines_remaining <= 0
+
+# --- Persistence ----------------------------------------------------------
+## The emplacement is permanent; its ammunition is not, so the live/spent state
+## of each individual mine is carried too.
+func to_dict() -> Dictionary:
+	var d := super.to_dict()
+	var live: Array = []
+	for m in _mines:
+		live.append(bool(m["live"]))
+	d["live"] = live
+	return d
+
+func apply_dict(d: Dictionary) -> void:
+	var live: Array = d.get("live", [])
+	for i in range(mini(live.size(), _mines.size())):
+		var is_live: bool = live[i]
+		_mines[i]["live"] = is_live
+		if not is_live:
+			var mesh = _mines[i]["mesh"]
+			if is_instance_valid(mesh):
+				mesh.queue_free()
+			_mines[i]["mesh"] = null
+	# Counted over the whole array, not just the saved slice: a shorter saved
+	# list must not silently discount the mines it didn't cover.
+	var remaining := 0
+	for m in _mines:
+		if m["live"]:
+			remaining += 1
+	mines_remaining = remaining
+	_refresh_readout()

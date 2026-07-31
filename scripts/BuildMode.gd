@@ -551,6 +551,25 @@ func placed_obstacles() -> Array:
 	_placed = _placed.filter(func(o): return is_instance_valid(o))
 	return _placed
 
+## Take ownership of obstacles that were rebuilt from a saved snapshot rather
+## than placed by hand. Everything the placement path wires up has to be wired
+## up here too, or restored sandbags would silently stop triggering a rebake
+## when breached and the placement cap would under-count the real base.
+func adopt(obstacles: Array) -> void:
+	for entry in obstacles:
+		if not is_instance_valid(entry):
+			continue
+		_placed.append(entry)
+		var section := entry as SandbagSection
+		if section != null and not section.destroyed_section.is_connected(_on_section_destroyed):
+			section.destroyed_section.connect(_on_section_destroyed)
+	_seal_cache_key = ""      # roster changed; recompute the seal test
+	_refresh()
+
+## Snapshot the current base into GameState. Call before any scene change.
+func capture_state() -> void:
+	GameState.capture(placed_obstacles())
+
 # --- Camera control -------------------------------------------------------
 func _process(delta: float) -> void:
 	if not active:

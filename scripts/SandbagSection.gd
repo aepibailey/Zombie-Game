@@ -108,3 +108,15 @@ func _destroy() -> void:
 	destroyed = true
 	destroyed_section.emit(self)
 	queue_free()
+
+# --- Persistence ----------------------------------------------------------
+## Sections persist with their CURRENT health; destroyed ones are simply absent
+## from the saved list and stay destroyed.
+func to_dict() -> Dictionary:
+	var d := super.to_dict()
+	d["health"] = health
+	return d
+
+func apply_dict(d: Dictionary) -> void:
+	health = clampf(d.get("health", max_health), 0.0, max_health)
+	_refresh_damage_state()

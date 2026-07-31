@@ -116,6 +116,21 @@ func _build_solid() -> void:
 	_solid.add_child(col)
 	add_child(_solid)
 
+# --- Persistence ----------------------------------------------------------
+## Serialise to a plain Dictionary. Subclasses add their own mutable state
+## (sandbag health, remaining mines) by overriding and merging.
+func to_dict() -> Dictionary:
+	return {
+		"type": type_id,
+		"pos": global_position,
+		"yaw": rotation.y,
+	}
+
+## Apply the mutable part of a saved dict. Position and rotation are applied by
+## GameState before this is called.
+func apply_dict(_d: Dictionary) -> void:
+	pass
+
 ## Footprint corners on the ground plane, for bounds and seal tests.
 func footprint_corners() -> Array[Vector3]:
 	var size: Vector3 = obstacle_type.size

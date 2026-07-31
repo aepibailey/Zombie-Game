@@ -324,6 +324,18 @@ func _build_ui() -> void:
 		_pending_tent_zone.build_mode = _build_mode
 		_pending_tent_zone.hud = _hud
 
+	_restore_base()
+
+## Rebuild the base from GameState if a snapshot exists. Runs inside
+## _build_ui(), i.e. BEFORE the initial navmesh bake in _ready(), so restored
+## sandbags are baked in on the first pass and no extra rebake is needed.
+func _restore_base() -> void:
+	if not GameState.has_snapshot():
+		return
+	GameState.restore_meta()
+	var rebuilt: Array = GameState.restore(obstacles_root)
+	_build_mode.adopt(rebuilt)
+
 func _build_nvg_overlay() -> void:
 	# Green tint sits under the HUD (layer 5) so HUD text stays readable.
 	_nvg_overlay = CanvasLayer.new()
@@ -388,6 +400,15 @@ func _on_phase_changed(phase: int) -> void:
 		_begin_night()
 	else:
 		_begin_day()
+	# Snapshot at every phase boundary so a scene change never has to hunt for
+	# a safe moment to serialise the base — GameState is always current.
+	capture_state()
+
+## Public: snapshot the run into GameState. Called at every phase boundary and
+## available to whatever drives a level transition later.
+func capture_state() -> void:
+	if _build_mode:
+		_build_mode.capture_state()
 
 func _begin_night() -> void:
 	# Survivors from previous nights carry over: reactivate them and fold them
@@ -406,6 +427,7 @@ func _begin_night() -> void:
 	_spawn_timer = FIRST_SPAWN_DELAY
 	_spawn_interval = _compute_spawn_interval(new_pool)
 	_all_clear_shown = false
+	PointsManager.begin_night_tally()
 	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
 		GameManager.night_number, _wave_total, new_pool, carryover,
 		max_concurrent, _zombie_hp_for_night(), _spawn_interval])
@@ -422,6 +444,10 @@ func _begin_day() -> void:
 	for z in _zombies:
 		z.set_active(false)
 	_hud.hide_all_clear()
+	# Per-night earnings telemetry — the data pricing decisions need.
+	print("[ECONOMY] night %d earned %d pts, spent %d, balance %d" % [
+		GameManager.night_number, PointsManager.earned_this_night,
+		PointsManager.spent_this_night, PointsManager.points])
 	_update_wave_hud()
 
 	# Guaranteed resupply at the dawn following certain nights. The schedule
