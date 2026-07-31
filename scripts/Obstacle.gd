@@ -70,6 +70,8 @@ func _build_minefield_markers(size: Vector3) -> void:
 	mat.emission_enabled = true
 	mat.emission = Color(1.0, 0.35, 0.1)
 	mat.emission_energy_multiplier = 2.0
+	# Handed to Minefield so a spent field can grey its own markers.
+	set("_post_mat", mat)
 	var hx: float = size.x * 0.5
 	var hz: float = size.z * 0.5
 	for corner in [Vector2(-hx, -hz), Vector2(hx, -hz), Vector2(hx, hz), Vector2(-hx, hz)]:

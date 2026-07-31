@@ -35,19 +35,19 @@ func _ready() -> void:
 		"description": "10m wall, 1m tall. Destructible. You can mantle it; they can't.",
 	})
 	_add({
-		"id": "cwire", "display_name": "Triple-strand C-wire", "cost": 20,
+		"id": "cwire", "display_name": "Triple-strand C-wire", "cost": 40,
 		"size": Vector3(10, 1.8, 1.0), "color": Color(0.7, 0.72, 0.75),
 		"solid": false, "blocks_pathing": false, "blocks_player": true,
 		"description": "Entangles up to 4. Permanent. Blocks YOU — you can't climb it.",
 	})
 	_add({
-		"id": "ditch", "display_name": "Zombie ditch", "cost": 35,
+		"id": "ditch", "display_name": "Zombie ditch", "cost": 60,
 		"size": Vector3(10, 2.0, 1.0), "color": Color(0.18, 0.15, 0.11),
 		"solid": false, "blocks_pathing": false,
 		"description": "2m deep. Traps up to 6. You can mantle out — barely.",
 	})
 	_add({
-		"id": "minefield", "display_name": "Minefield", "cost": 50,
+		"id": "minefield", "display_name": "Minefield", "cost": 70,
 		"size": Vector3(10, 0.15, 5.0), "color": Color(0.5, 0.2, 0.15),
 		"solid": false, "blocks_pathing": false,
 		"description": "10x5m, 20 mines. Player-safe. Very loud.",

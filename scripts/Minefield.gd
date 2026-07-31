@@ -20,10 +20,17 @@ const SFX_BLAST := "res://audio/gunshot.wav"
 
 var mines_remaining: int = 20
 
+## How close the player must be for the world-space count to appear.
+@export var readout_range: float = 5.0
+
 var _mines: Array = []            # {pos: Vector3, live: bool, mesh: MeshInstance3D}
 var _trigger: Area3D
 var _inside: Array = []
 var _sfx: AudioStreamPlayer3D
+var _readout: Label3D
+var _readout_forced := false      # build mode shows it regardless of distance
+var _posts: Array = []            # boundary markers, greyed when spent
+var _post_mat: StandardMaterial3D
 
 func setup(t) -> void:
 	super.setup(t)
@@ -32,6 +39,57 @@ func setup(t) -> void:
 	_scatter_mines()
 	_build_trigger()
 	_build_audio()
+	_build_readout()
+
+## World-space count. Shown near the emplacement and always in build mode —
+## the logic was always decrementing correctly, it just had no readout, which
+## made the field look like it had unlimited mines.
+func _build_readout() -> void:
+	_readout = Label3D.new()
+	_readout.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_readout.no_depth_test = true
+	_readout.fixed_size = true
+	_readout.pixel_size = 0.004
+	_readout.font_size = 64
+	_readout.outline_size = 12
+	_readout.modulate = Color(1.0, 0.6, 0.2)
+	_readout.position.y = 1.4
+	_readout.visible = false
+	add_child(_readout)
+	_refresh_readout()
+
+func _refresh_readout() -> void:
+	if _readout == null:
+		return
+	_readout.text = "MINES %d / %d" % [mines_remaining, mine_count]
+	var spent: bool = mines_remaining <= 0
+	_readout.modulate = Color(0.6, 0.6, 0.6) if spent else Color(1.0, 0.6, 0.2)
+	# A spent field must be distinguishable at a glance: the marker posts go
+	# dark and stop glowing.
+	if _post_mat:
+		if spent:
+			_post_mat.albedo_color = Color(0.35, 0.33, 0.3)
+			_post_mat.emission_energy_multiplier = 0.0
+		else:
+			_post_mat.albedo_color = Color(1.0, 0.35, 0.1)
+			_post_mat.emission_energy_multiplier = 2.0
+
+## Build mode forces the readout on for every field, regardless of distance.
+func set_readout_forced(on: bool) -> void:
+	_readout_forced = on
+
+func _process(_delta: float) -> void:
+	if _readout == null:
+		return
+	if _readout_forced:
+		_readout.visible = true
+		return
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		_readout.visible = false
+		return
+	var p: Node3D = players[0]
+	_readout.visible = p.global_position.distance_to(global_position) <= readout_range
 
 ## Roughly one mine per 2.5 m^2 over the 10x5m field.
 func _scatter_mines() -> void:
@@ -107,6 +165,7 @@ func _physics_process(_delta: float) -> void:
 func _detonate(mine: Dictionary, trigger) -> void:
 	mine["live"] = false
 	mines_remaining = maxi(0, mines_remaining - 1)
+	_refresh_readout()
 	var mesh: MeshInstance3D = mine["mesh"]
 	if is_instance_valid(mesh):
 		mesh.queue_free()
@@ -153,6 +212,7 @@ func replenish() -> void:
 			add_child(mesh)
 			m["mesh"] = mesh
 	mines_remaining = mine_count
+	_refresh_readout()
 
 func is_spent() -> bool:
 	return mines_remaining <= 0

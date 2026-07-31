@@ -242,9 +242,9 @@ The Day gate is removed — the crate works in **both phases**.
 | Obstacle | Footprint | Cost | Solid | Blocks pathing |
 |---|---|---|---|---|
 | Sandbags | 10 × 1 × 0.5m | 10 | yes | yes |
-| Triple-strand C-wire | 10 × 1.8 × 1m | 20 | no | no |
-| Zombie ditch | 10 × 2 × 1m | 35 | no | no |
-| Minefield | 10 × 5m | 50 | no | no |
+| Triple-strand C-wire | 10 × 1.8 × 1m | 40 | no | no |
+| Zombie ditch | 10 × 1m, 2m walls | 60 | no | no |
+| Minefield | 10 × 5m | 70 | no | no |
 
 ### Navmesh strategy (implemented) — threaded rebake
 
@@ -277,14 +277,14 @@ Configuration:
 - Solid collision on layer 1, so it blocks zombies, blocks the player, **and stops bullets** — and at 1m it's well under the 2.0m mantle limit, so the player can climb it while zombies must go around or through. Zombies at the wall can still reach a player standing behind or on top of it.
 - **Repair** in build mode: right-click a damaged section. Cost is `full_cost × (missing HP / max HP)`. Destroyed sections are gone and must be rebought.
 
-**Triple-strand C-wire — 20 pts, permanent, indestructible.** 10 × 1.8 × 1m.
+**Triple-strand C-wire — 40 pts, permanent, indestructible.** 10 × 1.8 × 1m.
 - Holds **4** zombies (`capacity`) permanently as **Entangled** — alive, immobile, and still able to swing if the player comes within melee range. Don't hug your own wire.
 - Once full the section is trampled and further zombies push through at **40%** speed (`inside_speed_mult`), keeping a **permanent −15%** (`exit_speed_penalty`) on exit. The wire shreds them on the way past even when it can't hold them.
 - Killing an entangled zombie frees its slot.
 - **Wire is a hard barrier to the PLAYER** (this *replaces* the original "no effect on the player" rule). You cannot walk through it, jump it (1.8m), or mantle it. Implemented with a `StaticBody3D` on a dedicated **player-barrier collision layer (5)** that only the player's `collision_mask` includes. That one choice satisfies every constraint at once: zombie bodies mask layer 1 so they still walk in and get held; the navmesh parses layer 1 so wire stays **navmesh-passable** (carving it would break both the held-in-wire mechanic and the seal logic); weapon rays mask 1|4 so **bullets pass straight through**; and the mantle surface probes mask layer 1 so wire can never be a climb target. The mantle *destination* check does include the barrier layer, so a mantle over something else can't drop the player inside wire either.
 - Because wire can trap the player, placement adds **two separate rejections** with distinct messages: **`CAN'T BUILD ON YOURSELF`** if the volume would land on the player, and **`WOULD TRAP PLAYER`** if it would leave the player with no route to the map edge. Both are hard rejections, unlike the informational seal notice.
 
-**Zombie ditch — 35 pts, permanent, indestructible.** 10m long, 1m across, **2m revetment walls**.
+**Zombie ditch — 60 pts, permanent, indestructible.** 10m long, 1m across, **2m revetment walls**.
 - **The trench is formed by 2m walls above ground, not by a hole.** Cutting real geometry is out of scope, and the ground is a single solid box spanning y −1…0 — so there is nowhere to put a "2m deep" floor. The walls give the same containment and the same 2m climb without digging.
 - Walls sit on a dedicated **solid-but-non-navmesh collision layer (6)**: the navmesh parses layer 1 only, so zombies still **path into** the trench, but once inside they physically cannot climb out. Both actors' masks include it; the player mantles the wall at exactly the 2.0m limit, so getting out takes real effort.
 - Traps **6** zombies (`capacity`) as **Trapped** — alive, stationary, unable to attack, **fully visible and killable from the lip**. Head and body hitboxes are untouched, so the 2× headshot multiplier and normal point awards apply. Killing one frees a capacity slot.
@@ -294,10 +294,11 @@ Configuration:
 
 > **Fixed bug (was: zombies vanished in ditches).** The trap transition teleported the zombie to `y = ditch_y − 2.0 + 0.2 = −1.8`, which is *below the ground collider's bottom face at −1.0*. The zombie fell out of the world forever: unhittable, but still alive, so it also held a ditch slot and blocked the all-clear. The teleport is gone — zombies now stay exactly where they walked in.
 
-**Minefield — 50 pts, most expensive.** 10 × 5m, **20 mines** (~1 per 2.5 m²), boundary marked with emissive posts.
+**Minefield — 70 pts, most expensive.** 10 × 5m, **20 mines** (~1 per 2.5 m²), boundary marked with emissive posts.
 - **Player-safe** — the engineers marked the field.
 - On detonation: **125** to the triggering zombie, **50** to everything within **10m**, and a **permanent −50%** to every survivor of either. **No chain detonation** — one mine per trigger event.
-- Mines are **consumed**. The emplacement is permanent, its ammunition isn't; right-click in build mode to replenish for **20 pts**.
+- **Remaining count is displayed**: a billboarded world-space `MINES n / 20` readout appears within `readout_range` (5m) of the emplacement, and is forced on for every field while build mode is open. A spent field greys its readout *and* its boundary markers stop glowing, so armed and empty fields are distinguishable at a glance. At 0 mines the field detonates nothing.
+- Mines are **consumed**. The emplacement is permanent, its ammunition isn't; right-click in build mode to replenish for **10 pts**. That price is *deliberately profitable* over repeated use — it is not an oversight.
 - Loud blast plus a **60m noise event** — the field announcing itself and pulling more zombies in is intended.
 - **Known property, deliberate:** 125 one-shots a baseline zombie, but zombie HP reaches 132 by night 9 under the current scaling curve, so **from night 9 the minefield wounds rather than kills.** Left as-is pending playtest.
 

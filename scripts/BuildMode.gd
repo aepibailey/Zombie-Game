@@ -27,7 +27,9 @@ signal closed
 @export var max_ground_slope_dot: float = 0.9
 @export var max_obstacles: int = 30
 ## Partial refill of a spent minefield, cheaper than a fresh emplacement.
-const REPLENISH_COST := 20
+## Deliberately profitable over repeated use — 20 mines for 10 pts is by
+## design, not an oversight. Do not "correct" this upward.
+const REPLENISH_COST := 10
 
 const SFX_CONFIRM := "res://assets/audio/ui/ui_confirm.wav"
 const SFX_DENY := "res://assets/audio/ui/ui_deny.wav"
@@ -222,6 +224,9 @@ func open() -> void:
 	_player.set_control_enabled(false)
 	_player._set_mouse_captured(false)
 	_ui.visible = true
+	# Every minefield shows its remaining count while planning.
+	for m in get_tree().get_nodes_in_group("minefields"):
+		m.set_readout_forced(true)
 	set_process(true)
 	set_process_unhandled_input(true)
 	_refresh()
@@ -233,6 +238,8 @@ func close() -> void:
 	active = false
 	_selected_id = ""
 	_clear_ghost()
+	for m in get_tree().get_nodes_in_group("minefields"):
+		m.set_readout_forced(false)
 	GameManager.set_paused(false)
 	_cam.current = false
 	if _player:
