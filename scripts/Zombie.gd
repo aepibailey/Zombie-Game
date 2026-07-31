@@ -34,6 +34,9 @@ const HEADSHOT_MULT := 2            # PROJECT_SPEC.md "Combat & Scoring"
 const WANDER_SPEED := 1.6
 const CHASE_SPEED := 3.6
 const CHASE_LOSE_RANGE := 26.0     # drop chase past this with no LOS
+## Sight range used ONLY while investigating a laser dot — an alerted zombie
+## that spots the operator switches to Chase by the normal rules.
+const LASER_INVESTIGATE_SIGHT := 16.0
 const ATTACK_RANGE := 1.8
 const ATTACK_DAMAGE := 20          # PROJECT_SPEC.md "Combat & Scoring"
 const ATTACK_INTERVAL := 1.0
@@ -91,6 +94,9 @@ var _trapped_in = null           # the ditch holding us, if Trapped
 var _structure_target = null     # sandbag section being attacked
 var _structure_timer := 0.0
 var _repath_check := 0.0
+## True while investigating a laser dot specifically. Scoped so only this kind
+## of investigation watches for the player — see _do_investigate.
+var _investigating_laser := false
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
@@ -188,15 +194,35 @@ func _do_wander(delta: float) -> void:
 		_pick_wander_target()
 
 func _do_investigate(delta: float) -> void:
-	# Path to the FIXED location the noise came from — not the player's live
-	# transform. If nothing is found before the timeout (or on arrival), give
-	# up and return to Wander.
+	# Path to the FIXED location that drew us — noise origin or laser dot — not
+	# the player's live transform. If nothing is found before the timeout (or on
+	# arrival), give up and return to Wander.
+	#
+	# The player-sighting check is scoped to LASER investigations only. Noise
+	# investigation deliberately never looks for the player: that is what makes
+	# crouch-past-undetected work, and re-adding it globally would reintroduce
+	# the old "investigate silently becomes a homing chase" bug.
+	if _investigating_laser and _can_see_player():
+		_investigating_laser = false
+		_enter_chase()
+		return
+
 	_investigate_timer -= delta
 	_move_toward(_target_pos, WANDER_SPEED, delta)
 	var arrived := global_position.distance_to(_target_pos) < 1.5
 	if arrived or _investigate_timer <= 0.0:
+		_investigating_laser = false
 		state = State.WANDER
 		_pick_wander_target()
+
+## Only used while investigating a laser dot.
+func _can_see_player() -> bool:
+	var player = _get_player()
+	if player == null:
+		return false
+	if global_position.distance_to(player.global_position) > LASER_INVESTIGATE_SIGHT:
+		return false
+	return _has_los_to(player)
 
 func _do_chase(delta: float) -> void:
 	var player = _get_player()
@@ -428,19 +454,29 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 		return
 	if global_position.distance_to(position) <= radius:
 		state = State.INVESTIGATE
+		# A noise redirect supersedes any laser curiosity.
+		_investigating_laser = false
 		_investigate_timer = INVESTIGATE_TIMEOUT
 		_target_pos = position
 		_last_noise_radius = radius
 
-## Red-laser proximity reveal (from Player): confirmed player position -> chase.
-func reveal_player(player_pos: Vector3) -> void:
-	if not active or GameManager.is_day() or is_immobilised():
+## The zombie noticed the laser DOT — not the player. It goes to look at the
+## light out of curiosity; it has no idea where the operator is.
+##
+## Deliberately NOT a noise event: this never touches NoiseManager.
+func notice_laser_dot(dot_pos: Vector3) -> void:
+	if not active or GameManager.is_day() or _dead or is_immobilised():
 		return
-	_last_known_player = player_pos
-	_enter_chase()
+	if state == State.CHASE or state == State.ATTACK:
+		return   # already has a confirmed fix; the light tells it nothing new
+	state = State.INVESTIGATE
+	_investigating_laser = true
+	_investigate_timer = INVESTIGATE_TIMEOUT
+	_target_pos = dot_pos
 
 func _enter_chase() -> void:
 	state = State.CHASE
+	_investigating_laser = false
 	var player = _get_player()
 	if player:
 		_last_known_player = player.global_position

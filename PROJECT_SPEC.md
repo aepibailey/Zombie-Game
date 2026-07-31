@@ -59,15 +59,24 @@ Noise is a radius-based broadcast — any zombie within radius of a noise event 
 - **Duration scales with height:** ~0.4s at 1m, ~0.9s at 2m. A locked interpolation — no gravity, no steering, and firing/ADS are blocked throughout.
 - **Zombies cannot jump or mantle.** They have no such capability and none was added.
 
-**Laser visibility (separate from noise):**
-- Red laser (default, when ADS): any zombie within **10m** with line of sight instantly knows your exact position, regardless of noise state.
-- IR laser (attachment, requires NVG to see): invisible to zombies. No positional giveaway.
+**Laser visibility (a separate sensory channel — NOT noise):**
+
+> **This REPLACES the original rule.** The old behaviour — "any zombie within 10m of the *player* with line of sight instantly knows your exact position" — is gone entirely, not extended. The zombie notices *the dot*, not the operator.
+
+- **Red laser (default, when ADS):** the laser's impact point is the dot. **Any zombie within `LASER_DETECT_RADIUS` = 15m of the dot that has line of sight to the dot** becomes alerted. **Distance from the player is irrelevant** — a zombie 200m away is alerted if you put the dot within 15m of it.
+- On alert the zombie enters **Investigate targeting the dot's world position**. It is curious about the light and has no idea where you are. If it acquires line of sight to the player during that investigation it transitions to **Chase** by the normal rules (`LASER_INVESTIGATE_SIGHT` = 16m).
+- **IR laser:** never triggers any of this, at any range. That is its entire point.
+- **Completely separate from the noise system.** It is not routed through `NoiseManager` and generates no noise event.
+- Evaluated on a **0.25s timer** (`LASER_DETECT_INTERVAL`), not per frame.
+- **Debounced per zombie:** one alert per zombie per continuous dwell. A zombie re-arms only once the dot has moved **`LASER_REARM_DISTANCE` = 5m** from where it alerted that zombie, or once the laser has been off/IR for **`LASER_OFF_REARM_TIME` = 3s**, which clears every mark. Holding the dot still never re-alerts.
+- All five constants live at the top of `scripts/Player.gd` under "Red laser detection"; `LASER_INVESTIGATE_SIGHT` lives in `scripts/Zombie.gd`.
+- **Scoping note:** the player-sighting check is deliberately limited to *laser* investigations. Noise investigation still never looks for the player — that is what makes crouch-past-undetected work, and re-adding it globally would reintroduce the old "investigate silently becomes a homing chase" bug.
 
 ## Zombie AI (walkers only for v1 — no runners/sprinters yet)
 State machine:
 1. **Wander** — idle, roams randomly. Default state.
 2. **Investigate** — moves to last noise location. If nothing found within ~10s, returns to Wander.
-3. **Alert/Chase** — has a confirmed player position (via laser proximity, or noise + direct line of sight). Moves straight at the player.
+3. **Alert/Chase** — has a confirmed player position (spotted during a laser investigation, or being shot). Moves straight at the player.
 4. **Attack** — melee range, deals damage on contact, repeats until player dies or breaks line of sight/distance.
 
 ## Zombie audio (implemented)

@@ -59,10 +59,26 @@ const BRANCH_SNAP_NOISE := 20.0
 const BRANCH_SNAP_CHANCE := 0.20        # per second while eligible
 const WOODS_INNER_RADIUS := 22.0        # beyond this from map centre = woods
 
-# Red laser: any zombie within 10m + line of sight instantly knows your exact
-# position while you're aiming (PROJECT_SPEC.md "Laser visibility").
-const LASER_REVEAL_RANGE := 10.0
 const LASER_MAX_DRAW := 100.0
+
+# --- Red laser detection ---------------------------------------------------
+## REPLACES the old "zombie within 10m of the PLAYER" rule entirely.
+##
+## The zombie notices the DOT, not the operator. Any zombie within
+## LASER_DETECT_RADIUS of the laser's impact point that has line of sight to
+## that point becomes curious and investigates it. Distance from the player is
+## irrelevant — a zombie 200m away is alerted if the dot lands beside it.
+##
+## Deliberately NOT routed through NoiseManager: this is a separate sensory
+## channel and must never generate a noise event.
+const LASER_DETECT_RADIUS := 15.0
+## Evaluated on this cadence rather than per frame.
+const LASER_DETECT_INTERVAL := 0.25
+## Debounce: a zombie already alerted by the dot only re-arms once the dot has
+## moved this far from where it alerted that zombie...
+const LASER_REARM_DISTANCE := 5.0
+## ...or once the laser has been off/IR for this long, which clears every mark.
+const LASER_OFF_REARM_TIME := 3.0
 
 # --- Laser appearance (tune these by eye in the Inspector) ----------------
 # RED: visible with or without NVGs, dramatically brighter than IR — the
@@ -206,6 +222,10 @@ var _laser_beam_mat: StandardMaterial3D
 var _laser_fade_mat: StandardMaterial3D
 # Laser debug telemetry (shown in the F3 overlay).
 var _laser_dbg := "laser: idle"
+# Laser-dot detection state.
+var _laser_detect_timer := 0.0
+var _laser_off_time := 0.0
+var _laser_marks: Dictionary = {}   # zombie instance id -> dot pos when alerted
 var _laser_dot: Node3D
 var _laser_core: MeshInstance3D
 var _laser_halo: MeshInstance3D
@@ -277,9 +297,7 @@ func _physics_process(delta: float) -> void:
 		_handle_movement(delta)
 		_handle_noise(delta)
 		_update_ifak(delta)
-		# IR is invisible to zombies — no positional giveaway (spec).
-		if ads_active and not has_ir_laser():
-			_handle_laser_reveal()
+		_update_laser_detection(delta)
 		# Full-auto: keep firing while the trigger is held (rate-limited in _fire).
 		if _wants_auto_fire() and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_fire()
@@ -355,23 +373,57 @@ func _in_woods() -> bool:
 	var flat := Vector2(global_position.x, global_position.z)
 	return flat.length() > WOODS_INNER_RADIUS
 
-func _handle_laser_reveal() -> void:
+## Zombies notice the DOT. Runs on LASER_DETECT_INTERVAL, not per frame.
+func _update_laser_detection(delta: float) -> void:
+	# Only the red laser does this. IR never gives you away — that's its point.
+	var armed: bool = ads_active and not has_ir_laser() and _laser_dot.visible
+	if not armed:
+		_laser_off_time += delta
+		if _laser_off_time >= LASER_OFF_REARM_TIME:
+			_laser_marks.clear()      # everything re-arms after a long break
+		return
+
+	_laser_off_time = 0.0
+	_laser_detect_timer -= delta
+	if _laser_detect_timer > 0.0:
+		return
+	_laser_detect_timer = LASER_DETECT_INTERVAL
+
+	var dot_pos := _laser_dot.global_position
 	var space := get_world_3d().direct_space_state
-	var from := head.global_position
 	for node in get_tree().get_nodes_in_group("zombies"):
-		var z = node  # untyped so the custom zombie API resolves dynamically
-		if not is_instance_valid(z):
+		var z = node
+		if not is_instance_valid(z) or not z.is_alive():
 			continue
-		if from.distance_to(z.global_position) > LASER_REVEAL_RANGE:
+		# Distance to the DOT, not to the player.
+		if z.global_position.distance_to(dot_pos) > LASER_DETECT_RADIUS:
 			continue
-		# Line of sight: nothing solid between the operator's eye and the target.
-		var to: Vector3 = z.global_position + Vector3(0, 1.0, 0)
-		var q := PhysicsRayQueryParameters3D.create(from, to)
-		q.exclude = [get_rid()]
+
+		# Debounce: one alert per zombie per continuous dwell. Holding the dot
+		# still must not re-alert the same zombie every tick.
+		var id := z.get_instance_id()
+		if _laser_marks.has(id):
+			var prev: Vector3 = _laser_marks[id]
+			if prev.distance_to(dot_pos) < LASER_REARM_DISTANCE:
+				continue
+
+		# Line of sight from the ZOMBIE to the dot. The dot sits on a surface,
+		# so the ray is expected to hit at the dot — anything closer is an
+		# occluder in between.
+		var from: Vector3 = z.global_position + Vector3(0, 1.4, 0)
+		var q := PhysicsRayQueryParameters3D.create(from, dot_pos)
+		q.collision_mask = 1
+		q.exclude = [z.get_rid()]
 		var hit := space.intersect_ray(q)
-		if hit and hit.collider == z:
-			if z.has_method("reveal_player"):
-				z.reveal_player(global_position)
+		var visible_dot := true
+		if hit:
+			var hp: Vector3 = hit.position
+			visible_dot = hp.distance_to(dot_pos) < 0.5
+		if not visible_dot:
+			continue
+
+		_laser_marks[id] = dot_pos
+		z.notice_laser_dot(dot_pos)
 
 # --- Input ----------------------------------------------------------------
 func _unhandled_input(event: InputEvent) -> void:
@@ -844,7 +896,7 @@ func laser_debug_line() -> String:
 	return _laser_dbg
 
 ## Red is always visible; IR renders only under NVGs (invisible to the naked
-## eye, and invisible to zombies — see _handle_laser_reveal).
+## eye, and invisible to zombies — see _update_laser_detection).
 func _laser_should_draw() -> bool:
 	if not ads_active:
 		return false
