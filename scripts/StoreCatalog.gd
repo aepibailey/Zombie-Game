@@ -23,14 +23,33 @@ class StoreItem:
 	var weapon_id: String = ""    # parent weapon for ammo/attachment entries
 	var kind: String = ""         # "weapon" | "ammo" | "attachment"
 	var repeatable: bool = false  # ammo can be bought over and over
+	## Which attachment slot this fills, for "attachment" kind items with a
+	## weapon_id: "suppressor" | "foregrip" | "choke" | "drum" | "zoom".
+	## Non-weapon attachments (radio, ir_laser) leave this "" and dispatch
+	## through Player.owned_items instead — see Player.owns_store_item().
+	var attachment_type: String = ""
 
 # Tab order. Categories not listed here are appended alphabetically, so a new
 # category still produces a working tab without touching this list.
 const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES"]
 
-const SUPPRESSOR_COST := 3
 ## ~27% of a typical night's earnings (see PROJECT_SPEC.md "Economy").
 const IFAK_COST := 15
+
+## Weapon-specific attachment costs (flat, not derived from weapon cost).
+const FOREGRIP_COST := 12          # HK 416
+const BREACHER_CHOKE_COST := 12    # SPAS-12
+const EXTENDED_DRUM_COST := 25     # M249 SAW
+const VARIABLE_ZOOM_COST := 25     # M110
+
+## Suppressor cost rule: 2x the weapon's own price, so future weapons price
+## their suppressor automatically. The M17 is the one exception — it's the
+## free starter weapon, so there's no price to derive 2x from; it gets a flat
+## cost instead.
+const M17_SUPPRESSOR_COST := 12
+
+func _suppressor_cost(w) -> int:
+	return M17_SUPPRESSOR_COST if w.id == "m17" else w.cost * 2
 
 var items: Array = []
 
@@ -77,10 +96,35 @@ func rebuild() -> void:
 		items.append(_mk({
 			"id": "supp_" + id, "category": "ATTACHMENTS", "kind": "attachment",
 			"display_name": "%s Suppressor" % w.display_name,
-			"weapon_id": id, "cost": SUPPRESSOR_COST,
+			"weapon_id": id, "cost": _suppressor_cost(w), "attachment_type": "suppressor",
 			"description": "Drops gunshot noise %dm → %dm." % [
 				int(w.noise_unsuppressed), int(w.noise_suppressed)],
 		}))
+
+	items.append(_mk({
+		"id": "foregrip_hk416", "category": "ATTACHMENTS", "kind": "attachment",
+		"display_name": "HK 416 Foregrip", "weapon_id": "hk416",
+		"cost": FOREGRIP_COST, "attachment_type": "foregrip",
+		"description": "Tightens the moving-fire cone. No effect standing or crouched.",
+	}))
+	items.append(_mk({
+		"id": "choke_spas12", "category": "ATTACHMENTS", "kind": "attachment",
+		"display_name": "SPAS-12 Breacher Choke", "weapon_id": "spas12",
+		"cost": BREACHER_CHOKE_COST, "attachment_type": "choke",
+		"description": "Wider hip-fire pattern, more forgiving up close. ADS unaffected.",
+	}))
+	items.append(_mk({
+		"id": "drum_m249", "category": "ATTACHMENTS", "kind": "attachment",
+		"display_name": "M249 Extended Drum", "weapon_id": "m249",
+		"cost": EXTENDED_DRUM_COST, "attachment_type": "drum",
+		"description": "200-round belt (was 100). -10% sprint speed while carried.",
+	}))
+	items.append(_mk({
+		"id": "zoom_m110", "category": "ATTACHMENTS", "kind": "attachment",
+		"display_name": "M110 Variable Zoom Optic", "weapon_id": "m110",
+		"cost": VARIABLE_ZOOM_COST, "attachment_type": "zoom",
+		"description": "Replaces the fixed 3x with adjustable 2x-8x (scroll wheel while ADS).",
+	}))
 
 	# --- SUPPLIES: consumables rebought every few nights ---
 	# The IFAK always shows; ammo entries keep their owned-weapon filtering.

@@ -191,6 +191,21 @@ var fire_cooldown := 0.0
 var _auto_selected := false           # for BOTH-mode weapons: is auto selected?
 var _mag: Dictionary = {}             # weapon id -> loaded rounds
 var _suppressed: Dictionary = {}      # weapon id -> bool
+# Weapon-specific attachments, one dict per slot, all weapon id -> bool. Kept
+# in the same shape as `_suppressed` (rather than one dict of arrays) since
+# each attachment id is only ever offered for a single weapon.
+var _has_foregrip: Dictionary = {}        # HK 416 — moving-fire cone
+var _has_choke: Dictionary = {}           # SPAS-12 — hip-fire spread
+var _has_drum: Dictionary = {}            # M249 — 200-round belt
+var _has_variable_zoom: Dictionary = {}   # M110 — adjustable 2x-8x
+
+# M110 variable zoom optic state.
+const ZOOM_MIN := 2.0
+const ZOOM_MAX := 8.0
+const ZOOM_STEP := 0.5
+const DEFAULT_ADS_FOV := 55.0
+const HIP_FOV := 75.0
+var _zoom_level := 3.0   # matches the fixed 3x scope until the optic is bought
 
 var _footstep_timer := 0.0
 var _branch_timer := 1.0
@@ -343,6 +358,11 @@ func _handle_movement(_delta: float) -> void:
 		state_changed.emit(_state_label())
 
 	var speed: float = SPEED[move_state]
+	# Extended Drum weight penalty: applies whenever it's fitted, not just
+	# while the SAW is the equipped weapon or actively firing — it's carried
+	# gear, not a firing-state effect.
+	if move_state == MoveState.SPRINT and has_drum("m249"):
+		speed *= 0.9
 	if _ifak_applying:
 		speed = minf(speed, SPEED[MoveState.WALK])   # walking speed maximum
 	var dir := (transform.basis * input_dir).normalized()
@@ -439,6 +459,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_fire()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_toggle_ads()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_adjust_zoom(1)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_adjust_zoom(-1)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_C:
@@ -464,6 +488,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_try_equip_slot(2)
 			KEY_4:
 				_try_equip_slot(3)
+			KEY_5:
+				_try_equip_slot(4)
 			KEY_ESCAPE:
 				# When the crate shop owns the mouse, let it handle Esc instead.
 				if control_enabled:
@@ -473,8 +499,36 @@ func _toggle_ads() -> void:
 	if _ifak_applying or _mantling:
 		return   # can't aim while patching up or climbing
 	ads_active = not ads_active
-	camera.fov = 55.0 if ads_active else 75.0
+	camera.fov = _current_ads_fov() if ads_active else HIP_FOV
 	message.emit("ADS " + ("ON — red laser hot (10m tell)" if ads_active else "OFF"))
+
+## The ADS FOV for the currently equipped weapon: the M110's adjustable optic
+## (if bought) wins over its fixed-scope default, which in turn wins over the
+## player's baseline ADS FOV. Nothing else in the roster sets `ads_fov`.
+func _current_ads_fov() -> float:
+	if weapon == null:
+		return DEFAULT_ADS_FOV
+	if current_weapon_id == "m110" and has_variable_zoom("m110"):
+		return _fov_for_zoom(_zoom_level)
+	if weapon.ads_fov > 0.0:
+		return weapon.ads_fov
+	return DEFAULT_ADS_FOV
+
+## FOV (degrees) that reads as `zoom`x relative to the player's hip FOV, via
+## the standard tan-half-angle zoom relation. zoom=1 returns HIP_FOV exactly.
+func _fov_for_zoom(zoom: float) -> float:
+	var half_hip := deg_to_rad(HIP_FOV * 0.5)
+	var half_target := atan(tan(half_hip) / maxf(0.01, zoom))
+	return rad_to_deg(half_target) * 2.0
+
+## Scroll wheel while ADS with the variable zoom optic fitted. Inert
+## otherwise — no other control claims the wheel in first-person.
+func _adjust_zoom(direction: int) -> void:
+	if not (ads_active and current_weapon_id == "m110" and has_variable_zoom("m110")):
+		return
+	_zoom_level = clampf(_zoom_level + direction * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+	camera.fov = _fov_for_zoom(_zoom_level)
+	message.emit("Zoom: %.1fx" % _zoom_level)
 
 # --- Weapon ---------------------------------------------------------------
 func _fire() -> void:
@@ -546,16 +600,27 @@ func _fire() -> void:
 	var from := camera.project_ray_origin(screen_point)
 	var base_dir := camera.project_ray_normal(screen_point)
 	# Baseline mechanical accuracy, then auto bloom on top (bloom applies in
-	# ADS too — that IS the auto penalty).
+	# ADS too — that IS the auto penalty), then the moving-fire penalty (if
+	# this weapon has one — currently only the 416), tightened by the
+	# Foregrip. Applies hip or ADS: moving is moving either way.
 	var cone := weapon.ads_cone_deg + bloom_deg
+	if is_moving and weapon.moving_cone_extra_deg > 0.0:
+		var extra := weapon.moving_cone_extra_deg
+		if has_foregrip(current_weapon_id):
+			extra *= 0.6   # Foregrip: -40% of the moving-only penalty, not the baseline
+		cone += extra
 	if cone > 0.0:
 		base_dir = _jitter_dir(base_dir, cone)
 
-	# Shotguns fire multiple pellets, each jittered inside a cone.
+	# Shotguns fire multiple pellets, each jittered inside a cone. The
+	# Breacher Choke widens this specifically for hip-fire — ADS is untouched.
+	var pellet_spread := weapon.pellet_spread_deg
+	if not ads_active and has_choke(current_weapon_id):
+		pellet_spread *= 1.25
 	for i in weapon.pellets:
 		var dir := base_dir
-		if weapon.pellet_spread_deg > 0.0:
-			dir = _jitter_dir(base_dir, weapon.pellet_spread_deg)
+		if pellet_spread > 0.0:
+			dir = _jitter_dir(base_dir, pellet_spread)
 		_fire_ray(from, dir)
 
 # Traces one round/pellet, applies damage, and draws a tracer.
@@ -648,7 +713,8 @@ func _jitter_dir(dir: Vector3, spread_deg: float) -> Vector3:
 	return dir.rotated(up, randf_range(-a, a)).rotated(right, randf_range(-a, a)).normalized()
 
 func _reload() -> void:
-	if reloading or ammo >= weapon.mag_size or reserve <= 0:
+	var cap := effective_mag_size(current_weapon_id)
+	if reloading or ammo >= cap or reserve <= 0:
 		return
 	if weapon.shell_reload:
 		_reload_shells()
@@ -661,7 +727,7 @@ func _reload() -> void:
 	if not reloading or current_weapon_id != id:
 		return   # cancelled by a weapon switch mid-reload
 	# Reserve is owned by AmmoManager — pull the rounds from it.
-	var needed := weapon.mag_size - ammo
+	var needed := effective_mag_size(id) - ammo
 	ammo += AmmoManager.take(id, needed)
 	reserve = AmmoManager.get_reserve(id)
 	reloading = false
@@ -701,7 +767,7 @@ func _equip(id: String) -> void:
 		_mag[current_weapon_id] = ammo
 	current_weapon_id = id
 	weapon = Arsenal.get_weapon(id)
-	ammo = _mag.get(id, weapon.mag_size)
+	ammo = _mag.get(id, effective_mag_size(id))
 	reserve = AmmoManager.get_reserve(id)
 	reloading = false
 	fire_cooldown = 0.0
@@ -1249,6 +1315,60 @@ func has_suppressor() -> bool:
 func weapon_suppressed(weapon_id: String) -> bool:
 	return _suppressed.get(weapon_id, false)
 
+## HK 416 Foregrip — tightens the moving-fire cone (see _fire()).
+func attach_foregrip(weapon_id: String) -> void:
+	_has_foregrip[weapon_id] = true
+	message.emit("Foregrip fitted.")
+
+func has_foregrip(weapon_id: String) -> bool:
+	return _has_foregrip.get(weapon_id, false)
+
+## SPAS-12 Breacher Choke — widens the hip-fire pellet spread (see _fire()).
+func attach_choke(weapon_id: String) -> void:
+	_has_choke[weapon_id] = true
+	message.emit("Breacher Choke fitted.")
+
+func has_choke(weapon_id: String) -> bool:
+	return _has_choke.get(weapon_id, false)
+
+## M249 Extended Drum — 200-round belt, -10% sprint while fitted.
+func attach_drum(weapon_id: String) -> void:
+	_has_drum[weapon_id] = true
+	message.emit("Extended Drum fitted — 200-round belt.")
+
+func has_drum(weapon_id: String) -> bool:
+	return _has_drum.get(weapon_id, false)
+
+## Effective magazine/belt capacity for a weapon, accounting for the Drum.
+func effective_mag_size(weapon_id: String) -> int:
+	var w := Arsenal.get_weapon(weapon_id)
+	if w == null:
+		return 0
+	if has_drum(weapon_id):
+		return w.mag_size * 2
+	return w.mag_size
+
+## Ammo purchases scale with the equipped belt/mag capacity, so a drum-fitted
+## SAW resupplies to a full 200-round drum rather than a bare 100-round belt.
+## Same per-round price either way. Still routes through AmmoManager.grant_ammo
+## — this only decides HOW MANY magazines that call passes.
+func ammo_purchase_magazines(weapon_id: String) -> int:
+	return 2 if has_drum(weapon_id) else 1
+
+func ammo_purchase_cost(weapon_id: String) -> int:
+	var w := Arsenal.get_weapon(weapon_id)
+	if w == null:
+		return 0
+	return w.ammo_cost * ammo_purchase_magazines(weapon_id)
+
+## M110 Variable Zoom Optic — replaces the fixed 3x with adjustable 2x-8x.
+func attach_variable_zoom(weapon_id: String) -> void:
+	_has_variable_zoom[weapon_id] = true
+	message.emit("Variable Zoom Optic fitted — scroll while ADS to adjust.")
+
+func has_variable_zoom(weapon_id: String) -> bool:
+	return _has_variable_zoom.get(weapon_id, false)
+
 # --- Jump & mantle --------------------------------------------------------
 ## Space is a single contextual button: if a mantleable ledge is in front of
 ## you it mantles, otherwise it jumps. Chosen over a separate bind because a
@@ -1430,7 +1550,12 @@ func owns_store_item(item) -> bool:
 			return item.weapon_id in owned
 		"attachment":
 			if item.weapon_id != "":
-				return weapon_suppressed(item.weapon_id)
+				match item.attachment_type:
+					"foregrip": return has_foregrip(item.weapon_id)
+					"choke": return has_choke(item.weapon_id)
+					"drum": return has_drum(item.weapon_id)
+					"zoom": return has_variable_zoom(item.weapon_id)
+					_: return weapon_suppressed(item.weapon_id)   # "suppressor" (and legacy "")
 			return item.id in owned_items
 		_:
 			return false
@@ -1442,13 +1567,29 @@ func apply_store_purchase(item) -> String:
 			acquire_weapon(item.weapon_id)
 			return "%s acquired & equipped." % item.display_name
 		"ammo":
-			# All ammo grants route through AmmoManager.
-			var rounds: int = AmmoManager.grant_ammo(item.weapon_id, 1)
+			# All ammo grants route through AmmoManager; the drum is the only
+			# thing that changes how many magazines a purchase is worth.
+			var mags := ammo_purchase_magazines(item.weapon_id)
+			var rounds: int = AmmoManager.grant_ammo(item.weapon_id, mags)
 			return "+%d rounds of %s." % [rounds, item.display_name]
 		"attachment":
 			if item.weapon_id != "":
-				attach_suppressor(item.weapon_id)
-				return "Suppressor fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
+				match item.attachment_type:
+					"foregrip":
+						attach_foregrip(item.weapon_id)
+						return "Foregrip fitted to %s." % item.display_name
+					"choke":
+						attach_choke(item.weapon_id)
+						return "Breacher Choke fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
+					"drum":
+						attach_drum(item.weapon_id)
+						return "Extended Drum fitted — 200-round belt."
+					"zoom":
+						attach_variable_zoom(item.weapon_id)
+						return "Variable Zoom Optic fitted — 2x-8x, scroll while ADS."
+					_:
+						attach_suppressor(item.weapon_id)
+						return "Suppressor fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
 			owned_items.append(item.id)
 			return "%s acquired." % item.display_name
 		"consumable":

@@ -7,7 +7,7 @@ extends Node
 ## spare) and is topped up only by buying magazines at the crate.
 
 var weapons: Dictionary = {}
-var order: Array[String] = ["m17", "hk416", "spas12", "m249"]
+var order: Array[String] = ["m17", "hk416", "spas12", "m249", "m110"]
 
 func _ready() -> void:
 	_add({
@@ -36,6 +36,10 @@ func _ready() -> void:
 		"auto_recoil_start_mult": 1.4, "auto_recoil_growth": 0.12,
 		"auto_recoil_max_mult": 3.5, "horizontal_recoil": 0.014,
 		"bloom_min_deg": 0.3, "bloom_max_deg": 4.0, "bloom_shots_to_max": 10,
+		# Moving-fire penalty (Foregrip tightens this specifically — see
+		# Player.gd _fire()). No prior mechanic existed for this; 1.0° is a
+		# fresh baseline, not a measured pre-existing value.
+		"moving_cone_extra_deg": 1.0,
 	})
 	_add({
 		"id": "spas12", "display_name": "SPAS-12", "fire_mode": WeaponData.FireMode.SEMI,
@@ -67,6 +71,28 @@ func _ready() -> void:
 		"bloom_min_deg": 0.08, "bloom_max_deg": 0.8, "bloom_shots_to_max": 10,
 		"falloff_near": 30.0, "falloff_mid": 85.0, "falloff_mid_mult": 0.80,
 		"falloff_far": 120.0, "falloff_far_mult": 0.80,
+	})
+	_add({
+		"id": "m110", "display_name": "KAC M110", "fire_mode": WeaponData.FireMode.SEMI,
+		"mag_size": 20, "starting_mags": 2, "ammo_cost": 3,
+		"fire_interval": 0.16, "reload_time": 2.4,
+		# 60 dmg: 2 body shots (120) kills a 100 HP baseline zombie with margin;
+		# a headshot (x2 = 120) is a clean one-shot. Meaningfully above the
+		# 416's 30 — that's the point of the gun. See PROJECT_SPEC.md "Weapons"
+		# for the night-by-night breakdown of when the 2-shot kill lapses.
+		"body_damage": 60, "hip_spread_radius": 70.0, "recoil_per_shot": 0.06,
+		"horizontal_recoil": 0.02,
+		# Tight standing/crouched cone — comparable to or tighter than the
+		# 416's 0.1°. No auto_penalty is set (defaults to NONE), so none of
+		# the bloom/ramp systems can touch this weapon; it has no auto mode.
+		"ads_cone_deg": 0.08,
+		"max_range": 250.0, "noise_unsuppressed": 48.0, "noise_suppressed": 11.0, "cost": 45,
+		# No falloff at all — the DMR is meant to work at the far edge of the
+		# 60x60m map (≈85m diagonal) with zero penalty, stronger than the
+		# 416's "minimal" ≤15% loss.
+		# Built-in fixed 3x scope: FOV = 2*atan(tan(37.5°)/3) ≈ 28.7°, derived
+		# from the player's 75° hip FOV so 1x reads as "no zoom" consistently.
+		"ads_fov": 28.7,
 	})
 
 func _add(dict: Dictionary) -> void:

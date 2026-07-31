@@ -96,7 +96,7 @@ Audio is the player's primary sensor at night — a threat you can't see must st
 - Headshot kill: **3 points** (not additive — headshot kill always awards 3 total)
 - Player HP: **100**, zombie melee hit: **20 dmg** (placeholder, tune by playtest)
 
-## Weapons (full roster — all four implemented)
+## Weapons (full roster — all five implemented)
 Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 
 | Weapon | Type | Mag size | Fire mode | Cost | Ammo cost / mag |
@@ -105,6 +105,24 @@ Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 | HK 416 | AR | 30 | Semi/Auto | 15 pts | 2 pts |
 | SPAS-12 | Auto shotgun | 8 | Semi-auto (9 pellets) | 20 pts | 2 pts |
 | M249 SAW | Belt-fed | 100 | Auto | 30 pts | 4 pts |
+| KAC M110 | DMR | 20 | Semi-auto only | 45 pts | 3 pts |
+
+### KAC M110 — dedicated long-range weapon (implemented)
+The map is close-range and NVG-lit, so a red-dot optic never made sense. The M110 fills the gap deliberately left open: a semi-auto-only DMR with a **built-in fixed 3x scope**, precision handling, and no falloff — the answer for the far edge of the 60×60m map (≈85m diagonal), where the shotgun is useless and even the 416 loses 15%.
+
+- **No auto mode exists for it at all** — `fire_mode = SEMI`, `auto_penalty = NONE` (the default). None of the bloom/ramp systems can touch it; `B` (fire-mode toggle) is a no-op, same as any other semi-only weapon.
+- **20-round mag, 2 starting mags (1 loaded + 1 spare) = 40 rounds total**, same rule as every other weapon.
+- **Damage: 60 per body shot.** Two body shots (120) kill a 100 HP baseline zombie with a 20 HP margin; a headshot (60 × 2 = 120) is a clean one-shot. That's double the 416's 30 — meaningfully above it, which is the entire point of the weapon.
+  - **Two-body-shot kill holds through night 6** (116 HP). It **stops being guaranteed at night 7** (124 HP > 120) — reported per the same convention as the SPAS one-shot threshold, not rebalanced around.
+- **Cycle time 0.16s → 6.25 rounds/sec**, **56% of the 416's 11.11 rps** (`fire_interval = 0.09`) — inside the requested 50–60% band. Slower than the 416, a real bolt-gun-adjacent feel, not spammable.
+- **No damage falloff at all** (`falloff_near` left at the WeaponData default of effectively-unreachable) — stronger than the 416's "minimal" ≤15% loss at 85m; this is the weapon that's supposed to work at the far end of the map with zero penalty.
+- **Standing/crouched cone: `ads_cone_deg = 0.08°`**, tighter than the 416's 0.1°.
+- **Recoil is cosmetic, not accuracy-affecting**: `recoil_per_shot 0.06` / `horizontal_recoil 0.02` (more pronounced than the 416's 0.025 / 0.014, reflecting the bigger cartridge) drive camera kick only — the firing cone is `ads_cone_deg + bloom`, and bloom never applies without an auto_penalty, so recoil cannot degrade follow-up-shot accuracy the way it does on the 416/SAW. Waiting for the sight picture costs nothing mechanically.
+- **Built-in scope: fixed 3x**, implemented as a per-weapon ADS field-of-view override (`ads_fov = 28.7°`, derived from `2·atan(tan(37.5°)/3)` against the player's 75° hip FOV). Being a pure FOV change with no separate reticle render pass, it renders correctly under the NVG shader by construction — there's nothing for the shader to conflict with.
+- **Attachments (both new, M110-only):**
+  - **Suppressor — 90 pts** (2× weapon cost, see the pricing rule below). Same noise-radius mechanic as every other weapon: 48m → 11m.
+  - **Variable Zoom Optic — 25 pts.** Replaces the fixed 3x with a **player-adjustable 2x–8x**, bound to the **scroll wheel while ADS** (unclaimed elsewhere in first-person). Each notch is 0.5x, computed via the same FOV formula: 2x → 41.98°, 8x → 10.96°. A `Zoom: N.Nx` message confirms each adjustment. Damage, accuracy and fire rate are untouched — purely a targeting-convenience upgrade for the far edge of the map vs. closer engagements.
+- `hip_spread_radius = 70` (worse than the 416's 55 — this weapon wants to be aimed, not hip-fired) and `noise_unsuppressed/suppressed = 48/11` (between the 416 and SPAS) are both judgment calls, not specified in the brief; flagged for playtest sanity-check.
 
 ### Damage falloff (implemented)
 Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, then linear to `falloff_mid_mult` at `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond. Every hit logs its distance and multiplier.
@@ -115,6 +133,7 @@ Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, t
 | HK 416 | 30m | 0.85 @ 85m | 0.85 @ 120m |
 | SPAS-12 | 10m | 0.40 @ 20m | 0.15 @ 30m |
 | M249 | 30m | 0.80 @ 85m | 0.80 @ 120m |
+| KAC M110 | — | 1.00 (always) | 1.00 (always) |
 
 ### SPAS-12 close-range lethality (implemented)
 **9 pellets × 22 dmg** (198 at point blank), **3°** cone, each pellet raycast independently with the headshot multiplier applied per pellet.
@@ -122,6 +141,13 @@ Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, t
 - **~12m:** falloff ×0.88, wider pattern → reliable **two-shot**.
 - **20m:** ×0.40 and a ~2m pattern → clearly a bad choice. **30m+:** ×0.15, useless.
 - Max range 40m; the proportional per-shell reload is unchanged.
+- Pattern diameter is `2 × range × tan(pellet_spread_deg)` — this is the same approximation the numbers above were derived from (7m → 0.734m ≈ "~0.7m", 20m → 2.096m ≈ "~2m").
+
+### SPAS-12 Breacher Choke (implemented, 12 pts)
+Widens the **hip-fire-only** pellet spread from 3.0° to 3.75° (+25%); ADS keeps the baseline 3.0° untouched (`_fire()` only applies the multiplier when `not ads_active`). Pellet count, per-pellet damage and the falloff curve are all unchanged — only the cone widens.
+- Using the same pattern-diameter approximation: the choked pattern hits the baseline's "~0.7m at 7m" reliable-one-shot size at **~5.6m instead of 7m** — the one-shot-kill range genuinely shrinks, not just the label.
+- At every range beyond that the choked pattern stays wider than baseline (e.g. 20m: 2.62m vs 2.10m), so it is **not** a strict upgrade at any distance — a real tradeoff, not a stealth buff, as required.
+- The tradeoff is a real geometric effect, not narrative flavour: every pellet is an independent raycast against the zombie's 0.8m-diameter body capsule, so a wider cone genuinely sends more pellets wide of the target at a given range.
 
 ### Long-range viability (implemented)
 Weapon max ray distance was **not** the problem — M17 150m, HK 416 200m, SPAS 40m, M249 220m, all beyond the ~85m map diagonal.
@@ -135,6 +161,14 @@ Starting loadout: M17 only, per the operator-stranded premise. No attachments by
 - **HK 416 — `RAMP`:** vertical recoil starts at **1.4x** the semi value and climbs **12% per consecutive shot**, capping at **3.5x**. Horizontal recoil is random left/right per shot on the same curve, so the muzzle *walks* unpredictably rather than straight up. Cone bloom runs **0.3° → 4.0° over 10 consecutive shots**. The accumulator resets after **0.4s** without firing (`auto_reset_time`).
 - **M249 SAW — `STANCE`:** same recoil/bloom system, but the multiplier is driven by stance and re-evaluated **per shot in real time**: moving **3.0x**, standing still **1.5x**, crouched **1.1x** (`stance_mult_moving` / `_standing` / `_crouched`, `@export` on Player). Starting to move mid-burst degrades control immediately.
 - Bloom applies in ADS too — that *is* the penalty.
+
+**HK 416 — moving-fire cone (implemented).** A new mechanic, added for the Foregrip: no per-weapon "moving" accuracy penalty existed anywhere before this pass (the M249's STANCE system is a full-auto-only bloom/recoil ramp, not a general cone). `WeaponData.moving_cone_extra_deg` adds a flat cone contribution whenever `is_moving` is true, hip or ADS, on top of `ads_cone_deg + bloom_deg`, and is fully independent of the RAMP recoil-climb system.
+- 416 baseline: **1.0°** while moving (unowned baseline, invented for this pass — not a measured prior value). Stationary/crouched cone is unaffected: **0.1°** either way.
+- **Foregrip (12 pts):** cuts the moving-only 1.0° component by **40%** to **0.6°**. Total moving cone: **1.1° → 0.7°** (a 36% reduction overall, since the 0.1° mechanical baseline is untouched). No effect on stationary/crouched accuracy, no effect on the RAMP recoil climb.
+
+**M249 SAW — Extended Drum (implemented, 25 pts).** Belt capacity 100 → 200 rounds (`Player.effective_mag_size()`), replacing the standard belt rather than stacking. **-10% sprint speed (7.5 → 6.75 m/s) whenever the drum is fitted** — carried-gear weight, not a firing-state effect, so it applies regardless of which weapon is currently equipped or whether the SAW is being fired.
+- **Ammo purchases scale with it.** Previously: 4 pts → +1 magazine (100 rounds), always, via `AmmoManager.grant_ammo(id, 1)`. With the drum fitted, a purchase becomes **8 pts → +1 full drum (200 rounds)** — same per-round price (0.04 pts/round) — via `AmmoManager.grant_ammo(id, 2)`. Still the single ammo-granting path; `Player.ammo_purchase_magazines()`/`ammo_purchase_cost()` only decide how many magazines that one call is worth.
+- No change to fire rate, recoil, or accuracy.
 
 **SPAS-12 — per-shell reload** (`shell_reload`): `reload_start` 0.35s + **0.55s per shell** + `reload_end` 0.35s. Two shells ≈ **1.8s**, a full eight ≈ **5.1s**. The reload is **interruptible** — firing after any completed shell cancels the remainder and fires immediately.
 
@@ -178,11 +212,31 @@ A temporary resupply until the purchasable supply-drop enabler exists.
 - **All ammo granting routes through the single function `AmmoManager.grant_ammo(weapon_id, magazines)`** — starting loadout, crate purchases, and any future supply drop / enabler. Nothing else writes reserve ammo. `AmmoManager` (autoload) owns reserve pools; the Player owns only the currently-loaded magazine per weapon.
 - HUD shows `mag / reserve` for the equipped weapon; the reserve turns **red at 0**.
 
-## Attachments (spend points at tent)
-- **Suppressor** — reduces gunshot noise radius drastically (40m → 8m); zombies within LOS won't clock the shot as a "you" event unless already alerted.
-- **Foregrip** — reduces recoil.
-- **IR Laser** — replaces red laser; invisible to zombies, NVG-only visibility for the player.
-- (More attachments added as weapons are added — optics, extended mags, etc.)
+## Attachments (spend points at the crate)
+**Suppressor pricing rule (implemented):** a suppressor costs **2× the weapon's own purchase price**, so every future weapon prices its suppressor automatically with no new data entry (`StoreCatalog._suppressor_cost()`). The one exception is the **M17**, the free starter weapon — there's no price to derive 2× from, so it gets a flat cost instead.
+
+| Weapon | Weapon cost | Suppressor cost |
+|---|---|---|
+| M17 | starter | 12 (flat) |
+| HK 416 | 15 | 30 |
+| SPAS-12 | 20 | 40 |
+| M249 SAW | 30 | 60 |
+| KAC M110 | 45 | 90 |
+
+Suppressors reduce gunshot noise radius drastically per-weapon (see the falloff-adjacent noise table in each weapon's entry above); zombies within LOS won't clock the shot as a "you" event unless already alerted. Fully independent of the suppressed-audio system (two systems, one attachment).
+
+**Weapon-specific attachments (implemented, flat cost — not derived from the 2× rule):**
+
+| Attachment | Weapon | Cost | Effect |
+|---|---|---|---|
+| Foregrip | HK 416 | 12 | Tightens the moving-fire cone by 40% (1.0° → 0.6° added-while-moving). No effect stationary/crouched, no effect on recoil climb. |
+| Breacher Choke | SPAS-12 | 12 | Widens hip-fire pellet spread 3.0° → 3.75° (+25%). ADS untouched. Pulls the one-shot-kill range in from ~7m to ~5.6m — a genuine tradeoff, not a strict upgrade. |
+| Extended Drum | M249 SAW | 25 | Belt 100 → 200 rounds. -10% sprint while fitted (any weapon equipped). Ammo purchases scale to match, same per-round price. |
+| Variable Zoom Optic | KAC M110 | 25 | Replaces the fixed 3x scope with adjustable 2x-8x (scroll wheel while ADS). Targeting convenience only — no damage/accuracy/rate change. |
+
+- **IR Laser (8 pts, not weapon-specific)** — replaces the red laser; invisible to zombies, NVG-only visibility for the player.
+- A weapon can carry its suppressor and its second attachment slot simultaneously, both active — each attachment is tracked independently (`Player._suppressed` / `_has_foregrip` / `_has_choke` / `_has_drum` / `_has_variable_zoom`, all keyed by weapon id, same shape as the original suppressor dictionary).
+- Every attachment follows the same purchase pattern: buy at the crate, effect applies from the next shot/frame. All are added to `StoreCatalog` as `attachment_type`-tagged items and dispatch through `Player.owns_store_item()` / `apply_store_purchase()` — no UI changes were needed for any of them, per the existing data-driven store design.
 
 ## Zombie geometry & hitboxes (implemented)
 - The zombie is two visually distinct parts: a **body capsule** (r 0.4, height 1.56, centred y=0.78) and a **head sphere** (r 0.12, centred y=1.68) in bright emissive magenta so it's unambiguous at 40m under NVGs. Total height stays **1.8m**.

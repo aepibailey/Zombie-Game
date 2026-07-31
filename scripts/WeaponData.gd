@@ -55,6 +55,18 @@ func damage_mult_at(distance: float) -> float:
 @export var recoil_per_shot: float = 0.03     # vertical, semi-auto baseline
 @export var max_range: float = 150.0
 
+## Extra accuracy cone (degrees) added on top of `ads_cone_deg` while the
+## player is moving, regardless of fire mode or ADS state. 0 = no such
+## penalty exists for this weapon. Distinct from the STANCE auto-penalty
+## (M249): this applies to every shot, not just full-auto ones, and never
+## touches recoil. Currently only the HK 416 uses it (see Arsenal.gd).
+@export var moving_cone_extra_deg: float = 0.0
+
+## Weapon-specific ADS field of view in degrees. 0 = use the player's default
+## ADS FOV (55°, ~1.36x). Nonzero overrides it — the M110's built-in scope
+## sets this to a fixed-3x-equivalent value.
+@export var ads_fov: float = 0.0
+
 # --- Full-auto penalty (see AutoPenalty) ---------------------------------
 @export var auto_penalty: AutoPenalty = AutoPenalty.NONE
 @export var auto_recoil_start_mult: float = 1.4   # RAMP: first auto shot

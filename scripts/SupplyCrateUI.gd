@@ -236,11 +236,19 @@ func _add_group_header(text: String) -> void:
 	l.add_theme_color_override("font_color", Color(0.6, 0.8, 1.0))
 	_list.add_child(l)
 
+## Ammo cost/quantity is normally static (item.cost), but the Extended Drum
+## scales both to match its 200-round belt — see Player.ammo_purchase_cost().
+func _display_cost(item) -> int:
+	if item.kind == "ammo":
+		return _player.ammo_purchase_cost(item.weapon_id)
+	return item.cost
+
 func _add_row(item) -> void:
 	var owned: bool = _player.owns_store_item(item)
 	var locked_by := _missing_prerequisite(item)
 	var blocked := _player.store_item_blocked(item)   # e.g. "CARRYING 3/3"
-	var affordable: bool = PointsManager.points >= item.cost
+	var cost: int = _display_cost(item)
+	var affordable: bool = PointsManager.points >= cost
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
@@ -259,6 +267,10 @@ func _add_row(item) -> void:
 	desc.add_theme_font_size_override("font_size", 12)
 	desc.text = item.description
 	if item.kind == "ammo":
+		var mags := _player.ammo_purchase_magazines(item.weapon_id)
+		if mags > 1:
+			var w = Arsenal.get_weapon(item.weapon_id)
+			desc.text = "+%d rounds (full drum)." % (w.mag_size * mags)
 		desc.text += "  ·  reserve: %d" % AmmoManager.get_reserve(item.weapon_id)
 	if locked_by != "":
 		desc.text = "Requires: %s" % locked_by
@@ -285,13 +297,13 @@ func _add_row(item) -> void:
 		btn.disabled = true
 		row.modulate = Color(0.5, 0.5, 0.5)
 	elif not affordable:
-		btn.text = "%d pts" % item.cost
+		btn.text = "%d pts" % cost
 		btn.disabled = true
 		row.modulate = Color(0.62, 0.62, 0.62)
 		# Cost highlighted so it's clear WHY it's unavailable.
 		btn.add_theme_color_override("font_color_disabled", Color(1.0, 0.4, 0.35))
 	else:
-		btn.text = "Buy — %d pts" % item.cost
+		btn.text = "Buy — %d pts" % cost
 		btn.pressed.connect(_on_buy.bind(item))
 
 # --- Purchase -------------------------------------------------------------
@@ -308,7 +320,7 @@ func _on_buy(item) -> void:
 	if locked_by != "":
 		_fail("Requires %s first." % locked_by)
 		return
-	if not PointsManager.spend_points(item.cost):
+	if not PointsManager.spend_points(_display_cost(item)):
 		_fail("Not enough points for %s." % item.display_name)
 		return
 	_status_label.text = _player.apply_store_purchase(item)
