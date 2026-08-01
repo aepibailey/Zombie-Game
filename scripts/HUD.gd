@@ -4,7 +4,9 @@ class_name HUD
 ## health, ammo, movement state, an interaction prompt, a transient message
 ## line, and the center-screen all-clear prompt. Built entirely in code so
 ## there's no fragile .tscn wiring for v1. No always-on crosshair — hip-fire is
-## deliberately blind; ADS shows the laser dot instead.
+## deliberately blind; ADS shows the laser dot instead, except on the M110,
+## which has no laser at all and shows a scope reticle instead (UI only, no
+## gameplay effect — see _build_reticle()).
 
 var _clock_label: Label
 var _night_label: Label
@@ -33,6 +35,8 @@ var _dmg_dir: Label
 var _dmg_dir_timer := 0.0
 var _ifak_label: Label
 var _ifak_bar: ProgressBar
+var _reticle: Label
+var _player: Player
 
 const DMG_FLASH_TIME := 0.45
 const DMG_MAX_ALPHA := 0.75
@@ -61,6 +65,7 @@ func _ready() -> void:
 	_build_debug_readout()
 	_build_damage_direction()
 	_build_ifak_bar()
+	_build_reticle()
 
 	_gain_label = _mk_centered(112, 18, Color(0.15, 0.15, 0.15))
 	_gain_label.text = "NVG — GAIN LIMIT"
@@ -242,6 +247,25 @@ func _build_ifak_bar() -> void:
 	_ifak_bar.visible = false
 	add_child(_ifak_bar)
 
+# The M110's scope reticle: UI only, no gameplay effect beyond aim assist
+# (it does not feed the laser-detection system — the M110 has no laser at
+# all, see Player._update_laser). Shown whenever ADS'd on the M110, hidden
+# for every other weapon.
+func _build_reticle() -> void:
+	_reticle = Label.new()
+	_reticle.text = "+"
+	_reticle.add_theme_font_size_override("font_size", 28)
+	_reticle.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	_reticle.add_theme_color_override("font_outline_color", Color.BLACK)
+	_reticle.add_theme_constant_override("outline_size", 3)
+	_reticle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reticle.set_anchors_preset(Control.PRESET_CENTER)
+	_reticle.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_reticle.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_reticle.visible = false
+	add_child(_reticle)
+
 # Brief hitmarker shown when a shot connects with a zombie.
 func _build_hitmarker() -> void:
 	_hitmarker = Label.new()
@@ -269,6 +293,7 @@ func _mk(parent: Node) -> Label:
 
 ## Called by Main once the player exists so we can subscribe to its signals.
 func bind_player(player: Player) -> void:
+	_player = player
 	player.ammo_changed.connect(_on_ammo_changed)
 	player.health_changed.connect(_on_health_changed)
 	player.state_changed.connect(_on_state_changed)
@@ -289,6 +314,8 @@ func bind_player(player: Player) -> void:
 	_on_suppressor_changed(player.has_suppressor())
 
 func _process(delta: float) -> void:
+	if _player:
+		_reticle.visible = _player.ads_active and _player.current_weapon_id == "m110"
 	if _msg_timer > 0.0:
 		_msg_timer -= delta
 		if _msg_timer <= 0.0:

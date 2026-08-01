@@ -112,17 +112,29 @@ The map is close-range and NVG-lit, so a red-dot optic never made sense. The M11
 
 - **No auto mode exists for it at all** — `fire_mode = SEMI`, `auto_penalty = NONE` (the default). None of the bloom/ramp systems can touch it; `B` (fire-mode toggle) is a no-op, same as any other semi-only weapon.
 - **20-round mag, 2 starting mags (1 loaded + 1 spare) = 40 rounds total**, same rule as every other weapon.
-- **Damage: 60 per body shot.** Two body shots (120) kill a 100 HP baseline zombie with a 20 HP margin; a headshot (60 × 2 = 120) is a clean one-shot. That's double the 416's 30 — meaningfully above it, which is the entire point of the weapon.
+- **Damage: 60 per body shot.** Two body shots (120) kill a 100 HP baseline zombie with a 20 HP margin; a headshot (60 × 2 = 120) is a clean one-shot. That's double the 416's 30 — meaningfully above it, which is the entire point of the weapon. Unchanged since the first pass.
   - **Two-body-shot kill holds through night 6** (116 HP). It **stops being guaranteed at night 7** (124 HP > 120) — reported per the same convention as the SPAS one-shot threshold, not rebalanced around.
-- **Cycle time 0.16s → 6.25 rounds/sec**, **56% of the 416's 11.11 rps** (`fire_interval = 0.09`) — inside the requested 50–60% band. Slower than the 416, a real bolt-gun-adjacent feel, not spammable.
+- **Cycle time 0.24s → 4.17 rounds/sec, 37.5% of the 416's 11.11 rps.** Cut down from the first pass's 0.16s/56% — that read as no real rate-of-fire tradeoff, so this was slowed further to land in the 35–40% target band.
+- **Moving-fire cone: 2.5° added while moving** (`moving_cone_extra_deg`), well above the 416's 1.0° — **2.35× the 416's total moving cone** (2.58° vs 1.1°). This is the "fired from a stable stance" side of the tradeoff: standing/crouched accuracy (`ads_cone_deg = 0.08°`, tighter than the 416's 0.1°) is completely unaffected — the penalty only exists while `is_moving` is true.
+- **Time-to-kill vs. the 416, both landing every shot from a stationary position:**
+
+  | | Shots to kill (body) | Cycle | TTK | DPS |
+  |---|---|---|---|---|
+  | HK 416 | 4 (4×30=120) | 0.09s | **0.27s** | 333/s |
+  | KAC M110 | 2 (2×60=120) | 0.24s | **0.24s** | 250/s |
+
+  DPS comes out as intended — the M110 is lower (250 vs 333/s), the rate-of-fire cost is real. **TTK does not**: the M110 is marginally *faster* in raw kill-time (0.24s vs 0.27s), not slower, because needing only 2 shots instead of 4 means one fewer "wasted" cycle-time gap even though each gap is longer. Closing this would need a cycle time of ≥0.27s (≈33% of the 416's rate), which falls *outside* the requested 35–40% band — so the two instructions are in tension at exactly 2-vs-4 shots-to-kill, and 0.24s (the middle of the requested band) was kept as specified rather than overridden. Headshots make the M110's advantage explicit rather than incidental: **1 headshot (0s) vs. 2 (0.09s)** for the 416.
+- **No laser of any kind.** ADS shows a **scope reticle** (a simple crosshair, HUD-only, `HUD._build_reticle()`) instead of the laser dot/beam every other weapon draws. Not just visually hidden — `Player._update_laser()` and `_update_laser_detection()` both return immediately for `current_weapon_id == "m110"`, before any raycast or zombie-alert work runs, so no zombie can ever be alerted by aiming an M110 regardless of range or angle. Consequently the M110 **never appears in the crate's laser-purchase list** (neither red — which was never purchasable for anyone — nor IR).
 - **No damage falloff at all** (`falloff_near` left at the WeaponData default of effectively-unreachable) — stronger than the 416's "minimal" ≤15% loss at 85m; this is the weapon that's supposed to work at the far end of the map with zero penalty.
-- **Standing/crouched cone: `ads_cone_deg = 0.08°`**, tighter than the 416's 0.1°.
-- **Recoil is cosmetic, not accuracy-affecting**: `recoil_per_shot 0.06` / `horizontal_recoil 0.02` (more pronounced than the 416's 0.025 / 0.014, reflecting the bigger cartridge) drive camera kick only — the firing cone is `ads_cone_deg + bloom`, and bloom never applies without an auto_penalty, so recoil cannot degrade follow-up-shot accuracy the way it does on the 416/SAW. Waiting for the sight picture costs nothing mechanically.
+- **Recoil is cosmetic, not accuracy-affecting**: `recoil_per_shot 0.06` / `horizontal_recoil 0.02` (more pronounced than the 416's 0.025 / 0.014, reflecting the bigger cartridge) drive camera kick only — the firing cone is `ads_cone_deg + bloom + moving_cone_extra_deg`, and bloom never applies without an auto_penalty, so recoil cannot degrade follow-up-shot accuracy the way it does on the 416/SAW. Waiting for the sight picture costs nothing mechanically.
 - **Built-in scope: fixed 3x**, implemented as a per-weapon ADS field-of-view override (`ads_fov = 28.7°`, derived from `2·atan(tan(37.5°)/3)` against the player's 75° hip FOV). Being a pure FOV change with no separate reticle render pass, it renders correctly under the NVG shader by construction — there's nothing for the shader to conflict with.
 - **Attachments (both new, M110-only):**
   - **Suppressor — 90 pts** (2× weapon cost, see the pricing rule below). Same noise-radius mechanic as every other weapon: 48m → 11m.
   - **Variable Zoom Optic — 25 pts.** Replaces the fixed 3x with a **player-adjustable 2x–8x**, bound to the **scroll wheel while ADS** (unclaimed elsewhere in first-person). Each notch is 0.5x, computed via the same FOV formula: 2x → 41.98°, 8x → 10.96°. A `Zoom: N.Nx` message confirms each adjustment. Damage, accuracy and fire rate are untouched — purely a targeting-convenience upgrade for the far edge of the map vs. closer engagements.
 - `hip_spread_radius = 70` (worse than the 416's 55 — this weapon wants to be aimed, not hip-fired) and `noise_unsuppressed/suppressed = 48/11` (between the 416 and SPAS) are both judgment calls, not specified in the brief; flagged for playtest sanity-check.
+
+### Weapon-switch ADS reset (implemented)
+Switching weapons while ADS'd used to leave the outgoing weapon's zoom/FOV active on the new one. Fixed at the single choke point every switch passes through (`Player._equip()`): if `ads_active` is true when a switch starts, it's forced false and `camera.fov` is reset to the hip default before the new weapon is assigned. Verified against all five weapons, not just the M110 where it was noticed. The M110's own zoom *level* (`_zoom_level`, if the Variable Zoom Optic is owned) is deliberately **not** reset by this — swapping away and back to the M110 keeps its scope at whatever zoom it was left on, the same way a real scope doesn't rezero itself when you sling the rifle.
 
 ### Damage falloff (implemented)
 Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, then linear to `falloff_mid_mult` at `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond. Every hit logs its distance and multiplier.
@@ -234,8 +246,12 @@ Suppressors reduce gunshot noise radius drastically per-weapon (see the falloff-
 | Extended Drum | M249 SAW | 25 | Belt 100 → 200 rounds. -10% sprint while fitted (any weapon equipped). Ammo purchases scale to match, same per-round price. |
 | Variable Zoom Optic | KAC M110 | 25 | Replaces the fixed 3x scope with adjustable 2x-8x (scroll wheel while ADS). Targeting convenience only — no damage/accuracy/rate change. |
 
-- **IR Laser (8 pts, not weapon-specific)** — replaces the red laser; invisible to zombies, NVG-only visibility for the player.
-- A weapon can carry its suppressor and its second attachment slot simultaneously, both active — each attachment is tracked independently (`Player._suppressed` / `_has_foregrip` / `_has_choke` / `_has_drum` / `_has_variable_zoom`, all keyed by weapon id, same shape as the original suppressor dictionary).
+**IR Laser — per-weapon purchase (implemented), not a global unlock.** Originally a single item that applied everywhere once bought; the price was already 8 (already cheap enough per the "under 10" threshold, so it carries over unchanged) but the *ownership* is now tracked exactly like the suppressor — one purchase per weapon, one attached-state per weapon.
+- Offered for **every laser-equipped weapon: M17, HK 416, SPAS-12, M249 SAW** — each its own crate entry (`ir_laser_<weapon>`), each **8 pts**. Buying it for the M17 does not unlock it on any other weapon.
+- **Not offered for the KAC M110** — it has no laser of any kind (see its "Weapons" entry) and is excluded from the catalog loop entirely, not merely hidden, so it can never appear in a laser-purchase list.
+- Same effect as before: replaces the red laser; invisible to zombies, NVG-only visibility for the player.
+
+- A weapon can carry its suppressor, its IR laser, **and** its second (handling) attachment simultaneously — up to three at once on a weapon that has all three slots — each tracked independently (`Player._suppressed` / `_has_ir_laser` / `_has_foregrip` / `_has_choke` / `_has_drum` / `_has_variable_zoom`, all keyed by weapon id, same shape as the original suppressor dictionary).
 - Every attachment follows the same purchase pattern: buy at the crate, effect applies from the next shot/frame. All are added to `StoreCatalog` as `attachment_type`-tagged items and dispatch through `Player.owns_store_item()` / `apply_store_purchase()` — no UI changes were needed for any of them, per the existing data-driven store design.
 
 ## Zombie geometry & hitboxes (implemented)
@@ -280,7 +296,7 @@ The Day gate is removed — the crate works in **both phases**.
 - **Award: 1 point per body-shot kill, 3 per headshot kill.** Mine kills award 1.
 - No separate "money" layer — keep it simple.
 
-**Full price list (single reference — see the tech-debt note below):**
+**Full price list (single reference — see the tech-debt note below; superseded by the suppressor-pricing-rule and weapon-roster passes, updated here):**
 
 | Item | Cost | Repeatable |
 |---|---|---|
@@ -288,14 +304,24 @@ The Day gate is removed — the crate works in **both phases**.
 | HK 416 | 15 | no |
 | SPAS-12 | 20 | no |
 | M249 SAW | 30 | no |
+| KAC M110 | 45 | no |
 | Radio | 10 | no |
-| IR Laser | 8 | no |
-| Suppressor (any weapon) | 3 | no |
+| Suppressor — M17 | 12 | no |
+| Suppressor — HK 416 | 30 | no |
+| Suppressor — SPAS-12 | 40 | no |
+| Suppressor — M249 SAW | 60 | no |
+| Suppressor — KAC M110 | 90 | no |
+| IR Laser — M17 / 416 / SPAS-12 / SAW (each) | 8 | no |
+| HK 416 Foregrip | 12 | no |
+| SPAS-12 Breacher Choke | 12 | no |
+| M249 Extended Drum | 25 | no |
+| M110 Variable Zoom Optic | 25 | no |
 | IFAK | 15 | yes |
 | M17 ammo (1 mag, 17 rds) | 1 | yes |
 | HK 416 ammo (1 mag, 30 rds) | 2 | yes |
 | SPAS-12 ammo (1 mag, 8 rds) | 2 | yes |
-| M249 ammo (1 belt, 100 rds) | 4 | yes |
+| M249 ammo (1 belt, 100 rds; 200 with the Drum) | 4 (8 with the Drum) | yes |
+| KAC M110 ammo (1 mag, 20 rds) | 3 | yes |
 | Sandbags | 10 | yes |
 | Triple-strand C-wire | 40 | yes |
 | Zombie ditch | 60 | yes |
@@ -317,7 +343,7 @@ This is the **first** earnings data the project has had — every price above wa
 
 Carried-over survivors add to a later night's total, so the real curve runs slightly above this.
 
-> **Tech debt (flagged, deliberately not refactored):** obstacle prices live in `ObstacleCatalog.gd`, weapon and ammo prices in `Arsenal.gd`, store-only prices (`SUPPRESSOR_COST`, `IFAK_COST`, Radio, IR Laser) in `StoreCatalog.gd`, and **mine replenishment in `BuildMode.gd` (`REPLENISH_COST`)** — the one price that lives nowhere near the others. Worth consolidating into a single pricing table once the numbers stop moving.
+> **Tech debt (flagged, deliberately not refactored):** obstacle prices live in `ObstacleCatalog.gd`, weapon and ammo prices in `Arsenal.gd`, store-only prices (suppressor rule, `IFAK_COST`, `IR_LASER_COST`, Radio, and the flat per-weapon attachment costs) in `StoreCatalog.gd`, and **mine replenishment in `BuildMode.gd` (`REPLENISH_COST`)** — the one price that lives nowhere near the others. Worth consolidating into a single pricing table once the numbers stop moving.
 - The crate's purchase flow supports an optional **prerequisite item** (`WeaponData.requires`): an item can require another to be owned first. Unused by weapons today; it exists so future enablers (Radio → UAV/Apache/supply drop) need no new plumbing.
 
 ## Engineers' Tent & build mode (in progress)

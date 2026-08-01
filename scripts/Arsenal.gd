@@ -75,17 +75,27 @@ func _ready() -> void:
 	_add({
 		"id": "m110", "display_name": "KAC M110", "fire_mode": WeaponData.FireMode.SEMI,
 		"mag_size": 20, "starting_mags": 2, "ammo_cost": 3,
-		"fire_interval": 0.16, "reload_time": 2.4,
+		# Cycle time 0.24s = 4.17 rps = 37.5% of the 416's 11.11 rps
+		# (fire_interval 0.09) — cut down from the first pass's 0.16s/56%,
+		# which read as no real rate-of-fire tradeoff at all. See
+		# PROJECT_SPEC.md "Weapons" for the resulting per-shot vs per-second
+		# comparison against the 416.
+		"fire_interval": 0.24, "reload_time": 2.4,
 		# 60 dmg: 2 body shots (120) kills a 100 HP baseline zombie with margin;
 		# a headshot (x2 = 120) is a clean one-shot. Meaningfully above the
-		# 416's 30 — that's the point of the gun. See PROJECT_SPEC.md "Weapons"
-		# for the night-by-night breakdown of when the 2-shot kill lapses.
+		# 416's 30 — that's the point of the gun. Unchanged from the first
+		# pass — only rate of fire and moving accuracy change here.
 		"body_damage": 60, "hip_spread_radius": 70.0, "recoil_per_shot": 0.06,
 		"horizontal_recoil": 0.02,
 		# Tight standing/crouched cone — comparable to or tighter than the
 		# 416's 0.1°. No auto_penalty is set (defaults to NONE), so none of
 		# the bloom/ramp systems can touch this weapon; it has no auto mode.
 		"ads_cone_deg": 0.08,
+		# Moving-fire penalty: 2.5°, well above the 416's 1.0° — a precision
+		# weapon meant to be fired from a stable stance. Stationary/crouched
+		# (ads_cone_deg above) is completely unaffected; this only stacks on
+		# top while is_moving is true, same mechanism as the 416's.
+		"moving_cone_extra_deg": 2.5,
 		"max_range": 250.0, "noise_unsuppressed": 48.0, "noise_suppressed": 11.0, "cost": 45,
 		# No falloff at all — the DMR is meant to work at the far edge of the
 		# 60x60m map (≈85m diagonal) with zero penalty, stronger than the

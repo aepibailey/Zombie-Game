@@ -198,6 +198,7 @@ var _has_foregrip: Dictionary = {}        # HK 416 — moving-fire cone
 var _has_choke: Dictionary = {}           # SPAS-12 — hip-fire spread
 var _has_drum: Dictionary = {}            # M249 — 200-round belt
 var _has_variable_zoom: Dictionary = {}   # M110 — adjustable 2x-8x
+var _has_ir_laser: Dictionary = {}        # every laser-equipped weapon except M110
 
 # M110 variable zoom optic state.
 const ZOOM_MIN := 2.0
@@ -395,6 +396,11 @@ func _in_woods() -> bool:
 
 ## Zombies notice the DOT. Runs on LASER_DETECT_INTERVAL, not per frame.
 func _update_laser_detection(delta: float) -> void:
+	# The M110 has no laser at all — optic reticle only — so this entire
+	# system is skipped for it, not merely inert. No zombie can ever be
+	# alerted by aiming an M110, at any distance or angle.
+	if current_weapon_id == "m110":
+		return
 	# Only the red laser does this. IR never gives you away — that's its point.
 	var armed: bool = ads_active and not has_ir_laser() and _laser_dot.visible
 	if not armed:
@@ -762,6 +768,14 @@ func _reload_shells() -> void:
 func _equip(id: String) -> void:
 	if weapon and id == current_weapon_id:
 		return
+	# Force un-ADS on every switch. FOV, zoom level and laser/reticle state
+	# are all specific to whichever weapon was equipped when ADS turned on,
+	# so carrying any of it onto the new weapon is wrong in general — this is
+	# the single choke point every weapon switch passes through, not a
+	# per-weapon fix.
+	if ads_active:
+		ads_active = false
+		camera.fov = HIP_FOV
 	# Stash the outgoing weapon's loaded magazine before swapping.
 	if weapon:
 		_mag[current_weapon_id] = ammo
@@ -953,8 +967,17 @@ func _laser_material() -> StandardMaterial3D:
 	m.disable_receive_shadows = true
 	return m
 
-func has_ir_laser() -> bool:
-	return "ir_laser" in owned_items
+## IR Laser is a per-weapon attachment (same shape as _suppressed), bought
+## individually for each weapon — the M17, HK416, SPAS-12 and SAW each need
+## their own purchase. Defaults to the currently equipped weapon so the
+## laser-rendering call sites below don't need to change.
+func attach_ir_laser(weapon_id: String) -> void:
+	_has_ir_laser[weapon_id] = true
+	message.emit("IR Laser fitted.")
+
+func has_ir_laser(weapon_id: String = "") -> bool:
+	var id := weapon_id if weapon_id != "" else current_weapon_id
+	return _has_ir_laser.get(id, false)
 
 ## One-line laser telemetry for the debug overlay: hit true/false, hit
 ## distance, beam length and the computed radii.
@@ -962,13 +985,24 @@ func laser_debug_line() -> String:
 	return _laser_dbg
 
 ## Red is always visible; IR renders only under NVGs (invisible to the naked
-## eye, and invisible to zombies — see _update_laser_detection).
+## eye, and invisible to zombies — see _update_laser_detection). The M110
+## never draws either — see _update_laser().
 func _laser_should_draw() -> bool:
+	if current_weapon_id == "m110":
+		return false
 	if not ads_active:
 		return false
 	return nvg_active if has_ir_laser() else true
 
+## The M110 has no laser, full stop — ADS brings up a scope reticle (HUD-only,
+## no gameplay effect) instead. Returning before the raycast/build work below
+## means it's fully skipped for this weapon, not just hidden.
 func _update_laser() -> void:
+	if current_weapon_id == "m110":
+		_laser_beam.visible = false
+		_laser_dot.visible = false
+		_laser_dbg = "laser: n/a (M110 — optic reticle only)"
+		return
 	if not _laser_should_draw():
 		_laser_beam.visible = false
 		_laser_dot.visible = false
@@ -1555,6 +1589,7 @@ func owns_store_item(item) -> bool:
 					"choke": return has_choke(item.weapon_id)
 					"drum": return has_drum(item.weapon_id)
 					"zoom": return has_variable_zoom(item.weapon_id)
+					"ir_laser": return has_ir_laser(item.weapon_id)
 					_: return weapon_suppressed(item.weapon_id)   # "suppressor" (and legacy "")
 			return item.id in owned_items
 		_:
@@ -1587,6 +1622,9 @@ func apply_store_purchase(item) -> String:
 					"zoom":
 						attach_variable_zoom(item.weapon_id)
 						return "Variable Zoom Optic fitted — 2x-8x, scroll while ADS."
+					"ir_laser":
+						attach_ir_laser(item.weapon_id)
+						return "IR Laser fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name
 					_:
 						attach_suppressor(item.weapon_id)
 						return "Suppressor fitted to %s." % Arsenal.get_weapon(item.weapon_id).display_name

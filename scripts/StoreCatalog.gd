@@ -41,6 +41,10 @@ const FOREGRIP_COST := 12          # HK 416
 const BREACHER_CHOKE_COST := 12    # SPAS-12
 const EXTENDED_DRUM_COST := 25     # M249 SAW
 const VARIABLE_ZOOM_COST := 25     # M110
+## Was already a flat 8 as a single global unlock; same price, now bought
+## per weapon instead (every laser-equipped weapon except the M110, which
+## has no laser of any kind — see PROJECT_SPEC.md "Weapons").
+const IR_LASER_COST := 8
 
 ## Suppressor cost rule: 2x the weapon's own price, so future weapons price
 ## their suppressor automatically. The M17 is the one exception — it's the
@@ -81,13 +85,6 @@ func rebuild() -> void:
 	}))
 
 	# --- ATTACHMENTS ---
-	# Global (not per-weapon) attachment: replaces the red laser.
-	items.append(_mk({
-		"id": "ir_laser", "category": "ATTACHMENTS", "kind": "attachment",
-		"display_name": "IR Laser", "cost": 8,
-		"description": "Replaces the red laser. Invisible to zombies; needs NVGs to see.",
-	}))
-
 	# Per-weapon attachments (filtered to owned weapons at display time).
 	for id in Arsenal.order:
 		var w = Arsenal.get_weapon(id)
@@ -99,6 +96,23 @@ func rebuild() -> void:
 			"weapon_id": id, "cost": _suppressor_cost(w), "attachment_type": "suppressor",
 			"description": "Drops gunshot noise %dm → %dm." % [
 				int(w.noise_unsuppressed), int(w.noise_suppressed)],
+		}))
+
+	# IR Laser: bought per weapon, same pattern as the suppressor — NOT a
+	# single global unlock. The M110 has no laser of any kind (see its
+	# "Weapons" spec entry), so it's excluded entirely rather than just
+	# hidden — it must never appear in a laser-purchase list.
+	for id in Arsenal.order:
+		if id == "m110":
+			continue
+		var w = Arsenal.get_weapon(id)
+		if w == null:
+			continue
+		items.append(_mk({
+			"id": "ir_laser_" + id, "category": "ATTACHMENTS", "kind": "attachment",
+			"display_name": "%s IR Laser" % w.display_name,
+			"weapon_id": id, "cost": IR_LASER_COST, "attachment_type": "ir_laser",
+			"description": "Replaces the red laser. Invisible to zombies; needs NVGs to see.",
 		}))
 
 	items.append(_mk({
