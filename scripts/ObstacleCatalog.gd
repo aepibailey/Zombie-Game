@@ -42,9 +42,13 @@ func _ready() -> void:
 	})
 	_add({
 		"id": "ditch", "display_name": "Zombie ditch", "cost": 60,
-		"size": Vector3(10, 2.0, 1.0), "color": Color(0.18, 0.15, 0.11),
+		# x = length, y = depth, z = width. A real pit now, not a decorative
+		# sunken box — see ZombieDitch.gd. "solid: false" because the pit's
+		# walls/floor are custom-built on SOLID_NO_NAV_LAYER, not the generic
+		# layer-1 solid path (which would make it a navmesh obstacle).
+		"size": Vector3(8, 3.0, 3.0), "color": Color(0.18, 0.15, 0.11),
 		"solid": false, "blocks_pathing": false,
-		"description": "2m deep. Traps up to 6. You can mantle out — barely.",
+		"description": "A real 3m pit. Zombies that walk over it fall in and stay — you climb out via the ramp.",
 	})
 	_add({
 		"id": "minefield", "display_name": "Minefield", "cost": 70,

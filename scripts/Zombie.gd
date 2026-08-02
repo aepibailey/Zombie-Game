@@ -24,9 +24,16 @@ const FOOTSTEP_COUNT := 5
 enum State {
 	WANDER, INVESTIGATE, CHASE, ATTACK,
 	ENTANGLED,          # held in C-wire: alive, immobile, can still swing
-	TRAPPED,            # in a ditch: alive, immobile, cannot attack
+	FALLEN,             # fell into a ditch pit: alive, gravity-driven, one-way
 	ATTACK_STRUCTURE,   # no path to the player — breaking through sandbags
 }
+
+# --- Fallen (ditch pit) -----------------------------------------------------
+const FALLEN_DRIFT_SPEED := 0.35
+const FALLEN_DRIFT_RADIUS := 1.0
+const FALLEN_DRIFT_INTERVAL_MIN := 2.0
+const FALLEN_DRIFT_INTERVAL_MAX := 4.0
+const FALLEN_NOISE_RADIUS := 10.0
 
 # --- Tuning ---------------------------------------------------------------
 const BASE_HP := 100                # night-scaled by the spawner via `max_hp`
@@ -90,7 +97,10 @@ var _dead := false                            # set once, in _die()
 var _perm_speed_mult := 1.0      # compounding permanent slows
 var _temp_speed_mult := 1.0      # while inside a slowing volume
 var _held_by = null              # the wire section holding us, if Entangled
-var _trapped_in = null           # the ditch holding us, if Trapped
+var _fallen_landed := false      # true once gravity has settled us on the pit floor
+var _fallen_landing_pos: Vector3 = Vector3.ZERO
+var _fallen_drift_target: Vector3 = Vector3.ZERO
+var _fallen_drift_timer := 0.0
 var _structure_target = null     # sandbag section being attacked
 var _structure_timer := 0.0
 var _repath_check := 0.0
@@ -143,14 +153,8 @@ func _physics_process(delta: float) -> void:
 		if _hit_flash <= 0.0:
 			_refresh_tint()
 
-	# A trapped zombie is parked outright: no gravity, no move_and_slide, so
-	# nothing can shove or sink it. It stays exactly where it fell in, visible
-	# and shootable, until killed.
-	if state == State.TRAPPED:
-		velocity = Vector3.ZERO
-		return
-
-	# Gravity keeps them grounded.
+	# Gravity keeps them grounded. Deliberately NOT short-circuited for FALLEN
+	# (unlike the old TRAPPED state) — a pit zombie must actually fall.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	elif velocity.y < 0.0:
@@ -174,8 +178,8 @@ func _physics_process(delta: float) -> void:
 			_do_attack(delta)
 		State.ENTANGLED:
 			_do_entangled(delta)
-		State.TRAPPED:
-			_do_trapped(delta)
+		State.FALLEN:
+			_do_fallen(delta)
 		State.ATTACK_STRUCTURE:
 			_do_attack_structure(delta)
 
@@ -295,10 +299,44 @@ func _do_entangled(delta: float) -> void:
 			_attack_timer = ATTACK_INTERVAL
 			player.take_damage(ATTACK_DAMAGE, global_position)
 
-## Stuck at the bottom of a ditch: alive, milling, unable to reach anything.
-func _do_trapped(_delta: float) -> void:
-	velocity.x = 0.0
-	velocity.z = 0.0
+## Fell into a ditch pit. NavigationAgent3D is never touched here — no target
+## is ever set and get_next_path_position() is never called, so there is no
+## pathing at all, by construction, not by disabling a node. Gravity (applied
+## above, in _physics_process) does the actual falling; once it lands, it
+## mills aimlessly within a small radius of the spot it landed — a sitting
+## duck. Never leaves this state — see is_immobilised(), which gates every
+## transition out (noise, laser, being shot).
+func _do_fallen(delta: float) -> void:
+	if not _fallen_landed:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if is_on_floor():
+			_fallen_landed = true
+			_fallen_landing_pos = global_position
+			_fallen_drift_target = global_position
+			_fallen_drift_timer = 0.0
+			# A body hitting the bottom of a pit makes a sound — and pulling
+			# more zombies toward the same lane is a feature, not a bug.
+			NoiseManager.emit_noise(global_position, FALLEN_NOISE_RADIUS)
+		return
+
+	_fallen_drift_timer -= delta
+	if _fallen_drift_timer <= 0.0:
+		_fallen_drift_timer = randf_range(FALLEN_DRIFT_INTERVAL_MIN, FALLEN_DRIFT_INTERVAL_MAX)
+		var angle := randf() * TAU
+		var r := randf_range(0.0, FALLEN_DRIFT_RADIUS)
+		_fallen_drift_target = _fallen_landing_pos + Vector3(cos(angle) * r, 0.0, sin(angle) * r)
+
+	var dir := _fallen_drift_target - global_position
+	dir.y = 0.0
+	if dir.length() < 0.15:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	dir = dir.normalized()
+	velocity.x = dir.x * FALLEN_DRIFT_SPEED
+	velocity.z = dir.z * FALLEN_DRIFT_SPEED
+	_face(global_position + dir)
 
 ## No route to the player, so break the wall instead. Re-evaluates pathing
 ## periodically and abandons the wall the moment a gap opens elsewhere.
@@ -371,14 +409,17 @@ func enter_entangled(wire) -> void:
 	state = State.ENTANGLED
 	_attack_timer = ATTACK_INTERVAL
 
-func enter_trapped(ditch) -> void:
-	if state == State.TRAPPED or _dead:
+## Called by ZombieDitch's trigger. One-way: if the body is a zombie and isn't
+## already fallen, transition it — the guard below is exactly that check.
+func enter_fallen(_pit) -> void:
+	if state == State.FALLEN or _dead:
 		return
-	_trapped_in = ditch
-	state = State.TRAPPED
+	state = State.FALLEN
+	_fallen_landed = false
+	_investigating_laser = false
 
 func is_immobilised() -> bool:
-	return state == State.ENTANGLED or state == State.TRAPPED
+	return state == State.ENTANGLED or state == State.FALLEN
 
 ## Compounding and permanent — a mine survivor stays slow for the rest of its life.
 func apply_permanent_slow(mult: float) -> void:
@@ -558,6 +599,9 @@ func state_name() -> String:
 		State.INVESTIGATE: return "INVESTIGATE"
 		State.CHASE: return "CHASE"
 		State.ATTACK: return "ATTACK"
+		State.ENTANGLED: return "ENTANGLED"
+		State.FALLEN: return "FALLEN"
+		State.ATTACK_STRUCTURE: return "ATTACK_STRUCTURE"
 		_: return "UNKNOWN(%d)" % state
 
 ## Toggle translucent hitbox volumes (debug affordance).
@@ -611,11 +655,10 @@ func _die() -> void:
 	if _dead:
 		return
 	_dead = true
-	# Killing a held zombie frees the slot it occupied.
+	# Killing a held zombie frees the slot it occupied. FALLEN has no capacity
+	# to release — the pit is a real hole, not a limited number of slots.
 	if _held_by and is_instance_valid(_held_by):
 		_held_by.release(self)
-	if _trapped_in and is_instance_valid(_trapped_in):
-		_trapped_in.release(self)
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
 	PointsManager.add_points(3 if last_hit_headshot else 1)
 	# Shots-to-kill telemetry for tuning the HP step size.

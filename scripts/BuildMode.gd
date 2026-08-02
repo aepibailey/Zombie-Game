@@ -534,10 +534,15 @@ func _try_place() -> void:
 	# A destroyed section opens a gap: rebake so zombies path through it.
 	if o is SandbagSection:
 		o.destroyed_section.connect(_on_section_destroyed)
+	# The ditch's ground hole and navmesh mouth patch are both world-space and
+	# can only be computed now that global_position/rotation.y are final.
+	if o is ZombieDitch:
+		o.finalize_in_world(_world)
 	if _sfx_confirm.stream:
 		_sfx_confirm.play()
 	_seal_cache_key = ""      # roster changed; recompute the seal test
 	# Only solid obstacles change pathing, so only they need a rebake.
+	# (The ditch triggers its own rebake via finalize_in_world(), above.)
 	if t.solid and _world and _world.has_method("request_navmesh_rebake"):
 		_world.request_navmesh_rebake("placed %s" % t.id)
 	_refresh()
@@ -563,6 +568,12 @@ func adopt(obstacles: Array) -> void:
 		var section := entry as SandbagSection
 		if section != null and not section.destroyed_section.is_connected(_on_section_destroyed):
 			section.destroyed_section.connect(_on_section_destroyed)
+		# A restored ditch needs its ground hole and navmesh mouth patch
+		# re-registered against the FRESH scene's ground/navmesh — GameState
+		# only persists {type, pos, yaw}, not those world-level side effects.
+		var ditch := entry as ZombieDitch
+		if ditch != null:
+			ditch.finalize_in_world(_world)
 	_seal_cache_key = ""      # roster changed; recompute the seal test
 	_refresh()
 

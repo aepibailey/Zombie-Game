@@ -55,7 +55,7 @@ Noise is a radius-based broadcast — any zombie within radius of a noise event 
 - **Jump:** `Space`, height **0.9m** (`jump_height`). Blocked while crouched or mid-mantle.
 - **Mantle:** `Space` is a single contextual button — with **forward held** and a mantleable ledge in front it mantles, otherwise it jumps. Chosen over a dedicated key (one more thing to remember mid-fight) and over auto-mantle-on-collision (fires accidentally whenever you jump beside cover).
 - **Detection** is a three-stage probe: forward ray at chest height (1.0m) to find a roughly vertical face → downward ray past its top edge to find a standable ledge → capsule sweep confirming the player fits at the destination.
-- **Max height 2.0m** (`mantle_max_height`) — deliberately equal to the planned ditch depth, so climbing out is possible but effortful. Minimum 0.35m.
+- **Max height 2.0m** (`mantle_max_height`), minimum 0.35m. (Originally sized to match the ditch's depth so mantling was the way out of it; the ditch is now a real 3m pit exited via a built-in ramp instead — see "Zombie ditch" — so this value now stands on its own, for sandbags and other ledges.)
 - **Duration scales with height:** ~0.4s at 1m, ~0.9s at 2m. A locked interpolation — no gravity, no steering, and firing/ADS are blocked throughout.
 - **Zombies cannot jump or mantle.** They have no such capability and none was added.
 
@@ -372,7 +372,7 @@ Carried-over survivors add to a later night's total, so the real curve runs slig
 |---|---|---|---|---|
 | Sandbags | 10 × 1 × 0.5m | 10 | yes | yes |
 | Triple-strand C-wire | 10 × 1.8 × 1m | 40 | no | no |
-| Zombie ditch | 10 × 1m, 2m walls | 60 | no | no |
+| Zombie ditch | 8 × 3m mouth, 3m deep | 60 | no | no |
 | Minefield | 10 × 5m | 70 | no | no |
 
 ### Navmesh strategy (implemented) — threaded rebake
@@ -389,9 +389,10 @@ Why a rebake is affordable here, including the unpaused case:
 - The startup bake is the only synchronous one, because nothing is moving yet and the first path query must not race it.
 
 Configuration:
-- The navmesh parses **`PARSED_GEOMETRY_STATIC_COLLIDERS` on collision layer 1**, not mesh instances. Only things with real collision block pathing — so a sandbag wall carves the navmesh, while the ditch's sunken visual and the minefield's marker plate (both collider-less) correctly do not.
+- The main navmesh parses **`PARSED_GEOMETRY_STATIC_COLLIDERS` on collision layer 1**, not mesh instances. Only things with real collision block pathing — so a sandbag wall carves the navmesh, while the minefield's marker plate (collider-less) correctly does not.
+- **A second `NavigationRegion3D` (`_mouth_region`) exists solely for ditch mouths.** It parses `PARSED_GEOMETRY_MESH_INSTANCES` instead — thin, invisible, collider-free patches placed exactly over each ditch's hole, so the mouth stays walkable in the navmesh permanently, independent of the fact that it has zero physical collision (see "The obstacles" → Zombie ditch, below, for why this had to be a second region rather than a collider on the main one). Both regions rebake together and both must report `bake_finished` before a rebake is considered complete (`Main._nav_bakes_in_flight`).
 - Placed obstacles are parented to an `Obstacles` node **under the `NavigationRegion3D`** so rebakes see them.
-- Only `solid` obstacles trigger a rebake; wire, ditch and minefield don't change pathing.
+- Only `solid` obstacles and ditches trigger a rebake; wire and minefield don't change pathing. (A ditch triggers its own rebake from `ZombieDitch.finalize_in_world()`, once its world position is final, rather than through the generic `t.solid` check in `BuildMode._try_place()`.)
 - Each bake logs its duration: `[NAVMESH] rebake finished in N ms (reason)`.
 
 **Also fixed here:** the supply crate and Engineers' Tent were parented to `Main` rather than the nav region, so they were never in the navmesh and zombies pathed straight through both. They're now nav-region children.
@@ -413,15 +414,23 @@ Configuration:
 - **Wire is a hard barrier to the PLAYER** (this *replaces* the original "no effect on the player" rule). You cannot walk through it, jump it (1.8m), or mantle it. Implemented with a `StaticBody3D` on a dedicated **player-barrier collision layer (5)** that only the player's `collision_mask` includes. That one choice satisfies every constraint at once: zombie bodies mask layer 1 so they still walk in and get held; the navmesh parses layer 1 so wire stays **navmesh-passable** (carving it would break both the held-in-wire mechanic and the seal logic); weapon rays mask 1|4 so **bullets pass straight through**; and the mantle surface probes mask layer 1 so wire can never be a climb target. The mantle *destination* check does include the barrier layer, so a mantle over something else can't drop the player inside wire either.
 - Because wire can trap the player, placement adds **two separate rejections** with distinct messages: **`CAN'T BUILD ON YOURSELF`** if the volume would land on the player, and **`WOULD TRAP PLAYER`** if it would leave the player with no route to the map edge. Both are hard rejections, unlike the informational seal notice.
 
-**Zombie ditch — 60 pts, permanent, indestructible.** 10m long, 1m across, **2m revetment walls**.
-- **The trench is formed by 2m walls above ground, not by a hole.** Cutting real geometry is out of scope, and the ground is a single solid box spanning y −1…0 — so there is nowhere to put a "2m deep" floor. The walls give the same containment and the same 2m climb without digging.
-- Walls sit on a dedicated **solid-but-non-navmesh collision layer (6)**: the navmesh parses layer 1 only, so zombies still **path into** the trench, but once inside they physically cannot climb out. Both actors' masks include it; the player mantles the wall at exactly the 2.0m limit, so getting out takes real effort.
-- Traps **6** zombies (`capacity`) as **Trapped** — alive, stationary, unable to attack, **fully visible and killable from the lip**. Head and body hitboxes are untouched, so the 2× headshot multiplier and normal point awards apply. Killing one frees a capacity slot.
-- Trapped zombies are **parked**: no gravity and no `move_and_slide`, so nothing can shove or sink them.
-- Once full, later zombies cross over the pile at **40%** speed while crossing, with **no lingering penalty** — they climbed over bodies, they weren't injured.
-- The revetment is deliberately **not** on the weapon-ray mask, so the ditch's own geometry can never block a shot fired into it.
+**Zombie ditch — 60 pts, permanent, indestructible.** Rebuilt from scratch as a real pit — the "above-ground revetment wall" design (see history below) produced physical barriers the navmesh never knew about, so zombies got stuck against them at the edge instead of falling in.
 
-> **Fixed bug (was: zombies vanished in ditches).** The trap transition teleported the zombie to `y = ditch_y − 2.0 + 0.2 = −1.8`, which is *below the ground collider's bottom face at −1.0*. The zombie fell out of the world forever: unhittable, but still alive, so it also held a ditch slot and blocked the all-clear. The teleport is gone — zombies now stay exactly where they walked in.
+> **History — why the walls-only version was wrong.** Its collision sat on a solid-but-non-navmesh layer specifically so the navmesh would ignore it and zombies would "path into" the trench. But the navmesh, seeing an unbroken flat ground plane the whole way through (the walls only ran along the two long sides, not across the mouth), had no reason to route anyone toward it at all — and a zombie approaching from the side simply hit a real wall the pathing system didn't know was there, sliding along it instead of routing around. Fixed properly this pass, not patched.
+
+**The pit is now a literal hole**, built on the insight that Godot's navigation and physics systems are entirely independent — a zombie's *path* can say "flat ground here" while its *physics body* falls straight through, because pathfinding never consults collision to decide walkability:
+- **The ground genuinely has a hole in it.** The 60×60m ground plane, previously one collision box, is now a rebuildable set of rectangular pieces (`Main._ground_body` / `_ground_holes` / `_rebuild_ground_pieces()`). Placing a ditch subtracts its world-space AABB from the ground via a standard rectangle-minus-rectangle decomposition (up to 4 remainder strips — west/east/north/south — applied per hole), with no runtime CSG needed. There is no floor there any more; gravity does the rest.
+- **A second, physics-free `NavigationRegion3D` (`Main._mouth_region`) keeps the mouth walkable in the navmesh, permanently.** It's baked from `PARSED_GEOMETRY_MESH_INSTANCES` rather than colliders — a thin, fully transparent `MeshInstance3D` patch exactly over the hole's footprint. Because it has zero physical collision, it can never be "discovered" as a gap by a future rebake the way a since-removed temporary collider would be; the patch is permanent, so the mouth stays flat and walkable across every rebake for the rest of the game, independent of anything physical. Both regions share the default navigation map, so Godot stitches their polygons into one connected graph automatically.
+- **The pit itself (walls, floor, ramp) is real collision on the solid-but-non-navmesh layer** (layer 6, same one the old revetment used) — solid to both actors, invisible to the navmesh, so **the pit interior has no navmesh at all**.
+- **A dirt ramp** at the pit's local −X end (`Player.floor_max_angle` default of 45° comfortably covers it): a sloped slab from the floor up to ground level at roughly **37°** (a 3-4-5 right triangle at the default 8×3×3m size — 4m run, 3m rise), leaving the rest of the pit's length as flat floor. **The ramp end is fixed to a specific local side, not auto-oriented toward the base** — rotate the ghost before placing to point it wherever you want. Exploiting the ramp is a non-issue: fallen zombies have no pathing at all (below), so nothing ever seeks it out.
+- **`Zombie.State.FALLEN`** (replaces the old `TRAPPED`, which existed only for this obstacle): an `Area3D` over the mouth (inset from the edges, spanning from just above ground through the full depth) transitions any zombie that enters. Once FALLEN:
+  - Gravity applies normally (unlike the old TRAPPED, which zeroed velocity and skipped `move_and_slide` outright) — it genuinely falls.
+  - The `NavigationAgent3D` is never touched — no target is set, `get_next_path_position()` is never called — so there is no pathing at all, by construction rather than by disabling a node.
+  - On landing (`is_on_floor()` first true), it emits a **10m noise event** — a body hitting the pit floor makes a sound, and pulling more zombies toward the same lane is intentional — then mills within **1m** of the landing spot, drifting to a new point every 2–4s.
+  - **One-way, permanently**: `is_immobilised()` now includes FALLEN, which already gated every exit (noise, laser-dot curiosity, being-shot-triggers-chase) — so no code path can ever pull a fallen zombie back into Investigate/Chase/Attack, regardless of proximity, noise, or laser.
+  - Fully damageable throughout: normal hit­boxes, the 2× headshot multiplier, and normal point awards are untouched, and it still counts toward the wave's alive total until killed.
+  - No capacity limit — unlike the old TRAPPED (capped at 6, extra zombies crossed over at reduced speed), the pit holds however many physically fit; there is no overflow behaviour to speak of.
+- **Known approximation:** the ground hole and the navmesh patch both use the ditch's world-space *axis-aligned bounding box*, not its exact rotated footprint. At a non-cardinal rotation this is conservatively larger than the visible pit at its corners — tune later if a rotated ditch reads as having "extra" invisible hole at the corners.
 
 **Minefield — 70 pts, most expensive.** 10 × 5m, **20 mines** (~1 per 2.5 m²), boundary marked with emissive posts.
 - **Player-safe** — the engineers marked the field.
@@ -434,10 +443,10 @@ Configuration:
 ### Zombie states & speed modifiers (implemented)
 Added to Wander / Investigate / Chase / Attack:
 - **Entangled** — stationary, alive, attacks at melee range. Immune to noise and laser events.
-- **Trapped** — stationary in a ditch, alive, cannot attack. Immune to noise and laser events.
-- **AttackStructure** — entered from Chase when a navmesh path to the player stops short. Targets the nearest intact sandbag section, and **re-checks reachability every second**, abandoning the wall the moment a route opens elsewhere. Being shot no longer breaks a zombie out of Entangled/Trapped, since it has nowhere to go.
+- **Fallen** (replaces the old **Trapped**) — fell into a ditch pit. Gravity-driven until it lands, then mills within a small radius, permanently. Cannot attack, immune to noise and laser events — `is_immobilised()` covers both Entangled and Fallen, so every transition-out check (noise, laser curiosity, being shot) is already gated by the same one flag.
+- **AttackStructure** — entered from Chase when a navmesh path to the player stops short. Targets the nearest intact sandbag section, and **re-checks reachability every second**, abandoning the wall the moment a route opens elsewhere. Being shot no longer breaks a zombie out of Entangled/Fallen, since it has nowhere to go.
 
-Speed modifiers **stack multiplicatively** with a floor: permanent (mine survivor ×0.5, wire exit ×0.85) compound for life; temporary (inside wire ×0.4, crossing a full ditch ×0.4) apply only inside the volume. Total is clamped to **`min_speed_mult` = 0.30** — a mined-then-wired zombie never approaches zero and becomes a de-facto permanent obstacle.
+Speed modifiers **stack multiplicatively** with a floor: permanent (mine survivor ×0.5, wire exit ×0.85) compound for life; temporary (inside wire ×0.4) applies only inside the volume — the ditch no longer has a "crossing a full pit" case, since there's no capacity to overflow. Total is clamped to **`min_speed_mult` = 0.30** — a mined-then-wired zombie never approaches zero and becomes a de-facto permanent obstacle.
 
 ### Obstacle persistence (implemented)
 Obstacles survive between nights, and — the point of doing this now rather than later — they survive a **scene change**, so the multi-level work can't silently lose the base.
@@ -446,7 +455,7 @@ Obstacles survive between nights, and — the point of doing this now rather tha
 - Each obstacle serialises itself: `Obstacle.to_dict()` carries `type` / `pos` / `yaw`, and subclasses override to merge their own mutable state.
   - **Sandbags persist with their current health** — a wall left at 40% comes back at 40%, not repaired.
   - **Minefields persist per-mine**, as a `live` array, so a half-spent field comes back half-spent with the right marker and readout state.
-  - **C-wire and ditches are permanent and carry no mutable state** — entangled and trapped zombies are transient by definition, so a restored section comes back empty.
+  - **C-wire and ditches are permanent and carry no mutable state** — entangled and fallen zombies are transient by definition, so a restored section comes back empty. (A restored ditch does need its ground hole and navmesh mouth patch re-registered against the fresh scene, since those are world-level side effects `GameState` doesn't persist — handled by `ZombieDitch.finalize_in_world()`, called again from `BuildMode.adopt()`.)
 - **Destroyed sandbag sections stay destroyed.** They're removed from the roster on destruction, so they're simply absent from the snapshot — no "destroyed" flag to get out of sync.
 - **Capture** runs at every phase boundary (`Main.capture_state()` from `_on_phase_changed`), so `GameState` is always current and a transition never has to hunt for a safe moment to serialise. `Main.capture_state()` is public for whatever drives a level change later.
 - **Restore** runs inside `Main._build_ui()` — *before* the initial navmesh bake in `_ready()` — so restored sandbags are baked in on the first pass and no extra rebake is needed.

@@ -48,6 +48,12 @@ var _sun: DirectionalLight3D
 var _env: Environment
 var _sky_mat: ProceduralSkyMaterial
 var _nav_region: NavigationRegion3D
+## Second, physics-free navmesh region: ditch mouths only. Baked from plain
+## MeshInstance3D geometry (PARSED_GEOMETRY_MESH_INSTANCES), never from
+## colliders, so a ditch's flat "mouth" patch stays in the navmesh forever,
+## independent of the fact that it has no physical collision at all — see
+## ZombieDitch.gd and register_ditch_mouth() below.
+var _mouth_region: NavigationRegion3D
 ## Parent for placed obstacles — sits under the nav region so rebakes see them.
 var obstacles_root: Node3D
 var _nav_rebake_pending := false
@@ -55,6 +61,13 @@ var _nav_rebake_queued := false
 var _nav_baking := false
 var _nav_bake_started_us := 0
 var _nav_rebake_reason := ""
+## How many of the (main + mouth) region bakes from the current rebake are
+## still outstanding. A rebake is "finished" only once both report in.
+var _nav_bakes_in_flight := 0
+
+# --- Ground (rebuildable so a placed ditch can punch a real hole) ---------
+var _ground_body: StaticBody3D
+var _ground_holes: Array = []   # Array[Rect2], one per placed ditch (XZ, world space)
 var _zombies: Array = []
 var _hud: HUD
 var _crate_ui: SupplyCrateUI
@@ -97,7 +110,9 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	_nav_rebake_reason = "initial bake"
 	_nav_bake_started_us = Time.get_ticks_usec()
+	_nav_bakes_in_flight = 2
 	_nav_region.bake_navigation_mesh(false)
+	_mouth_region.bake_navigation_mesh(false)
 
 # --- Lighting / atmosphere -----------------------------------------------
 func _build_lighting() -> void:
@@ -152,23 +167,40 @@ func _build_world() -> void:
 	nav_mesh.agent_max_climb = 0.5
 	nav_mesh.agent_max_slope = 45.0
 	# Parse STATIC COLLIDERS, not mesh instances. Only things with real
-	# collision should block pathing — which means a sandbag wall carves the
-	# navmesh while the ditch's sunken visual and the minefield's flat marker
-	# plate (both collider-less) correctly do not.
+	# collision on layer 1 should block pathing — a sandbag wall carves the
+	# navmesh; the minefield's marker plate (collider-less) and the ditch's
+	# pit (real collision, but on the solid-but-non-navmesh layer) correctly
+	# do not. The ditch mouth's own navmesh contribution comes from the
+	# separate _mouth_region below, not from this one.
 	nav_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
 	nav_mesh.geometry_collision_mask = 1
 	_nav_region.navigation_mesh = nav_mesh
 	add_child(_nav_region)
 	_nav_region.bake_finished.connect(_on_navmesh_baked)
 
+	# Ditch-mouth region: same agent tuning, but baked from plain mesh
+	# instances rather than colliders (see the field comment on
+	# _mouth_region). Uses the default navigation map, same as _nav_region, so
+	# Godot stitches the two regions' polygons into one connected graph.
+	_mouth_region = NavigationRegion3D.new()
+	var mouth_mesh := NavigationMesh.new()
+	mouth_mesh.cell_size = nav_mesh.cell_size
+	mouth_mesh.agent_radius = nav_mesh.agent_radius
+	mouth_mesh.agent_height = nav_mesh.agent_height
+	mouth_mesh.agent_max_climb = nav_mesh.agent_max_climb
+	mouth_mesh.agent_max_slope = nav_mesh.agent_max_slope
+	mouth_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_MESH_INSTANCES
+	_mouth_region.navigation_mesh = mouth_mesh
+	add_child(_mouth_region)
+	_mouth_region.bake_finished.connect(_on_navmesh_baked)
+
 	# Placed obstacles live UNDER the nav region so a rebake picks them up.
 	obstacles_root = Node3D.new()
 	obstacles_root.name = "Obstacles"
 	_nav_region.add_child(obstacles_root)
 
-	# Ground: 60x60 clearing.
-	_add_box(_nav_region, Vector3(MAP_HALF * 2.0, 1.0, MAP_HALF * 2.0),
-		Vector3(0, -0.5, 0), Color(0.28, 0.32, 0.22))
+	# Ground: 60x60 clearing, rebuilt whenever a ditch punches a hole in it.
+	_build_ground()
 
 	# Patrol base structures near the centre + a little sandbag cover.
 	_add_box(_nav_region, Vector3(4, 3, 6), Vector3(-6, 1.5, -2), Color(0.4, 0.4, 0.42))
@@ -188,6 +220,108 @@ func _build_world() -> void:
 		var angle := randf() * TAU
 		var r := randf_range(TREE_RING_MIN, TREE_RING_MAX)
 		_add_tree(_nav_region, Vector3(cos(angle) * r, 0, sin(angle) * r))
+
+# --- Rebuildable ground (so a ditch can punch a real hole in it) ---------
+## One shared StaticBody3D holding N rectangular collision pieces instead of
+## one giant slab, so a placed ditch can remove real floor collision at its
+## footprint without any runtime CSG — the remainder of a rectangle minus a
+## rectangle decomposes cleanly into up to 4 rectangles (west/east/north/south
+## strips), applied iteratively per hole in _rebuild_ground_pieces().
+func _build_ground() -> void:
+	_ground_body = StaticBody3D.new()
+	_ground_body.collision_layer = 1
+	_ground_body.collision_mask = 0
+	_nav_region.add_child(_ground_body)
+	_rebuild_ground_pieces()
+
+## Call when a ditch is placed (or restored) with its world-space AABB. Real
+## ground collision goes away at that footprint permanently — there is no
+## "un-punch"; ditches are indestructible, same as before.
+func punch_ground_hole(rect: Rect2) -> void:
+	_ground_holes.append(rect)
+	_rebuild_ground_pieces()
+
+func _rebuild_ground_pieces() -> void:
+	for c in _ground_body.get_children():
+		c.queue_free()
+	var full := Rect2(-MAP_HALF, -MAP_HALF, MAP_HALF * 2.0, MAP_HALF * 2.0)
+	var pieces: Array = [full]
+	for hole in _ground_holes:
+		var next: Array = []
+		for r in pieces:
+			next.append_array(_subtract_rect(r, hole))
+		pieces = next
+	for r in pieces:
+		_add_ground_piece(r)
+
+## Rectangle `r` minus rectangle `hole`, as up to 4 non-overlapping remainder
+## rectangles (west/east/north/south strips around the hole). Returns [r]
+## unchanged if they don't actually overlap.
+func _subtract_rect(r: Rect2, hole: Rect2) -> Array:
+	var inter := r.intersection(hole)
+	if inter.size.x <= 0.0 or inter.size.y <= 0.0:
+		return [r]
+	var out: Array = []
+	var r_right: float = r.position.x + r.size.x
+	var r_bottom: float = r.position.y + r.size.y
+	var inter_right: float = inter.position.x + inter.size.x
+	var inter_bottom: float = inter.position.y + inter.size.y
+	if inter.position.x > r.position.x:
+		out.append(Rect2(r.position.x, r.position.y, inter.position.x - r.position.x, r.size.y))
+	if inter_right < r_right:
+		out.append(Rect2(inter_right, r.position.y, r_right - inter_right, r.size.y))
+	if inter.position.y > r.position.y:
+		out.append(Rect2(inter.position.x, r.position.y, inter.size.x, inter.position.y - r.position.y))
+	if inter_bottom < r_bottom:
+		out.append(Rect2(inter.position.x, inter_bottom, inter.size.x, r_bottom - inter_bottom))
+	return out
+
+func _add_ground_piece(r: Rect2) -> void:
+	var center := Vector3(r.position.x + r.size.x * 0.5, -0.5, r.position.y + r.size.y * 0.5)
+	var size := Vector3(r.size.x, 1.0, r.size.y)
+
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	mesh.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.28, 0.32, 0.22)
+	mesh.material_override = mat
+	mesh.position = center
+	_ground_body.add_child(mesh)
+
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	col.position = center
+	_ground_body.add_child(col)
+
+## Called by ZombieDitch.finalize_in_world() once its position/rotation are
+## final. Punches the real ground hole AND adds a permanent, physics-free
+## navmesh patch over the same footprint — see the _mouth_region field
+## comment for why both are needed together.
+func register_ditch_mouth(rect: Rect2) -> void:
+	punch_ground_hole(rect)
+	_add_mouth_patch(rect)
+	request_navmesh_rebake("ditch mouth")
+
+## A thin, fully transparent MeshInstance3D — visible (so it's guaranteed to
+## still be parsed for navmesh baking) but invisible to the eye, so the
+## player sees straight down into the pit rather than a floor patch sitting
+## over the hole.
+func _add_mouth_patch(rect: Rect2) -> void:
+	var patch := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(rect.size.x, 0.05, rect.size.y)
+	patch.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1, 1, 1, 0.0)
+	patch.material_override = mat
+	patch.position = Vector3(rect.position.x + rect.size.x * 0.5, 0.0,
+		rect.position.y + rect.size.y * 0.5)
+	_mouth_region.add_child(patch)
 
 func _add_box(parent: Node, size: Vector3, pos: Vector3, color: Color) -> StaticBody3D:
 	var body := StaticBody3D.new()
@@ -518,9 +652,18 @@ func _do_navmesh_rebake() -> void:
 		return
 	_nav_baking = true
 	_nav_bake_started_us = Time.get_ticks_usec()
-	_nav_region.bake_navigation_mesh(true)   # on_thread
+	# Both regions rebake together — the mouth region is tiny (thin patches
+	# only) so this costs almost nothing extra.
+	_nav_bakes_in_flight = 2
+	_nav_region.bake_navigation_mesh(true)     # on_thread
+	_mouth_region.bake_navigation_mesh(true)   # on_thread
 
+## Shared by both regions' bake_finished signal. A rebake isn't "done" until
+## BOTH report in.
 func _on_navmesh_baked() -> void:
+	_nav_bakes_in_flight -= 1
+	if _nav_bakes_in_flight > 0:
+		return
 	var ms := float(Time.get_ticks_usec() - _nav_bake_started_us) / 1000.0
 	print("[NAVMESH] rebake finished in %.1f ms%s" % [
 		ms, "  (%s)" % _nav_rebake_reason if _nav_rebake_reason != "" else ""])

@@ -40,6 +40,9 @@ func setup(t) -> void:
 	if t.solid:
 		_build_solid()
 
+## Generic single-box visual. ZombieDitch overrides this entirely — a pit is
+## real geometry (walls, floor, ramp), not a single sunken box — so this path
+## never runs for "ditch".
 func _build_visual() -> void:
 	var size: Vector3 = obstacle_type.size
 	_visual = MeshInstance3D.new()
@@ -49,13 +52,7 @@ func _build_visual() -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = obstacle_type.color
 	_visual.material_override = mat
-
-	# The ditch reads as a trench: the box is sunk below ground rather than
-	# cutting real geometry (runtime CSG isn't worth it).
-	if type_id == "ditch":
-		_visual.position.y = -size.y * 0.5
-	else:
-		_visual.position.y = size.y * 0.5
+	_visual.position.y = size.y * 0.5
 	add_child(_visual)
 
 	if type_id == "minefield":
