@@ -200,13 +200,15 @@ var _has_drum: Dictionary = {}            # M249 — 200-round belt
 var _has_variable_zoom: Dictionary = {}   # M110 — adjustable 2x-8x
 var _has_ir_laser: Dictionary = {}        # every laser-equipped weapon except M110
 
-# M110 variable zoom optic state.
-const ZOOM_MIN := 2.0
-const ZOOM_MAX := 8.0
-const ZOOM_STEP := 0.5
+# M110 variable zoom optic state. Binary, not continuous: exactly two scope
+# positions, no interpolated in-between value is ever stored or read.
 const DEFAULT_ADS_FOV := 55.0
 const HIP_FOV := 75.0
-var _zoom_level := 3.0   # matches the fixed 3x scope until the optic is bought
+const SCOPE_FOV_NEAR := 41.98   # 2x, 2*atan(tan(37.5deg)/2)
+const SCOPE_FOV_FAR := 10.96    # 8x, 2*atan(tan(37.5deg)/8)
+const SCOPE_TWEEN_TIME := 0.08
+var _scope_far := false     # false = 2x, true = 8x. Persists across ADS toggles.
+var _scope_tween: Tween
 
 var _footstep_timer := 0.0
 var _branch_timer := 1.0
@@ -466,9 +468,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_toggle_ads()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_adjust_zoom(1)
+			_toggle_scope()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_adjust_zoom(-1)
+			_toggle_scope()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_C:
@@ -504,6 +506,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _toggle_ads() -> void:
 	if _ifak_applying or _mantling:
 		return   # can't aim while patching up or climbing
+	_kill_scope_tween()
 	ads_active = not ads_active
 	camera.fov = _current_ads_fov() if ads_active else HIP_FOV
 	message.emit("ADS " + ("ON — red laser hot (10m tell)" if ads_active else "OFF"))
@@ -511,30 +514,36 @@ func _toggle_ads() -> void:
 ## The ADS FOV for the currently equipped weapon: the M110's adjustable optic
 ## (if bought) wins over its fixed-scope default, which in turn wins over the
 ## player's baseline ADS FOV. Nothing else in the roster sets `ads_fov`.
+## Entering ADS always snaps straight to the current value — only the scope
+## TOGGLE (below) tweens, and only between the two fixed positions.
 func _current_ads_fov() -> float:
 	if weapon == null:
 		return DEFAULT_ADS_FOV
 	if current_weapon_id == "m110" and has_variable_zoom("m110"):
-		return _fov_for_zoom(_zoom_level)
+		return SCOPE_FOV_FAR if _scope_far else SCOPE_FOV_NEAR
 	if weapon.ads_fov > 0.0:
 		return weapon.ads_fov
 	return DEFAULT_ADS_FOV
 
-## FOV (degrees) that reads as `zoom`x relative to the player's hip FOV, via
-## the standard tan-half-angle zoom relation. zoom=1 returns HIP_FOV exactly.
-func _fov_for_zoom(zoom: float) -> float:
-	var half_hip := deg_to_rad(HIP_FOV * 0.5)
-	var half_target := atan(tan(half_hip) / maxf(0.01, zoom))
-	return rad_to_deg(half_target) * 2.0
-
 ## Scroll wheel while ADS with the variable zoom optic fitted. Inert
-## otherwise — no other control claims the wheel in first-person.
-func _adjust_zoom(direction: int) -> void:
+## otherwise — no other control claims the wheel in first-person. Either
+## direction just flips to the other position — this is a two-position
+## scope, not a dial. A short tween carries the FOV across so the switch
+## doesn't jar the eye, but it always lands exactly on 2x or 8x, never
+## between them.
+func _toggle_scope() -> void:
 	if not (ads_active and current_weapon_id == "m110" and has_variable_zoom("m110")):
 		return
-	_zoom_level = clampf(_zoom_level + direction * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
-	camera.fov = _fov_for_zoom(_zoom_level)
-	message.emit("Zoom: %.1fx" % _zoom_level)
+	_scope_far = not _scope_far
+	_kill_scope_tween()
+	_scope_tween = create_tween()
+	_scope_tween.tween_property(camera, "fov", SCOPE_FOV_FAR if _scope_far else SCOPE_FOV_NEAR,
+		SCOPE_TWEEN_TIME)
+	message.emit("Scope: %s" % ("8x" if _scope_far else "2x"))
+
+func _kill_scope_tween() -> void:
+	if _scope_tween and _scope_tween.is_valid():
+		_scope_tween.kill()
 
 # --- Weapon ---------------------------------------------------------------
 func _fire() -> void:
@@ -775,6 +784,7 @@ func _equip(id: String) -> void:
 	# per-weapon fix.
 	if ads_active:
 		ads_active = false
+		_kill_scope_tween()
 		camera.fov = HIP_FOV
 	# Stash the outgoing weapon's loaded magazine before swapping.
 	if weapon:
