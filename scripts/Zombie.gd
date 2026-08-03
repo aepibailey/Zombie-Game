@@ -312,7 +312,7 @@ func _do_investigate(delta: float) -> void:
 
 ## Only used while investigating a laser dot.
 func _can_see_player() -> bool:
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player == null:
 		return false
 	if global_position.distance_to(player.global_position) > LASER_INVESTIGATE_SIGHT:
@@ -320,7 +320,7 @@ func _can_see_player() -> bool:
 	return _has_los_to(player)
 
 func _do_chase(delta: float) -> void:
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player == null:
 		state = State.WANDER
 		_pick_wander_target()
@@ -359,7 +359,7 @@ func _do_chase(delta: float) -> void:
 	_move_toward(player.global_position, _current_chase_speed(), delta)
 
 func _do_attack(delta: float) -> void:
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player == null:
 		state = State.WANDER
 		_pick_wander_target()
@@ -387,7 +387,7 @@ func _do_attack(delta: float) -> void:
 func _do_entangled(delta: float) -> void:
 	velocity.x = 0.0
 	velocity.z = 0.0
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player == null:
 		return
 	if global_position.distance_to(player.global_position) <= ATTACK_RANGE:
@@ -468,7 +468,7 @@ func _do_attack_structure(delta: float) -> void:
 
 ## True when the nav agent can reach the player rather than stopping short.
 func _player_reachable() -> bool:
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player == null:
 		return false
 	var target := NavigationServer3D.map_get_closest_point(
@@ -537,7 +537,7 @@ func _leap_arc_time() -> float:
 ## Every one of the five gate conditions must hold. The expensive ones (path
 ## query, arc trace) are checked last so the common case — a leaper running
 ## at an unobstructed player — costs almost nothing.
-func _try_enter_leap(player: Node3D) -> bool:
+func _try_enter_leap(player: Player) -> bool:
 	var t := zombie_type
 	# 1. can this variant leap at all, 2. is it off cooldown
 	if not t.can_leap or _leap_cooldown > 0.0:
@@ -569,7 +569,7 @@ func _try_enter_leap(player: Node3D) -> bool:
 
 ## True when the navmesh route is meaningfully longer than the straight line
 ## (it's detouring around something) or there's no route at all.
-func _path_is_obstructed(player: Node3D, ratio_threshold: float) -> bool:
+func _path_is_obstructed(player: Player, ratio_threshold: float) -> bool:
 	var straight := global_position.distance_to(player.global_position)
 	if straight <= 0.01:
 		return false
@@ -695,7 +695,7 @@ func _do_leap_recover(delta: float) -> void:
 	# the player instead of stranding. The cooldown is waived for exactly this
 	# case — being stuck on a roof is worse than an off-cadence leap.
 	if not _on_navmesh():
-		var player = _get_player()
+		var player: Player = _get_player()
 		if player != null:
 			var away := player.global_position - global_position
 			away.y = 0.0
@@ -849,7 +849,7 @@ func _enter_chase() -> void:
 		_chase_elapsed = 0.0
 		if _leap_screech and _leap_screech.stream:
 			_leap_screech.play()
-	var player = _get_player()
+	var player: Player = _get_player()
 	if player:
 		_last_known_player = player.global_position
 
