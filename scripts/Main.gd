@@ -30,6 +30,15 @@ const FIRST_SPAWN_DELAY := 1.5
 @export var hp_per_step: int = 8
 @export var nights_per_step: int = 2
 
+# --- Zombie variant mix ----------------------------------------------------
+## Leapers debut on this night; everything before it is 100% walkers.
+@export var leaper_first_night: int = 4
+@export var leaper_start_fraction: float = 0.10   # 10% of the budget on debut
+@export var leaper_fraction_step: float = 0.05    # +5% per subsequent night
+@export var leaper_max_fraction: float = 0.30     # hard ceiling
+var _type_walker: ZombieType = preload("res://resources/zombie_walker.tres")
+var _type_leaper: ZombieType = preload("res://resources/zombie_leaper.tres")
+
 # All-clear prompt keybinds (shown on the prompt).
 const KEY_SKIP_TO_DAY := KEY_Y
 const KEY_FINISH_NIGHT := KEY_N
@@ -562,9 +571,14 @@ func _begin_night() -> void:
 	_spawn_interval = _compute_spawn_interval(new_pool)
 	_all_clear_shown = false
 	PointsManager.begin_night_tally()
+	var lf := leaper_fraction_for_night(GameManager.night_number)
 	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
 		GameManager.night_number, _wave_total, new_pool, carryover,
 		max_concurrent, _zombie_hp_for_night(), _spawn_interval])
+	print("[Night %d] mix: %d%% leapers (walker %d HP / leaper %d HP)" % [
+		GameManager.night_number, int(round(lf * 100.0)),
+		_zombie_hp_for_type(_type_walker.max_health),
+		_zombie_hp_for_type(_type_leaper.max_health)])
 	_update_wave_hud()
 	if carryover > 0:
 		_hud.show_message("NIGHT %d — %d inbound (+%d survivors carried over)." % [
@@ -705,15 +719,39 @@ func _compute_spawn_interval(pool: int) -> float:
 ## Per-night zombie max HP: negligible early, compounding later.
 ##   100 / 100 / 108 / 108 / 116 / 116 ...
 func _zombie_hp_for_night() -> int:
+	return _zombie_hp_for_type(zombie_base_hp)
+
+## Same per-night step, applied to whatever the variant's BASE health is.
+## The step is absolute (+8 per 2 nights), not proportional, so a leaper's
+## 60 HP and a walker's 100 HP both gain the same amount and the leaper stays
+## exactly 40 HP squishier for the whole run.
+func _zombie_hp_for_type(base: int) -> int:
 	var steps: int = int(floor(float(GameManager.night_number - 1) / float(maxi(1, nights_per_step))))
-	return zombie_base_hp + hp_per_step * maxi(0, steps)
+	return base + hp_per_step * maxi(0, steps)
+
+## Fraction of tonight's spawns that should be leapers. Nights 1-3 are pure
+## walkers; from night 4 it opens at 10% and climbs 5%/night to a 30% ceiling.
+func leaper_fraction_for_night(night: int) -> float:
+	if night < leaper_first_night:
+		return 0.0
+	var extra: int = night - leaper_first_night
+	return minf(leaper_start_fraction + leaper_fraction_step * float(extra), leaper_max_fraction)
+
+## Roll this spawn's variant against tonight's leaper share.
+func _pick_zombie_type() -> ZombieType:
+	if randf() < leaper_fraction_for_night(GameManager.night_number):
+		return _type_leaper
+	return _type_walker
 
 func _spawn_zombie() -> void:
 	var angle := randf() * TAU
 	var r := randf_range(TREE_RING_MIN - 2.0, TREE_RING_MAX)
 	var z = zombie_scene.instantiate()  # untyped for the zombie's custom API
-	# Set max_hp BEFORE add_child so the zombie's _ready() seeds hp from it.
-	z.max_hp = _zombie_hp_for_night()
+	# Both BEFORE add_child: _ready() seeds hp from max_hp and builds the
+	# variant's silhouette from zombie_type.
+	var zt := _pick_zombie_type()
+	z.zombie_type = zt
+	z.max_hp = _zombie_hp_for_type(zt.max_health)
 	add_child(z)
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
 	z.died.connect(_on_zombie_died)

@@ -26,6 +26,8 @@ enum State {
 	ENTANGLED,          # held in C-wire: alive, immobile, can still swing
 	FALLEN,             # fell into a ditch pit: alive, gravity-driven, one-way
 	ATTACK_STRUCTURE,   # no path to the player — breaking through sandbags
+	LEAP,               # committed ballistic arc over an obstruction
+	LEAP_RECOVER,       # landed, briefly immobile
 }
 
 # --- Fallen (ditch pit) -----------------------------------------------------
@@ -35,18 +37,22 @@ const FALLEN_DRIFT_INTERVAL_MIN := 2.0
 const FALLEN_DRIFT_INTERVAL_MAX := 4.0
 const FALLEN_NOISE_RADIUS := 10.0
 
-# --- Tuning ---------------------------------------------------------------
+# --- Variant definition ----------------------------------------------------
+## Per-variant stats (health, speeds, melee, scoring, leap, appearance) live
+## in a ZombieType resource — see scripts/ZombieType.gd. The spawner assigns
+## one before add_child(); the fallback below only matters for a zombie
+## dropped into a scene by hand.
+const DEFAULT_TYPE := "res://resources/zombie_walker.tres"
+@export var zombie_type: ZombieType
+
+# --- Tuning (shared by every variant — deliberately NOT per-type) ---------
 const BASE_HP := 100                # night-scaled by the spawner via `max_hp`
 const HEADSHOT_MULT := 2            # PROJECT_SPEC.md "Combat & Scoring"
-const WANDER_SPEED := 1.6
-const CHASE_SPEED := 3.6
 const CHASE_LOSE_RANGE := 26.0     # drop chase past this with no LOS
 ## Sight range used ONLY while investigating a laser dot — an alerted zombie
 ## that spots the operator switches to Chase by the normal rules.
 const LASER_INVESTIGATE_SIGHT := 16.0
 const ATTACK_RANGE := 1.8
-const ATTACK_DAMAGE := 20          # PROJECT_SPEC.md "Combat & Scoring"
-const ATTACK_INTERVAL := 1.0
 const INVESTIGATE_TIMEOUT := 10.0  # give up on a noise after ~10s
 const WANDER_RADIUS := 26.0        # roam within the map bounds
 const REPATH_INTERVAL := 0.3
@@ -102,6 +108,15 @@ var _fallen_landing_pos: Vector3 = Vector3.ZERO
 var _fallen_drift_target: Vector3 = Vector3.ZERO
 var _fallen_drift_timer := 0.0
 var _structure_target = null     # sandbag section being attacked
+
+# Chase ramp state (leaper). The walker's type has 0 for both, so these are
+# inert for it and its speed resolves to move_speed_chase immediately.
+var _chase_elapsed := 0.0        # seconds since entering Chase
+# Leap state.
+var _leap_cooldown := 0.0        # counts down; leap only when <= 0
+var _leap_airborne := false      # true once we've actually left the ground
+var _leap_recover := 0.0
+var _leap_screech: AudioStreamPlayer3D
 var _structure_timer := 0.0
 var _repath_check := 0.0
 ## True while investigating a laser dot specifically. Scoped so only this kind
@@ -115,6 +130,10 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 
 func _ready() -> void:
 	add_to_group("zombies")
+	# A hand-placed zombie with no type assigned still has to work.
+	if zombie_type == null:
+		zombie_type = load(DEFAULT_TYPE)
+	add_to_group("zombie_" + zombie_type.id)
 	# World (layer 1) plus the ditch revetment (layer 6). NOT the player-only
 	# barrier layer — wire must stay walk-into-able for the entangle mechanic.
 	collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
@@ -124,17 +143,75 @@ func _ready() -> void:
 	head_hitbox.set_meta("zombie", self)
 	hp = max_hp   # spawner set max_hp for this night's scaling
 	_build_footsteps()
+	_build_screech()
 	agent.path_desired_distance = 0.6
 	agent.target_desired_distance = 0.8
 	agent.radius = 0.5
 	agent.avoidance_enabled = false
 	NoiseManager.noise_emitted.connect(_on_noise_emitted)
-	# Sub-resources are shared across scene instances; give each zombie its
-	# own material so tinting one doesn't recolour them all.
-	if body_mesh.material_override:
-		body_mesh.material_override = body_mesh.material_override.duplicate()
+	_apply_type_appearance()
 	_pick_wander_target()
 	_refresh_tint()
+
+## Resize the capsule/head to this variant's silhouette and recolour it.
+##
+## EVERY resource touched here is duplicated first. Sub-resources declared in
+## a .tscn are SHARED across instances of that scene, so mutating them in
+## place would resize/recolour every zombie in the world at once — the same
+## trap the material duplication below was already guarding against.
+func _apply_type_appearance() -> void:
+	var t := zombie_type
+	var body_y := t.body_center_y()
+	var head_y := t.head_center_y()
+
+	# Body collision.
+	var col := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if col and col.shape is CapsuleShape3D:
+		var cs: CapsuleShape3D = col.shape.duplicate()
+		cs.radius = t.body_radius
+		cs.height = t.body_height
+		col.shape = cs
+		col.position.y = body_y
+
+	# Body mesh + its own material instance.
+	if body_mesh.mesh is CapsuleMesh:
+		var cm: CapsuleMesh = body_mesh.mesh.duplicate()
+		cm.radius = t.body_radius
+		cm.height = t.body_height
+		body_mesh.mesh = cm
+	body_mesh.position.y = body_y
+	if body_mesh.material_override:
+		body_mesh.material_override = body_mesh.material_override.duplicate()
+
+	# Head hitbox + mesh. Kept tangent to the top of the capsule so the two
+	# volumes never overlap (headshot resolution depends on that).
+	head_hitbox.position.y = head_y
+	var hcol := head_hitbox.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if hcol and hcol.shape is SphereShape3D:
+		var hs: SphereShape3D = hcol.shape.duplicate()
+		hs.radius = t.head_radius
+		hcol.shape = hs
+	var hmesh := head_hitbox.get_node_or_null("HeadMesh") as MeshInstance3D
+	if hmesh and hmesh.mesh is SphereMesh:
+		var hm: SphereMesh = hmesh.mesh.duplicate()
+		hm.radius = t.head_radius
+		hm.height = t.head_radius * 2.0
+		hmesh.mesh = hm
+
+## Chase-entry screech. A player-facing tell only: deliberately NOT a
+## NoiseManager event, so it never pulls other zombies in.
+func _build_screech() -> void:
+	if zombie_type.sfx_chase_entry == "" or not ResourceLoader.exists(zombie_type.sfx_chase_entry):
+		return
+	_leap_screech = AudioStreamPlayer3D.new()
+	_leap_screech.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	_leap_screech.max_distance = 55.0
+	_leap_screech.unit_size = 6.0
+	_leap_screech.volume_db = 6.0
+	_leap_screech.position.y = 1.4
+	var res = load(zombie_type.sfx_chase_entry)
+	_leap_screech.stream = res
+	add_child(_leap_screech)
 
 func set_active(a: bool) -> void:
 	active = a
@@ -143,8 +220,10 @@ func set_active(a: bool) -> void:
 func _refresh_tint() -> void:
 	if body_mesh.material_override is StandardMaterial3D:
 		var m: StandardMaterial3D = body_mesh.material_override
-		# Dim/greyed while dormant during the day, sickly green when hunting.
-		m.albedo_color = Color(0.25, 0.6, 0.25) if active else Color(0.35, 0.38, 0.35)
+		# Dim/greyed while dormant during the day, variant colour when hunting.
+		# Dormant grey is shared on purpose — "asleep" should read the same for
+		# every variant; it's the ACTIVE silhouette that must be tellable apart.
+		m.albedo_color = zombie_type.albedo_active if active else Color(0.35, 0.38, 0.35)
 
 func _physics_process(delta: float) -> void:
 	# Brief white hit-flash fade back to the normal tint.
@@ -153,12 +232,22 @@ func _physics_process(delta: float) -> void:
 		if _hit_flash <= 0.0:
 			_refresh_tint()
 
+	if _leap_cooldown > 0.0:
+		_leap_cooldown -= delta
+
 	# Gravity keeps them grounded. Deliberately NOT short-circuited for FALLEN
 	# (unlike the old TRAPPED state) — a pit zombie must actually fall.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	elif velocity.y < 0.0:
 		velocity.y = 0.0
+
+	# A committed leap is resolved BEFORE the dormant check: dawn breaking
+	# mid-arc must not freeze a zombie in the air.
+	if state == State.LEAP:
+		_do_leap(delta)
+		move_and_slide()
+		return
 
 	# Dormant during the day (or before night activation): stand still.
 	if not active or GameManager.is_day():
@@ -182,6 +271,8 @@ func _physics_process(delta: float) -> void:
 			_do_fallen(delta)
 		State.ATTACK_STRUCTURE:
 			_do_attack_structure(delta)
+		State.LEAP_RECOVER:
+			_do_leap_recover(delta)
 
 	move_and_slide()
 	# After move_and_slide so cadence tracks ACTUAL movement — a zombie stuck
@@ -193,7 +284,7 @@ func _do_wander(delta: float) -> void:
 	# Pure roaming. Zombies never read the player's position here — a silent
 	# (crouching) player can pass right by. Chase is only entered through a
 	# confirmed contact (laser reveal or being shot).
-	_move_toward(_target_pos, WANDER_SPEED, delta)
+	_move_toward(_target_pos, zombie_type.move_speed_wander, delta)
 	if global_position.distance_to(_target_pos) < 1.2:
 		_pick_wander_target()
 
@@ -212,7 +303,7 @@ func _do_investigate(delta: float) -> void:
 		return
 
 	_investigate_timer -= delta
-	_move_toward(_target_pos, WANDER_SPEED, delta)
+	_move_toward(_target_pos, zombie_type.move_speed_wander, delta)
 	var arrived := global_position.distance_to(_target_pos) < 1.5
 	if arrived or _investigate_timer <= 0.0:
 		_investigating_laser = false
@@ -235,6 +326,7 @@ func _do_chase(delta: float) -> void:
 		_pick_wander_target()
 		return
 
+	_chase_elapsed += delta
 	var dist := global_position.distance_to(player.global_position)
 	if _has_los_to(player):
 		_last_known_player = player.global_position
@@ -251,6 +343,12 @@ func _do_chase(delta: float) -> void:
 		_target_pos = _last_known_player
 		return
 
+	# Blocked by something leapable? Going OVER beats going around or through,
+	# so this is evaluated before the break-the-wall fallback. Returns false
+	# outright for non-leapers, so the walker's path here is unchanged.
+	if _try_enter_leap(player):
+		return
+
 	# Walled in? Break through instead of milling against the sandbags.
 	_repath_check -= delta
 	if _repath_check <= 0.0:
@@ -258,7 +356,7 @@ func _do_chase(delta: float) -> void:
 		if not _player_reachable() and _try_enter_attack_structure():
 			return
 
-	_move_toward(player.global_position, CHASE_SPEED, delta)
+	_move_toward(player.global_position, _current_chase_speed(), delta)
 
 func _do_attack(delta: float) -> void:
 	var player = _get_player()
@@ -279,9 +377,9 @@ func _do_attack(delta: float) -> void:
 
 	_attack_timer -= delta
 	if _attack_timer <= 0.0:
-		_attack_timer = ATTACK_INTERVAL
+		_attack_timer = zombie_type.melee_cooldown
 		if player.has_method("take_damage"):
-			player.take_damage(ATTACK_DAMAGE, global_position)
+			player.take_damage(zombie_type.melee_damage, global_position)
 
 # --- Obstacle states -------------------------------------------------------
 ## Held in wire: immobile and permanent, but still dangerous at melee range.
@@ -296,8 +394,8 @@ func _do_entangled(delta: float) -> void:
 		_face(player.global_position)
 		_attack_timer -= delta
 		if _attack_timer <= 0.0:
-			_attack_timer = ATTACK_INTERVAL
-			player.take_damage(ATTACK_DAMAGE, global_position)
+			_attack_timer = zombie_type.melee_cooldown
+			player.take_damage(zombie_type.melee_damage, global_position)
 
 ## Fell into a ditch pit. NavigationAgent3D is never touched here — no target
 ## is ever set and get_next_path_position() is never called, so there is no
@@ -357,7 +455,7 @@ func _do_attack_structure(delta: float) -> void:
 	var point: Vector3 = _structure_target.nearest_point(global_position)
 	var dist := global_position.distance_to(point)
 	if dist > STRUCTURE_REACH:
-		_move_toward(point, CHASE_SPEED, delta)
+		_move_toward(point, _current_chase_speed(), delta)
 		return
 
 	velocity.x = 0.0
@@ -401,13 +499,230 @@ func _try_enter_attack_structure() -> bool:
 	state = State.ATTACK_STRUCTURE
 	return true
 
+# --- Chase speed ramp ------------------------------------------------------
+## Chase speed for this frame.
+##
+## Walker: acceleration_time and chase_entry_delay are both 0, so this
+## returns move_speed_chase on the very first frame of Chase — bit-identical
+## to the old `CHASE_SPEED` constant.
+##
+## Leaper: holds at WANDER speed for chase_entry_delay (the screech-and-lurch
+## tell — it has committed to you but hasn't wound up yet), then ramps to
+## full chase speed over acceleration_time.
+func _current_chase_speed() -> float:
+	var t := zombie_type
+	var top := t.resolved_chase_speed()
+	if t.chase_entry_delay <= 0.0 and t.acceleration_time <= 0.0:
+		return top
+	if _chase_elapsed < t.chase_entry_delay:
+		return t.move_speed_wander
+	if t.acceleration_time <= 0.0:
+		return top
+	var ramp: float = clampf(
+		(_chase_elapsed - t.chase_entry_delay) / t.acceleration_time, 0.0, 1.0)
+	return lerpf(t.move_speed_wander, top, ramp)
+
+# --- Leap ------------------------------------------------------------------
+## Vertical launch speed needed to reach the type's apex, straight from the
+## project's real gravity: v = sqrt(2 * g * h).
+func _leap_vertical_speed() -> float:
+	return sqrt(2.0 * gravity * zombie_type.jump_apex_height)
+
+## Time for the whole arc, launching and landing at the same height.
+func _leap_arc_time() -> float:
+	return 2.0 * _leap_vertical_speed() / gravity
+
+## Should we leap, and if so, launch. Returns true if a leap started.
+##
+## Every one of the five gate conditions must hold. The expensive ones (path
+## query, arc trace) are checked last so the common case — a leaper running
+## at an unobstructed player — costs almost nothing.
+func _try_enter_leap(player: Node3D) -> bool:
+	var t := zombie_type
+	# 1. can this variant leap at all, 2. is it off cooldown
+	if not t.can_leap or _leap_cooldown > 0.0:
+		return false
+
+	# 3. Is the path actually obstructed? Never leap at an open player: the
+	#    leap is traversal, not an attack. A straight run that the navmesh
+	#    agrees with means there is nothing to leap over.
+	var straight := global_position.distance_to(player.global_position)
+	if straight < 2.0 or straight > t.max_horizontal_distance * 2.5:
+		return false
+	if not _path_is_obstructed(player, t.leap_path_ratio_threshold):
+		return false
+
+	# 4. Is the obstruction close enough to clear?
+	var to_player := player.global_position - global_position
+	to_player.y = 0.0
+	var dir := to_player.normalized()
+	if not _obstruction_within(dir, t.max_horizontal_distance):
+		return false
+
+	# 5. Is there a clear arc to a real navmesh point on the far side?
+	var landing := _find_leap_landing(dir)
+	if landing == Vector3.INF:
+		return false
+
+	_launch_leap(landing)
+	return true
+
+## True when the navmesh route is meaningfully longer than the straight line
+## (it's detouring around something) or there's no route at all.
+func _path_is_obstructed(player: Node3D, ratio_threshold: float) -> bool:
+	var straight := global_position.distance_to(player.global_position)
+	if straight <= 0.01:
+		return false
+	var map := agent.get_navigation_map()
+	var target := NavigationServer3D.map_get_closest_point(map, player.global_position)
+	var path := NavigationServer3D.map_get_path(map, global_position, target, true)
+	if path.size() < 2:
+		return true   # no route at all — definitively blocked
+	# Path stops short of the player: blocked.
+	if path[path.size() - 1].distance_to(target) > 2.0:
+		return true
+	var walked := 0.0
+	for i in range(1, path.size()):
+		walked += path[i - 1].distance_to(path[i])
+	return walked / straight >= ratio_threshold
+
+## Is there solid geometry between us and the player, within `max_dist`?
+## Masks world geometry (layer 1) plus the ditch revetment / pit shells
+## (layer 6) — both are things worth jumping over.
+func _obstruction_within(dir: Vector3, max_dist: float) -> bool:
+	var space := get_world_3d().direct_space_state
+	var from := global_position + Vector3(0, 1.0, 0)
+	var q := PhysicsRayQueryParameters3D.create(from, from + dir * max_dist)
+	q.collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
+	q.exclude = [get_rid()]
+	return not space.intersect_ray(q).is_empty()
+
+## Find the furthest valid landing spot along `dir`, within the hard cap.
+## Returns Vector3.INF when nothing works.
+##
+## Searched far-to-near so the leaper clears the obstruction outright rather
+## than landing on top of it.
+func _find_leap_landing(dir: Vector3) -> Vector3:
+	var t := zombie_type
+	var map := agent.get_navigation_map()
+	var d: float = t.max_horizontal_distance
+	while d >= 2.0:
+		var probe := global_position + dir * d
+		var nav_point := NavigationServer3D.map_get_closest_point(map, probe)
+		# Must be REAL navmesh near where we aimed, not the nearest polygon
+		# half the map away — that's the "valid navmesh point" requirement.
+		var flat_off := Vector2(nav_point.x - probe.x, nav_point.z - probe.z).length()
+		if flat_off <= 1.5 and absf(nav_point.y - global_position.y) <= t.jump_apex_height * 0.5:
+			if _arc_is_clear(nav_point):
+				return nav_point
+		d -= 1.0
+	return Vector3.INF
+
+## Sample the parabola and make sure nothing intersects it. Without this a
+## leaper would happily launch into the underside of a roof.
+func _arc_is_clear(landing: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	var steps := 8
+	var start := global_position + Vector3(0, 1.0, 0)
+	var flat := landing - global_position
+	flat.y = 0.0
+	var dist := flat.length()
+	if dist < 0.01:
+		return false
+	var t_total := _leap_arc_time()
+	var vy := _leap_vertical_speed()
+	var prev := start
+	for i in range(1, steps + 1):
+		var f: float = float(i) / float(steps)
+		var tt: float = t_total * f
+		var y: float = vy * tt - 0.5 * gravity * tt * tt
+		var pt: Vector3 = start + flat * f + Vector3(0, y, 0)
+		var q := PhysicsRayQueryParameters3D.create(prev, pt)
+		q.collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
+		q.exclude = [get_rid()]
+		if not space.intersect_ray(q).is_empty():
+			return false
+		prev = pt
+	return true
+
+## Commit the arc. Horizontal speed is derived from the arc time and the
+## clamped distance, so total travel physically cannot exceed
+## max_horizontal_distance — the cap is enforced here, not merely aimed at.
+##
+## This is why a leap can never beat a run over the same ground: arc time is
+## fixed by the apex (independent of distance), so horizontal speed is
+## distance/arc_time, which at the 6m cap is well under chase speed. See
+## PROJECT_SPEC.md "Leaper" for the worked numbers.
+func _launch_leap(landing: Vector3) -> void:
+	var t := zombie_type
+	var flat := landing - global_position
+	flat.y = 0.0
+	var dist: float = minf(flat.length(), t.max_horizontal_distance)
+	var dir := flat.normalized()
+	var arc := _leap_arc_time()
+	var h_speed: float = dist / arc
+
+	state = State.LEAP
+	_leap_airborne = false
+	_leap_cooldown = t.jump_cooldown
+	agent.target_position = global_position   # park the agent; it steers nothing now
+	velocity = dir * h_speed + Vector3.UP * _leap_vertical_speed()
+	_face(global_position + dir)
+
+## Pure ballistics. NO mid-air steering, deliberately: the arc is committed at
+## launch, which makes an airborne leaper a predictable, high-value target.
+## Gravity was already applied this frame in _physics_process.
+func _do_leap(_delta: float) -> void:
+	if not _leap_airborne:
+		if not is_on_floor():
+			_leap_airborne = true
+		return
+	if is_on_floor():
+		state = State.LEAP_RECOVER
+		_leap_recover = zombie_type.landing_recovery
+		velocity.x = 0.0
+		velocity.z = 0.0
+
+## Immobile after touchdown, then back to the hunt.
+func _do_leap_recover(delta: float) -> void:
+	velocity.x = 0.0
+	velocity.z = 0.0
+	_leap_recover -= delta
+	if _leap_recover > 0.0:
+		return
+	# FALLBACK: landed somewhere the navmesh doesn't cover (a structure roof,
+	# say). Pathing can't rescue us from there, so re-leap immediately toward
+	# the player instead of stranding. The cooldown is waived for exactly this
+	# case — being stuck on a roof is worse than an off-cadence leap.
+	if not _on_navmesh():
+		var player = _get_player()
+		if player != null:
+			var away := player.global_position - global_position
+			away.y = 0.0
+			if away.length() > 0.5:
+				_leap_cooldown = 0.0
+				var landing := _find_leap_landing(away.normalized())
+				# No validated arc available — take the capped hop toward the
+				# player anyway. Anything is better than standing on a roof.
+				if landing == Vector3.INF:
+					landing = global_position + away.normalized() * zombie_type.max_horizontal_distance
+				_launch_leap(landing)
+				return
+	_enter_chase()
+
+## Is this zombie standing on navigable ground?
+func _on_navmesh() -> bool:
+	var map := agent.get_navigation_map()
+	var closest := NavigationServer3D.map_get_closest_point(map, global_position)
+	return closest.distance_to(global_position) <= 1.5
+
 # --- Obstacle hooks (called by the obstacles) ------------------------------
 func enter_entangled(wire) -> void:
 	if state == State.ENTANGLED or _dead:
 		return
 	_held_by = wire
 	state = State.ENTANGLED
-	_attack_timer = ATTACK_INTERVAL
+	_attack_timer = zombie_type.melee_cooldown
 
 ## Called by ZombieDitch's trigger. One-way: if the body is a zombie and isn't
 ## already fallen, transition it — the guard below is exactly that check.
@@ -420,6 +735,15 @@ func enter_fallen(_pit) -> void:
 
 func is_immobilised() -> bool:
 	return state == State.ENTANGLED or state == State.FALLEN
+
+## States where the zombie already has a confirmed fix on the player and must
+## not be redirected by an external stimulus. LEAP/LEAP_RECOVER are here
+## because a committed arc cannot be steered — see _do_leap(). Walkers never
+## reach those two, so this reads exactly as the old CHASE-or-ATTACK test for
+## them.
+func _is_committed() -> bool:
+	return state == State.CHASE or state == State.ATTACK \
+		or state == State.LEAP or state == State.LEAP_RECOVER
 
 ## Compounding and permanent — a mine survivor stays slow for the rest of its life.
 func apply_permanent_slow(mult: float) -> void:
@@ -488,7 +812,7 @@ func _get_player() -> Player:
 func _on_noise_emitted(position: Vector3, radius: float) -> void:
 	if not active or GameManager.is_day():
 		return
-	if state == State.CHASE or state == State.ATTACK:
+	if _is_committed():
 		return
 	# Entangled and trapped zombies aren't going anywhere.
 	if is_immobilised():
@@ -508,7 +832,7 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 func notice_laser_dot(dot_pos: Vector3) -> void:
 	if not active or GameManager.is_day() or _dead or is_immobilised():
 		return
-	if state == State.CHASE or state == State.ATTACK:
+	if _is_committed():
 		return   # already has a confirmed fix; the light tells it nothing new
 	state = State.INVESTIGATE
 	_investigating_laser = true
@@ -516,8 +840,15 @@ func notice_laser_dot(dot_pos: Vector3) -> void:
 	_target_pos = dot_pos
 
 func _enter_chase() -> void:
+	# Only a genuine entry (not a re-entry from leap recovery mid-chase) resets
+	# the acceleration ramp and fires the screech.
+	var fresh := state != State.CHASE and state != State.LEAP and state != State.LEAP_RECOVER
 	state = State.CHASE
 	_investigating_laser = false
+	if fresh:
+		_chase_elapsed = 0.0
+		if _leap_screech and _leap_screech.stream:
+			_leap_screech.play()
 	var player = _get_player()
 	if player:
 		_last_known_player = player.global_position
@@ -556,7 +887,13 @@ func _update_footsteps(delta: float) -> void:
 
 	# Cadence derived from real velocity: interpolate the two anchors between
 	# wander and chase speed, so a chasing zombie steps faster in real time.
-	var t: float = clampf(inverse_lerp(WANDER_SPEED, CHASE_SPEED, speed), 0.0, 1.0)
+	# Anchors are the variant's speed RANGE, not the instantaneous ramped
+	# speed: during the leaper's chase-entry delay the current speed equals
+	# wander speed, and inverse_lerp(a, a, v) is a divide-by-zero. maxf keeps
+	# that true even if a variant is ever configured with chase <= wander.
+	var top: float = maxf(zombie_type.resolved_chase_speed(),
+		zombie_type.move_speed_wander + 0.01)
+	var t: float = clampf(inverse_lerp(zombie_type.move_speed_wander, top, speed), 0.0, 1.0)
 	_step_timer = lerpf(step_interval_wander, step_interval_chase, t)
 
 	_footstep_player.stream = _footstep_samples[randi() % _footstep_samples.size()]
@@ -580,7 +917,11 @@ func take_damage(amount: int, headshot: bool) -> int:
 	_flash_white()
 	# Being shot is a confirmed contact — start chasing the shooter, unless
 	# we're held fast, in which case there's nowhere to go.
-	if active and not GameManager.is_day() and not is_immobilised():
+	# Airborne/recovering leapers are excluded specifically: the arc is
+	# committed, and yanking them into Chase mid-flight would cancel it.
+	# Walkers never enter those states, so this is a no-op for them.
+	if active and not GameManager.is_day() and not is_immobilised() \
+			and state != State.LEAP and state != State.LEAP_RECOVER:
 		_enter_chase()
 	if hp <= 0:
 		_die()
@@ -602,6 +943,8 @@ func state_name() -> String:
 		State.ENTANGLED: return "ENTANGLED"
 		State.FALLEN: return "FALLEN"
 		State.ATTACK_STRUCTURE: return "ATTACK_STRUCTURE"
+		State.LEAP: return "LEAP"
+		State.LEAP_RECOVER: return "LEAP_RECOVER"
 		_: return "UNKNOWN(%d)" % state
 
 ## Toggle translucent hitbox volumes (debug affordance).
@@ -615,21 +958,24 @@ func _build_hitbox_debug() -> void:
 	_hitbox_debug = Node3D.new()
 	add_child(_hitbox_debug)
 
+	# Driven by the variant, not hardcoded — otherwise F4 would draw walker
+	# volumes around a leaper and misreport exactly what it exists to verify.
+	var t := zombie_type
 	var body_vis := MeshInstance3D.new()
 	var bm := CapsuleMesh.new()
-	bm.radius = 0.4
-	bm.height = 1.56
+	bm.radius = t.body_radius
+	bm.height = t.body_height
 	body_vis.mesh = bm
-	body_vis.position = Vector3(0, 0.78, 0)
+	body_vis.position = Vector3(0, t.body_center_y(), 0)
 	body_vis.material_override = _debug_material(Color(0.2, 0.6, 1.0, 0.25))
 	_hitbox_debug.add_child(body_vis)
 
 	var head_vis := MeshInstance3D.new()
 	var hm := SphereMesh.new()
-	hm.radius = 0.12
-	hm.height = 0.24
+	hm.radius = t.head_radius
+	hm.height = t.head_radius * 2.0
 	head_vis.mesh = hm
-	head_vis.position = Vector3(0, 1.68, 0)
+	head_vis.position = Vector3(0, t.head_center_y(), 0)
 	head_vis.material_override = _debug_material(Color(1.0, 0.9, 0.1, 0.45))
 	_hitbox_debug.add_child(head_vis)
 
@@ -660,7 +1006,7 @@ func _die() -> void:
 	if _held_by and is_instance_valid(_held_by):
 		_held_by.release(self)
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
-	PointsManager.add_points(3 if last_hit_headshot else 1)
+	PointsManager.add_points(zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill)
 	# Shots-to-kill telemetry for tuning the HP step size.
 	print("[Night %d] zombie down — maxHP %d, shots: %d head + %d body = %d total (killing blow: %s)" % [
 		GameManager.night_number, max_hp, _hits_head, _hits_body,

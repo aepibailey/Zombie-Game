@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="ZombieType" load_steps=2 format=3]
+
+; The leaper. Fragile and fast, but the leap is TRAVERSAL, not a pounce —
+; see PROJECT_SPEC.md "Leaper" for the worked ballistics proving a leap can
+; never close ground faster than running it.
+;
+;   move_speed_wander matches the walker exactly (1.6): a leaper must be
+;   indistinguishable from a walker BY MOVEMENT until it enters Chase. The
+;   silhouette is the only pre-Chase tell.
+;
+;   move_speed_chase is left at the walker default and IGNORED, because
+;   chase_speed_sprint_fraction is non-zero — chase speed resolves at runtime
+;   to 0.85 x the player's sprint constant so the two can never drift apart.
+
+[ext_resource type="Script" path="res://scripts/ZombieType.gd" id="1_ztype"]
+
+[resource]
+script = ExtResource("1_ztype")
+id = "leaper"
+display_name = "Leaper"
+max_health = 60
+points_body_kill = 3
+points_headshot_kill = 5
+move_speed_wander = 1.6
+move_speed_chase = 3.6
+chase_speed_sprint_fraction = 0.85
+acceleration_time = 1.2
+chase_entry_delay = 0.5
+melee_damage = 20
+melee_cooldown = 1.0
+can_leap = true
+jump_apex_height = 5.0
+max_horizontal_distance = 6.0
+jump_cooldown = 3.0
+landing_recovery = 0.35
+leap_path_ratio_threshold = 1.6
+body_radius = 0.28
+body_height = 1.94
+head_radius = 0.12
+albedo_active = Color(0.72, 0.66, 0.3, 1)
+sfx_chase_entry = "res://assets/audio/zombie/leaper_screech.wav"

@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="ZombieType" load_steps=2 format=3]
+
+; The original walker. Every value here is the constant it replaced in
+; Zombie.gd, unchanged — this resource exists to make the refactor a no-op
+; for the walker, not to retune it.
+;   acceleration_time / chase_entry_delay are 0.0 because the walker never
+;   had a ramp or a delay: _move_toward set velocity directly.
+;   can_leap is false, so the whole leap subsystem is skipped for walkers.
+
+[ext_resource type="Script" path="res://scripts/ZombieType.gd" id="1_ztype"]
+
+[resource]
+script = ExtResource("1_ztype")
+id = "walker"
+display_name = "Walker"
+max_health = 100
+points_body_kill = 1
+points_headshot_kill = 3
+move_speed_wander = 1.6
+move_speed_chase = 3.6
+chase_speed_sprint_fraction = 0.0
+acceleration_time = 0.0
+chase_entry_delay = 0.0
+melee_damage = 20
+melee_cooldown = 1.0
+can_leap = false
+jump_apex_height = 5.0
+max_horizontal_distance = 6.0
+jump_cooldown = 3.0
+landing_recovery = 0.35
+leap_path_ratio_threshold = 1.6
+body_radius = 0.4
+body_height = 1.56
+head_radius = 0.12
+albedo_active = Color(0.25, 0.6, 0.25, 1)
+sfx_chase_entry = ""

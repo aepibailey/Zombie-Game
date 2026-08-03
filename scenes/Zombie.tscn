@@ -1,6 +1,7 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/Zombie.gd" id="1_zombie"]
+[ext_resource type="Resource" path="res://resources/zombie_walker.tres" id="2_walker"]
 
 [sub_resource type="CapsuleShape3D" id="bodyshape"]
 radius = 0.4
@@ -28,6 +29,7 @@ emission_energy_multiplier = 2.5
 
 [node name="Zombie" type="CharacterBody3D"]
 script = ExtResource("1_zombie")
+zombie_type = ExtResource("2_walker")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78, 0)
