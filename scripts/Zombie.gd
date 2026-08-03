@@ -130,6 +130,7 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 2
 
 func _ready() -> void:
 	add_to_group("zombies")
+	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
 	# A hand-placed zombie with no type assigned still has to work.
 	if zombie_type == null:
 		zombie_type = load(DEFAULT_TYPE)
@@ -926,6 +927,27 @@ func take_damage(amount: int, headshot: bool) -> int:
 	if hp <= 0:
 		_die()
 	return dmg
+
+## Uniform blast entry point (AreaDamageSystem convention).
+##
+## Explosions are never headshots — frag doesn't care where it lands, and
+## routing this through take_damage(amount, headshot) directly would be a
+## silent bug: a Vector3 origin binds to `headshot` and is truthy, doubling
+## every blast. Immobilised zombies (FALLEN in a ditch, ENTANGLED in wire)
+## take this normally; nothing here checks state.
+func take_area_damage(amount: int, _origin: Vector3) -> void:
+	take_damage(amount, false)
+
+## World-space points the blast tests line of sight against, sized to this
+## variant's actual silhouette so a tall leaper is harder to fully cover than
+## a walker. Feet / centre of mass / head.
+func area_damage_points() -> Array:
+	var t := zombie_type
+	return [
+		global_position + Vector3(0.0, 0.2, 0.0),
+		global_position + Vector3(0.0, t.body_center_y(), 0.0),
+		global_position + Vector3(0.0, t.head_center_y(), 0.0),
+	]
 
 ## True until this zombie has actually died. `queue_free()` is deferred, so a
 ## corpse stays instance-valid for the rest of the frame — callers must use

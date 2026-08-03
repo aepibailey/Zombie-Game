@@ -50,6 +50,11 @@ const KEY_NVG_TOGGLE := KEY_G
 const KEY_DEBUG_AUDIO := KEY_F3
 # Debug: translucent head/body hitbox volumes on every zombie.
 const KEY_DEBUG_HITBOX := KEY_F4
+## Debug: detonate a test blast at the player's feet, to exercise the shared
+## area-damage system without needing a thrown grenade. Safe to remove once
+## grenades are in the player's hands.
+const KEY_DEBUG_BLAST := KEY_F5
+const DEBUG_BLAST_PROFILE := preload("res://resources/frag_grenade.tres")
 
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
@@ -825,6 +830,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hitbox_debug_on = not _hitbox_debug_on
 		_apply_hitbox_debug()
 		_hud.show_message("Hitbox debug " + ("ON" if _hitbox_debug_on else "OFF"))
+		return
+	if event.keycode == KEY_DEBUG_BLAST:
+		# Faction-blind by design: this will hurt the player too.
+		var r: Dictionary = AreaDamageSystem.detonate(
+			player.global_position, DEBUG_BLAST_PROFILE, Vector3.ZERO, "debug")
+		_hud.show_message("DEBUG BLAST — %d actors, %d killed, %d structures" % [
+			r.get("actors", 0), r.get("killed", 0), r.get("structures", 0)])
 		return
 	if _hud and _hud.all_clear_visible():
 		if event.keycode == KEY_SKIP_TO_DAY:

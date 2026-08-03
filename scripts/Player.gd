@@ -263,6 +263,9 @@ var _sfx_impact: AudioStreamPlayer
 
 func _ready() -> void:
 	add_to_group("player")
+	# Faction-blind: the area-damage system hits everything in this group,
+	# including whoever threw the grenade.
+	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
 	# Collide with the world (layer 1) AND player-only barriers (layer 5, used
 	# by C-wire). Zombies mask layer 1 only, so wire stops us and not them.
 	collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER | Obstacle.SOLID_NO_NAV_LAYER
@@ -1315,6 +1318,22 @@ func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 	return p
 
 # --- Damage / life --------------------------------------------------------
+## Uniform blast entry point (AreaDamageSystem convention). The player is in
+## the `damageable` group like everything else — a blast has no idea who threw
+## it, so your own grenade at your own feet will kill you.
+func take_area_damage(amount: int, origin: Vector3) -> void:
+	take_damage(amount, origin)
+
+## Line-of-sight sample points for a blast: feet / chest / head. Uses the live
+## head height so crouching behind sandbags genuinely reduces exposure.
+func area_damage_points() -> Array:
+	var head_y: float = head.position.y
+	return [
+		global_position + Vector3(0.0, 0.2, 0.0),
+		global_position + Vector3(0.0, head_y * 0.55, 0.0),
+		global_position + Vector3(0.0, head_y, 0.0),
+	]
+
 func take_damage(amount: int, source_pos = null) -> void:
 	hp = maxi(0, hp - amount)
 	health_changed.emit(hp, MAX_HP)

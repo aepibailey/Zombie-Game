@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="AreaDamageProfile" load_steps=2 format=3]
+
+; Hand grenade — the first consumer of the shared area-damage system.
+;
+; obstacle_damage_mult is 0.25 deliberately: 110 damage against a 4000 HP
+; sandbag section is already a rounding error, and frag is anti-personnel,
+; not a breaching charge. It should visibly mark a wall, not threaten it.
+; The 120mm mortar is where a high obstacle multiplier belongs.
+;
+; blocked_damage_mult 0.0 = intact cover is total protection, which is what
+; makes sandbags tactically meaningful against grenades.
+
+[ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
+
+[resource]
+script = ExtResource("1_adp")
+id = "frag_grenade"
+display_name = "Hand Grenade"
+lethal_radius = 5.0
+max_radius = 12.0
+max_damage = 110
+falloff = 1
+arc_degrees = 360.0
+blocked_damage_mult = 0.0
+damages_obstacles = true
+obstacle_damage_mult = 0.25
+duration = 0.0
+tick_interval = 0.5
+sfx_detonate = "res://assets/audio/fx/grenade_blast.wav"
+noise_radius = 55.0
