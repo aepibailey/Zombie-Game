@@ -22,6 +22,7 @@ var destroyed := false
 var _mat: StandardMaterial3D
 var _sfx: AudioStreamPlayer3D
 var _sfx_cooldown := 0.0
+var _health_bar: HealthBar3D
 
 func setup(t) -> void:
 	super.setup(t)
@@ -30,6 +31,11 @@ func setup(t) -> void:
 	_mat = _visual.material_override
 	_build_audio()
 	_refresh_damage_state()
+	# Generic component: it just needs `health`/`max_health` (this object's
+	# own property names, the default) and a bounding size for positioning —
+	# it has no idea it's specifically a sandbag.
+	_health_bar = HealthBar3D.new()
+	_health_bar.attach_to(self, t.size)
 
 func _build_audio() -> void:
 	_sfx = AudioStreamPlayer3D.new()
@@ -62,6 +68,15 @@ func take_structure_damage(amount: float, from: Vector3) -> void:
 	if destroyed:
 		return
 	health = maxf(0.0, health - amount)
+	# Remaining HP, not just damage applied: this is what makes it possible to
+	# confirm from the log alone whether a GIVEN segment is actually close to
+	# dying, versus a neighbouring segment in a multi-segment wall taking the
+	# hit instead. Sections are visually identical and default-named, so
+	# without this the log can't distinguish "this one nearly dead" from
+	# "a different one 8m away took the blast".
+	print("[SANDBAG] %s#%d @ (%.1f,%.1f,%.1f) — %.0f dmg, %.0f/%.0f HP left" % [
+		name, get_instance_id(), global_position.x, global_position.y, global_position.z,
+		amount, health, max_health])
 	_play_impact(from)
 	_refresh_damage_state()
 	if health <= 0.0:
@@ -106,6 +121,25 @@ func repair() -> void:
 
 func _destroy() -> void:
 	destroyed = true
+	print("[SANDBAG] %s#%d @ (%.1f,%.1f,%.1f) — DESTROYED" % [
+		name, get_instance_id(), global_position.x, global_position.y, global_position.z])
+	# queue_free() is DEFERRED — it frees at the end of the current frame, not
+	# immediately. Hiding the mesh and disabling the collision HERE, rather
+	# than relying on the deferred free alone, closes the one-frame gap where
+	# a section would otherwise still render and still block shots/movement
+	# after being logged as destroyed. Belt-and-suspenders: static review of
+	# the destroy path found the deferred free correctly tears down the whole
+	# subtree (mesh and collision are children of this node, not siblings),
+	# so this isn't expected to be the actual cause — see PROJECT_SPEC.md for
+	# the real diagnosis — but it removes any doubt going forward.
+	if _visual:
+		_visual.visible = false
+	if _solid:
+		for c in _solid.get_children():
+			if c is CollisionShape3D:
+				c.set_deferred("disabled", true)
+	if _health_bar:
+		_health_bar.visible = false
 	destroyed_section.emit(self)
 	queue_free()
 
