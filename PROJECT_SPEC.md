@@ -440,6 +440,13 @@ Configuration:
 - Loud blast plus a **60m noise event** — the field announcing itself and pulling more zombies in is intended.
 - **Known property, deliberate:** 125 one-shots a baseline zombie, but zombie HP reaches 132 by night 9 under the current scaling curve, so **from night 9 the minefield wounds rather than kills.** Left as-is pending playtest.
 
+> **V2 — zombie variants.** Stats are no longer hardcoded: they live in
+> `ZombieType` resources (`resources/zombie_walker.tres`,
+> `zombie_leaper.tres`), and a second variant (the Leaper, with a LEAP state)
+> now exists. See **[PATROL_BASE_ZERO_V2_SPEC.md](PATROL_BASE_ZERO_V2_SPEC.md)**
+> for the resource architecture, leaper stats, leap ballistics and spawn mix.
+> The walker's behaviour is unchanged by that refactor.
+
 ### Zombie states & speed modifiers (implemented)
 Added to Wander / Investigate / Chase / Attack:
 - **Entangled** — stationary, alive, attacks at melee range. Immune to noise and laser events.
