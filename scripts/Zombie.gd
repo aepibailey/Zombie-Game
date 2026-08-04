@@ -439,8 +439,17 @@ func _do_fallen(delta: float) -> void:
 
 ## No route to the player, so break the wall instead. Re-evaluates pathing
 ## periodically and abandons the wall the moment a gap opens elsewhere.
+##
+## Checks `.destroyed` explicitly, not just is_instance_valid(): sandbag
+## sections used to queue_free() on destruction, so invalidation was the
+## re-acquire signal. They now persist (destroyed-but-repairable, so the
+## player can rebuild a wall), so a destroyed panel stays instance-valid
+## forever — without this check a zombie would stand at a pile of rubble
+## "attacking" it indefinitely instead of re-acquiring or walking through
+## the gap it just made.
 func _do_attack_structure(delta: float) -> void:
-	if _structure_target == null or not is_instance_valid(_structure_target):
+	if _structure_target == null or not is_instance_valid(_structure_target) \
+			or _structure_target.destroyed:
 		_structure_target = null
 		_enter_chase()
 		return

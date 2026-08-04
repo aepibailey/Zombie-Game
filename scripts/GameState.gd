@@ -17,9 +17,10 @@ var points: int = 0
 
 var _captured := false
 
-## Walk the live obstacle list and snapshot it. Destroyed sandbag sections are
-## already gone from the roster, so they're simply absent — which is exactly
-## the "destroyed sections stay destroyed" rule.
+## Walk the live obstacle list and snapshot it. A sandbag wall stays in the
+## roster even fully breached — it's repairable, never removed — so its
+## to_dict() carries per-section health/destroyed state for all 5 panels
+## rather than the wall simply being absent.
 func capture(placed: Array) -> void:
 	obstacles.clear()
 	for o in placed:

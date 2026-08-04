@@ -32,7 +32,7 @@ func _ready() -> void:
 		"id": "sandbags", "display_name": "Sandbags", "cost": 10,
 		"size": Vector3(10, 1, 0.5), "color": Color(0.62, 0.56, 0.34),
 		"solid": true, "blocks_pathing": true,
-		"description": "10m wall, 1m tall. Destructible. You can mantle it; they can't.",
+		"description": "10m wall, 1m tall, 5 repairable sections. You can mantle it; they can't.",
 	})
 	_add({
 		"id": "cwire", "display_name": "Triple-strand C-wire", "cost": 40,
@@ -73,7 +73,7 @@ func create(id: String) -> Obstacle:
 		return null
 	var o: Obstacle
 	match id:
-		"sandbags": o = SandbagSection.new()
+		"sandbags": o = SandbagWall.new()
 		"cwire": o = CWireSection.new()
 		"ditch": o = ZombieDitch.new()
 		"minefield": o = Minefield.new()

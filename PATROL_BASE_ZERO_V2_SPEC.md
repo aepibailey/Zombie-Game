@@ -247,3 +247,187 @@ blank:
 > shots. The headshot one-shot is robust at every night through 12 (120 dmg vs
 > 100 HP). Worth deciding whether the base-60 one-shot is intended before
 > either value is retuned.
+
+---
+
+## 3. Sandbags: 5-section obstacle
+
+The sandbag obstacle was a single 4000 HP object, destroyed and freed as one
+10m piece. It's now **`SandbagWall`** (`scripts/SandbagWall.gd`, extends
+`Obstacle`) — a placement/pricing/footprint/persistence registry holding no
+health of its own — aggregating 5 **`SandbagPanel`** (`scripts/SandbagPanel.gd`,
+plain `Node3D`, not an `Obstacle` subclass) sections, each independently
+destructible, each 2m of the wall's 10m length.
+
+**Why a plain `Node3D` for the panel, not another `Obstacle`:** `Obstacle`
+owns placement/footprint/pricing/persistence concerns that belong to the
+*wall* — the thing actually bought and placed — not to one fifth of it. A
+panel is purely a destructible geometry+health unit the wall constructs.
+
+**Why this needed almost no changes to the systems that damage sandbags.**
+`AreaDamageSystem._damage_structures()` and `Zombie._try_enter_attack_structure()`
+already iterated *every* member of the `"sandbags"` group independently,
+judging each by its own `nearest_point()`/distance — that was already
+correct, generic code. Sectioning the sandbag was entirely a property of
+**what's in the group**: panels join `"sandbags"` directly (the wall does
+not), so both consumers now operate at per-section granularity automatically.
+Neither file needed a code change.
+
+**The one place that genuinely needed a fix, not just a reclassification:**
+`Zombie._do_attack_structure()`'s guard for "has my target become invalid"
+was `not is_instance_valid(_structure_target)`. The old sandbag queue_free()'d
+itself on destruction, so invalidation *was* the re-acquire signal. Panels now
+persist even when destroyed (see below — a wall must stay repairable), so a
+destroyed panel stays `is_instance_valid() == true` forever, and without a
+fix a zombie would stand at a pile of rubble "attacking" it indefinitely
+instead of re-acquiring or walking through the gap it just made. Fixed by
+checking `_structure_target.destroyed` explicitly alongside validity.
+
+### Health tuning
+
+```gdscript
+## ALTERNATIVE (uncomment to use instead — same total-wall cost, no length
+## discount, i.e. durability roughly matches the old 4000 HP wall spread
+## across 5 tougher sections):
+## @export var section_health: float = 4000.0 * 0.25          # 1000/section
+@export var section_health: float = 4000.0 * 0.25 / 5.0        # 200/section
+```
+
+| | Per section | Whole wall (×5) | vs old 4000 HP |
+|---|---|---|---|
+| **Primary (active)** | 200 HP | 1000 HP | **25%** |
+| Alternative (commented) | 1000 HP | 5000 HP | 125% |
+
+The primary formula is a real durability cut, not just a granularity change,
+because each section is also 1/5 the material — at the zombie siege rate
+(15 dmg/1.2s = 12.5 dps), **one section falls to a single zombie in ~16s**,
+and a full sequential 5-section breach takes **~80s**, down from the old
+wall's ~320s. Reported here rather than silently retuned further — if this
+reads as too fragile once played, the alternative line above restores
+roughly the old per-length durability with one edit.
+
+### Damage routing
+
+- **Zombie melee:** `_try_enter_attack_structure()` picks the nearest panel
+  (by `nearest_point()`) across every wall's panels, same generic search as
+  before. `_do_attack_structure()` re-checks reachability periodically and
+  now *also* re-checks `_structure_target.destroyed` every frame (the fix
+  above) — a zombie whose panel dies re-acquires the next intact one, or
+  finds the player newly reachable through the gap, whichever the existing
+  reachability check decides first.
+- **Explosives (`AreaDamageSystem`):** no changes needed. Every panel within
+  blast radius is damaged independently, exactly per its own distance —
+  this was already the system's behaviour once panels replaced one wall
+  object in the `"sandbags"` group.
+- **Player fire:** unchanged — bullets hit whichever panel's collision shape
+  is actually in the way; a destroyed panel has no collision shape enabled,
+  so rounds pass through the gap.
+
+### Destruction
+
+At 0 HP a panel (`SandbagPanel._destroy()`):
+- **Disables its `CollisionShape3D`** (`set_deferred`, since this can fire
+  from inside a physics query callback — a zombie's melee hit or an
+  area-damage raycast pass) — zombies path through the resulting gap on the
+  next navmesh rebake.
+- **Does not free itself.** Unlike the old wall, a destroyed panel must
+  persist and stay repairable. `_visual` swaps to a flattened, sunk copy of
+  the SAME box mesh (scale `(1.05, 0.12, 1.05)`, sunk to `size.y * 0.06`) —
+  no new art, and deliberately more collapsed than the "critical" standing
+  state (0.7 vertical scale) so it silhouettes as gone, not merely hurt.
+- **Never touches a neighbour.** Panels share no adjacency link; damage and
+  destruction are purely local to the panel hit.
+- **Persists across the day/night boundary** via `SandbagWall.to_dict()`,
+  which serialises all 5 panels' `{health, destroyed}` (not a single float —
+  see Persistence below).
+
+If every panel is destroyed, `SandbagWall.active` flips to `false`
+(`_refresh_active()`, called on any panel's `changed` signal) — the wall
+itself is **never freed**, its footprint stays reserved on the placement
+grid, and it's still fully repairable. Repairing any panel flips `active`
+back to `true`.
+
+### Visual readability
+
+Four states per panel (`_refresh_visual_state()`), tint + vertical sag,
+reusing the wall's original two thresholds:
+
+| State | Health | Tint | Vertical scale |
+|---|---|---|---|
+| Intact | > 66% | base colour | 1.0 |
+| Damaged | 33–66% | darkened 25%, warmed | 0.88 |
+| Critical | < 33%, still standing | darkened 50%, warmed | 0.7 |
+| Destroyed | 0, rubble | darkened 70%, desaturated | **0.12**, sunk |
+
+Both cues read under the NVG green tint by construction, not by luck: tint is
+a **brightness** change (`darkened()`), and the NVG overlay is a translucent
+green multiply that preserves relative brightness — a hue-coded scheme
+(red/yellow/green) would wash toward monochrome under it, a
+darkness-graded one doesn't. Sag is a **geometric silhouette** change,
+entirely independent of colour grading, so it reads identically in daylight,
+NVG, or a hue this scheme didn't anticipate. Repair calls
+`_refresh_visual_state()` fresh from full health — there's no incremental
+tint/scale blending to leave a residue, so a repaired panel returns to
+exactly the intact state with nothing left over.
+
+**Deliberately no per-panel health bar.** `HealthBar3D` (built for the
+whole-wall version) is generic and still exists, but 5 simultaneous floating
+bars on one wall was judged clutter beyond what tint+sag already reads as —
+matching the brief's own "tint plus a small vertical sag is sufficient."
+Left wired up for nothing today; the right tool for a future single-object
+destructible (a gate, say) where one bar per object is exactly right again.
+
+### Repair
+
+Reuses the existing interact/selection pattern — right-click under the
+cursor in build mode — rather than a new UI paradigm. The old flow
+immediately repaired a single flat health value on right-click; a wall is
+now 5 independently-priced repairs plus a summed total, which doesn't fit a
+one-line message, so right-clicking a sandbag wall now **opens a panel**
+(top-right, mirroring the palette's position on the left) instead of
+repairing immediately. Right-clicking a minefield still replenishes
+immediately, unchanged — a single flat action still fits the old pattern.
+
+The panel lists all 5 sections (`Section N — STATE (health/max)`), each with
+its own repair button, plus a summed **Repair All**. Escape closes the panel
+first if one is open, and only closes build mode itself on a second press or
+when nothing is open; right-clicking empty ground also closes it (mirrors
+the palette's click-to-deselect).
+
+```gdscript
+## PRIMARY: ceil(wall_price / 5). Set for real from the catalog price in
+## SandbagWall.setup(); 10 pts / 5 = 2 pts per section.
+@export var section_repair_cost: int = 2
+```
+
+- **Destroyed section:** costs the full `section_repair_cost` (2 pts) —
+  falls out of the same formula as "damaged", since missing HP / max HP = 1.0
+  in that case; no special-cased branch.
+- **Damaged-but-standing:** `ceil(section_repair_cost × missing_fraction)`,
+  minimum 1 point (`SandbagPanel.repair_cost()`).
+- **Repair All**, all 5 destroyed: `5 × 2 = 10 pts` — **exactly the wall's
+  10 pt placement price.** Not a bug, but worth knowing: fully rebuilding a
+  breached wall currently costs the same as placing a brand new one
+  elsewhere. Flagged, not silently adjusted.
+- **Every repair button is always visible and priced**, disabled (not
+  hidden) when unaffordable — `font_color_disabled` red, matching the store
+  UI's existing convention (`SupplyCrateUI._add_row`) rather than inventing
+  a new disabled-state treatment.
+- Points spend through `PointsManager.spend_points()` — the same call every
+  other purchase and the old whole-wall repair already used. No new
+  transaction path.
+- Build mode only opens during Day (unchanged, pre-existing gate at the
+  Engineers' Tent), so "no repair during Night" holds without any extra
+  check in the repair path itself. No repair-count limit is enforced.
+
+### Persistence
+
+`SandbagWall.to_dict()` serialises `{health, destroyed}` for all 5 panels as
+an array (`"sections"`), not a single float — a wall chewed to 40% on one
+section and untouched on the other four restores exactly that split, not an
+average. `GameState`/`BuildMode.adopt()` needed **no changes**: both already
+call `to_dict()`/`apply_dict()` polymorphically through the `Obstacle`
+interface, so a wall's richer per-section payload flows through the existing
+generic pipeline unmodified. A restored wall's `active` flag is recomputed
+from the restored panel states (`apply_dict()` → `_refresh_active()`), not
+itself persisted.

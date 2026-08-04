@@ -399,16 +399,22 @@ Configuration:
 
 ### The obstacles (implemented)
 
-**Sandbags — 10 pts, destructible.** 10 × 1 × 0.5m. Each section is independent; damage never spreads between sections, so a breach opens exactly one gap.
-- **4000 HP** (`max_health`). Zombies deal **15 damage per 1.2s** (`structure_damage` / `structure_attack_interval` on Zombie) — deliberately separate from the 20 damage they deal the player, so anti-structure and anti-player pacing tune independently.
-- That's **12.5 dps each**: one zombie needs ~320s (longer than a 120s night); eight need ~40s. Turtling is viable, but a mass will come through.
-- **Three visual damage states** at >66% / >33% / below — colour darkens and the wall visibly slumps. Not decoration: an enclosed player needs to see which section is about to fail.
-- **Spatialised impact audio** at the point being worked (not the section centre), rate-limited per section so eight attackers read as busier rather than as sixty overlapping samples.
-- Solid collision on layer 1, so it blocks zombies, blocks the player, **and stops bullets** — and at 1m it's well under the 2.0m mantle limit, so the player can climb it while zombies must go around or through. Zombies at the wall can still reach a player standing behind or on top of it.
-- **Repair** in build mode: right-click a damaged section. Cost is `full_cost × (missing HP / max HP)`. Destroyed sections are gone and must be rebought.
-- **World-space health bar** (implemented, `HealthBar3D.gd`) — billboarded, hidden at full HP, appears on damage, fades ~4s after the last hit and reappears on the next one. Width and vertical offset scale with the object's own bounds rather than a fixed number. Shows a numeric `current/max` readout while playtesting (`show_numeric`, trivial to flip off later). Built as a generic component — `attach_to(owner, bounds)` polls whatever `health`/`max_health` properties already exist on the owner, so it isn't sandbag-specific and any future destructible gets a working bar for three lines of code, not a subclass.
-- **`take_structure_damage()` now logs remaining HP, and `_destroy()` logs an explicit `DESTROYED` line** — both include the section's exact position and instance id. Added while diagnosing a report of "destruction logged, sandbag still looks intact": every segment previously logged only as `SandbagSection`, indistinguishable from any other segment in a multi-segment wall, which made it impossible to confirm from the log alone *which* segment a hit applied to.
-  > **Diagnosis.** Code review of the destroy path itself found no defect: `_destroy()` calls a real `queue_free()` (not just a flag) on the node whose mesh and collision *are* children of it, not siblings, and Godot removes freed nodes from `get_nodes_in_group()` queries automatically. The far more likely explanation, given BuildMode explicitly shrinks the placement-overlap test box 4% *"so obstacles can sit flush against each other"*: **multiple 10m segments placed end-to-end read as one continuous wall, but a blast only reaches the segment(s) within its own radius.** A grenade (5m lethal / 12m max) centred on one segment can fully destroy it while a neighbour one segment further along — visually part of "the same wall" — sits outside the 12m max radius entirely and takes zero damage, not partial damage: genuinely indistinguishable from "intact." `_destroy()` also now hides the mesh and disables the collision synchronously, ahead of the deferred `queue_free()`, closing a real (if minor) same-frame gap — not the reported bug's root cause, but a legitimate hardening regardless.
+**Sandbags — 10 pts, destructible.** 10 × 1 × 0.5m overall footprint (unchanged on the placement grid). Solid collision on layer 1, so it blocks zombies, blocks the player, **and stops bullets** — and at 1m it's well under the 2.0m mantle limit, so the player can climb it while zombies must go around or through. Zombies at the wall can still reach a player standing behind or on top of it.
+
+> **V2 — sandbags are now 5 independent sections, not one object.** The
+> original single 4000 HP wall (destroyed and freed as one 10m piece) is
+> superseded — a breach now opens exactly one 2m gap, not the whole wall, and
+> a fully-breached wall stays in the world, repairable, rather than vanishing.
+> See **[PATROL_BASE_ZERO_V2_SPEC.md](PATROL_BASE_ZERO_V2_SPEC.md)** section 3
+> for per-section health/repair pricing, the destruction/rubble visual state,
+> the per-section repair panel (build mode, right-click), and why this needed
+> almost no changes to the systems that damage sandbags (`AreaDamageSystem`,
+> zombie melee) — they already operated generically on group membership.
+> Spatialised impact audio (rate-limited per section) and remaining-HP/
+> DESTROYED console logging (with exact position + instance id, added to
+> diagnose an earlier "destroyed but still looks intact" report caused by
+> multiple sections reading as one continuous wall) both carry over unchanged,
+> now scoped to the panel rather than the whole wall.
 
 **Triple-strand C-wire — 40 pts, permanent, indestructible.** 10 × 1.8 × 1m.
 - Holds **4** zombies (`capacity`) permanently as **Entangled** — alive, immobile, and still able to swing if the player comes within melee range. Don't hug your own wire.
@@ -463,13 +469,12 @@ Obstacles survive between nights, and — the point of doing this now rather tha
 
 - **`GameState` (autoload)** holds the run as plain data: `obstacles` (an Array of Dictionaries), `night_number`, `points`. Every value is `String` / `float` / `Vector3` / `bool` / `Array`, so the snapshot is already safe to hand to `var_to_str`, `JSON`, or `FileAccess` without further conversion. **No node references cross a transition.**
 - Each obstacle serialises itself: `Obstacle.to_dict()` carries `type` / `pos` / `yaw`, and subclasses override to merge their own mutable state.
-  - **Sandbags persist with their current health** — a wall left at 40% comes back at 40%, not repaired.
+  - **Sandbag walls persist per-section** (V2: `SandbagWall.to_dict()` carries all 5 panels' `{health, destroyed}`, not a single float) — a wall chewed to 40% on one section and untouched on the rest restores exactly that split. A destroyed section stays destroyed **and stays in the world**, repairable, rather than being absent from the snapshot — see `PATROL_BASE_ZERO_V2_SPEC.md` section 3.
   - **Minefields persist per-mine**, as a `live` array, so a half-spent field comes back half-spent with the right marker and readout state.
   - **C-wire and ditches are permanent and carry no mutable state** — entangled and fallen zombies are transient by definition, so a restored section comes back empty. (A restored ditch does need its ground hole and navmesh mouth patch re-registered against the fresh scene, since those are world-level side effects `GameState` doesn't persist — handled by `ZombieDitch.finalize_in_world()`, called again from `BuildMode.adopt()`.)
-- **Destroyed sandbag sections stay destroyed.** They're removed from the roster on destruction, so they're simply absent from the snapshot — no "destroyed" flag to get out of sync.
 - **Capture** runs at every phase boundary (`Main.capture_state()` from `_on_phase_changed`), so `GameState` is always current and a transition never has to hunt for a safe moment to serialise. `Main.capture_state()` is public for whatever drives a level change later.
 - **Restore** runs inside `Main._build_ui()` — *before* the initial navmesh bake in `_ready()` — so restored sandbags are baked in on the first pass and no extra rebake is needed.
-- Restored obstacles are **adopted by `BuildMode`** (`adopt()`), not merely spawned: they're appended to `_placed`, so they count against the **30-obstacle cap**, and restored sandbags reconnect `destroyed_section` so a later breach still triggers a rebake.
+- Restored obstacles are **adopted by `BuildMode`** (`adopt()`), not merely spawned: they're appended to `_placed`, so they count against the **30-obstacle cap**, and a restored sandbag wall reconnects `section_changed` (V2: renamed from `destroyed_section`, now fires on repair too) so a later breach or repair still triggers a rebake.
 - `GameState.has_snapshot()` guards the whole path, so a cold boot is never stomped by an empty snapshot.
 
 ## Roadmap

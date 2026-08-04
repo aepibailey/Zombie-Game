@@ -46,7 +46,14 @@ var _shown := false
 ## rather than a fixed offset — a wide object gets a (clamped) wider bar, and
 ## a tall object gets its bar pushed further up. Property names default to
 ## "health"/"max_health", the convention every damageable in this project
-## already follows (SandbagSection, Player, Zombie all use those names).
+## already follows (SandbagPanel, Player, Zombie all use those names).
+##
+## Currently unattached to anything: the sandbag wall that originally used
+## this was split into 5 SandbagPanel sections, and 5 simultaneous floating
+## bars on one wall was judged clutter beyond what the per-panel tint+sag
+## states already read as (see PATROL_BASE_ZERO_V2_SPEC.md "Sandbags").
+## Left in place — still the right tool for any future single-object
+## destructible (a gate, say) where one bar per object is exactly right.
 func attach_to(owner: Node3D, bounds: Vector3,
 		health_prop: String = "health", max_health_prop: String = "max_health") -> void:
 	_owner = owner

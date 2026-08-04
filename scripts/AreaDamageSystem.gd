@@ -210,12 +210,13 @@ func _damage_structures(origin: Vector3, profile: AreaDamageProfile, facing: Vec
 		s.take_structure_damage(dmg, origin)
 		n += 1
 		if debug_log:
-			# Position + instance id, not just s.name: every SandbagSection is
-			# named identically by default, which makes it impossible to tell
-			# WHICH of several segments a log line refers to — exactly the
-			# ambiguity that made the "destroyed but still standing" report
-			# hard to pin down. (See take_structure_damage()'s remaining-HP
-			# line and _destroy()'s DESTROYED line for the rest of the trail.)
+			# Position + instance id, not just s.name: every SandbagPanel is
+			# named identically ("Panel0".."Panel4") across every wall, which
+			# makes it impossible to tell WHICH panel on WHICH wall a log line
+			# refers to — exactly the ambiguity that made an earlier
+			# "destroyed but still standing" report hard to pin down. (See
+			# SandbagPanel.take_structure_damage()'s remaining-HP line and
+			# _destroy()'s DESTROYED line for the rest of the trail.)
 			print("[AREADMG]   %s#%d @ (%.1f,%.1f,%.1f), %.1fm — %.0f structure dmg" % [
 				s.name, s.get_instance_id(), s.global_position.x, s.global_position.y,
 				s.global_position.z, dist, dmg])

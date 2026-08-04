@@ -69,6 +69,13 @@ var _sfx_deny: AudioStreamPlayer
 var _seal_cache_key := ""
 var _seal_cached := false
 
+# --- Sandbag repair panel --------------------------------------------------
+var _repair_panel: PanelContainer
+var _repair_list: VBoxContainer
+var _repair_all_btn: Button
+var _repair_status_label: Label
+var _repair_target: SandbagWall = null
+
 func _ready() -> void:
 	_build_camera()
 	_build_ui()
@@ -208,7 +215,72 @@ func _build_ui() -> void:
 	_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_hint)
 
+	_build_repair_panel()
+
 	PointsManager.points_changed.connect(func(_p): _refresh())
+	PointsManager.points_changed.connect(func(_p): _refresh_repair_panel())
+
+## Right side, mirroring the palette on the left. Right-clicking a sandbag
+## wall opens this instead of the old immediate single-shot repair — a wall
+## is now 5 independently priced repairs plus a summed "Repair All", which
+## doesn't fit in a one-line reason-label message the way a single flat
+## health value used to.
+func _build_repair_panel() -> void:
+	_repair_panel = PanelContainer.new()
+	_repair_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_repair_panel.position = Vector2(-336, 64)
+	_repair_panel.custom_minimum_size = Vector2(320, 0)
+	var rsb := StyleBoxFlat.new()
+	rsb.bg_color = Color(0.05, 0.06, 0.05, 0.9)
+	rsb.set_corner_radius_all(6)
+	for side in ["left", "right", "top", "bottom"]:
+		rsb.set("content_margin_" + side, 12)
+	_repair_panel.add_theme_stylebox_override("panel", rsb)
+	_repair_panel.visible = false
+	_ui.add_child(_repair_panel)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	_repair_panel.add_child(col)
+
+	var header := HBoxContainer.new()
+	col.add_child(header)
+	var title := Label.new()
+	title.text = "SANDBAG WALL"
+	title.add_theme_font_size_override("font_size", 14)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.custom_minimum_size = Vector2(28, 0)
+	close_btn.pressed.connect(_close_repair_panel)
+	header.add_child(close_btn)
+
+	_repair_status_label = Label.new()
+	_repair_status_label.add_theme_font_size_override("font_size", 12)
+	_repair_status_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.4))
+	_repair_status_label.visible = false
+	col.add_child(_repair_status_label)
+
+	col.add_child(HSeparator.new())
+
+	_repair_list = VBoxContainer.new()
+	_repair_list.add_theme_constant_override("separation", 4)
+	col.add_child(_repair_list)
+
+	col.add_child(HSeparator.new())
+
+	var all_row := HBoxContainer.new()
+	col.add_child(all_row)
+	var all_label := Label.new()
+	all_label.text = "Repair All"
+	all_label.add_theme_font_size_override("font_size", 14)
+	all_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	all_row.add_child(all_label)
+	_repair_all_btn = Button.new()
+	_repair_all_btn.custom_minimum_size = Vector2(120, 0)
+	_repair_all_btn.pressed.connect(_on_repair_all_pressed)
+	all_row.add_child(_repair_all_btn)
 
 # --- Enter / exit ---------------------------------------------------------
 func open() -> void:
@@ -238,6 +310,7 @@ func close() -> void:
 	active = false
 	_selected_id = ""
 	_clear_ghost()
+	_close_repair_panel()
 	for m in get_tree().get_nodes_in_group("minefields"):
 		m.set_readout_forced(false)
 	GameManager.set_paused(false)
@@ -531,9 +604,12 @@ func _try_place() -> void:
 	o.global_position = _ghost_pos
 	o.rotation.y = _ghost_yaw
 	_placed.append(o)
-	# A destroyed section opens a gap: rebake so zombies path through it.
-	if o is SandbagSection:
-		o.destroyed_section.connect(_on_section_destroyed)
+	# A section changing (damaged, destroyed, OR repaired) can open or close a
+	# gap: rebake either way. The wall itself is never erased from _placed —
+	# unlike the old single-object sandbag, a fully-breached wall stays in
+	# the world, repairable, so there's nothing to remove here.
+	if o is SandbagWall:
+		o.section_changed.connect(_on_wall_section_changed)
 	# The ditch's ground hole and navmesh mouth patch are both world-space and
 	# can only be computed now that global_position/rotation.y are final.
 	if o is ZombieDitch:
@@ -547,10 +623,9 @@ func _try_place() -> void:
 		_world.request_navmesh_rebake("placed %s" % t.id)
 	_refresh()
 
-func _on_section_destroyed(section) -> void:
-	_placed.erase(section)
+func _on_wall_section_changed(_wall) -> void:
 	if _world and _world.has_method("request_navmesh_rebake"):
-		_world.request_navmesh_rebake("sandbag breached")
+		_world.request_navmesh_rebake("sandbag section changed")
 
 func placed_obstacles() -> Array:
 	_placed = _placed.filter(func(o): return is_instance_valid(o))
@@ -565,9 +640,9 @@ func adopt(obstacles: Array) -> void:
 		if not is_instance_valid(entry):
 			continue
 		_placed.append(entry)
-		var section := entry as SandbagSection
-		if section != null and not section.destroyed_section.is_connected(_on_section_destroyed):
-			section.destroyed_section.connect(_on_section_destroyed)
+		var wall := entry as SandbagWall
+		if wall != null and not wall.section_changed.is_connected(_on_wall_section_changed):
+			wall.section_changed.connect(_on_wall_section_changed)
 		# A restored ditch needs its ground hole and navmesh mouth patch
 		# re-registered against the FRESH scene's ground/navmesh — GameState
 		# only persists {type, pos, yaw}, not those world-level side effects.
@@ -620,7 +695,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_ESCAPE:
-				close()
+				# First press dismisses an open repair panel; only a second
+				# press (or pressing it with nothing open) leaves build mode.
+				if _repair_panel and _repair_panel.visible:
+					_close_repair_panel()
+				else:
+					close()
 			KEY_BRACKETLEFT:
 				_zoom(-zoom_step)
 			KEY_BRACKETRIGHT:
@@ -655,31 +735,29 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_service_under_cursor()
 			get_viewport().set_input_as_handled()
 
-## Repair / replenish whatever is under the cursor, priced by what's missing.
+## Right-click under the cursor: opens the repair panel for a sandbag wall
+## (per-section state doesn't fit a one-line message), or immediately
+## replenishes a minefield (still a single flat action, unchanged).
 func _try_service_under_cursor() -> void:
 	var p := cursor_ground_point()
 	var best = null
 	var best_d := 3.0
 	for o in placed_obstacles():
 		var d: float = Vector2(o.global_position.x - p.x, o.global_position.z - p.z).length()
-		if o is SandbagSection:
+		if o is SandbagWall:
 			d = Vector2(o.nearest_point(p).x - p.x, o.nearest_point(p).z - p.z).length()
 		if d < best_d:
 			best_d = d
 			best = o
 	if best == null:
+		# Nothing under the cursor: closes any open repair panel, matching
+		# the same "click away to deselect" behaviour the obstacle palette
+		# already uses (_select() toggles off on a second click).
+		_close_repair_panel()
 		return
 
-	if best is SandbagSection:
-		if best.health_fraction() >= 0.999:
-			_reason_label.text = "That section is undamaged"
-			return
-		var cost: int = best.repair_cost(ObstacleCatalog.get_type("sandbags").cost)
-		if not PointsManager.spend_points(cost):
-			_fail("Repair needs %d pts" % cost)
-			return
-		best.repair()
-		_status("Section repaired — %d pts" % cost)
+	if best is SandbagWall:
+		_open_repair_panel(best)
 	elif best is Minefield:
 		if best.mines_remaining >= best.mine_count:
 			_reason_label.text = "That field is fully stocked"
@@ -690,6 +768,100 @@ func _try_service_under_cursor() -> void:
 			return
 		best.replenish()
 		_status("Minefield replenished — %d pts" % cost2)
+	_refresh()
+
+# --- Sandbag repair panel --------------------------------------------------
+func _open_repair_panel(wall: SandbagWall) -> void:
+	_repair_target = wall
+	_repair_panel.visible = true
+	_refresh_repair_panel()
+
+func _close_repair_panel() -> void:
+	_repair_target = null
+	_repair_panel.visible = false
+
+## Rebuilds the 5 section rows + Repair All button from scratch. Called on
+## open, after any repair action, and on every points change (so affordability
+## greys in/out live without needing to re-open the panel).
+func _refresh_repair_panel() -> void:
+	if _repair_target == null or not is_instance_valid(_repair_target):
+		_close_repair_panel()
+		return
+	if not _repair_panel.visible:
+		return
+
+	_repair_status_label.visible = not _repair_target.active
+	_repair_status_label.text = "WALL BREACHED — fully repairable"
+
+	for child in _repair_list.get_children():
+		child.queue_free()
+
+	for i in _repair_target.panels().size():
+		_add_repair_row(_repair_target.panels()[i], i)
+
+	var all_cost: int = _repair_target.repair_all_cost()
+	if all_cost <= 0:
+		_repair_all_btn.text = "FULL HEALTH"
+		_repair_all_btn.disabled = true
+	else:
+		_repair_all_btn.text = "%d pts" % all_cost
+		_repair_all_btn.disabled = PointsManager.points < all_cost
+		_repair_all_btn.add_theme_color_override("font_color_disabled", Color(1.0, 0.4, 0.35))
+
+func _add_repair_row(panel: SandbagPanel, index: int) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	_repair_list.add_child(row)
+
+	var label := Label.new()
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 13)
+	label.text = "Section %d — %s (%d/%d)" % [
+		index + 1, panel.state_label(), int(round(panel.health)), int(round(panel.section_health))]
+	row.add_child(label)
+
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(90, 0)
+	row.add_child(btn)
+
+	# Cost is ALWAYS shown, even when the button is disabled — an unaffordable
+	# or already-full repair is visibly priced, never silently missing.
+	if panel.health_fraction() >= 1.0:
+		btn.text = "FULL"
+		btn.disabled = true
+	else:
+		var cost: int = panel.repair_cost(_repair_target.section_repair_cost)
+		btn.text = "%d pts" % cost
+		if PointsManager.points < cost:
+			btn.disabled = true
+			btn.add_theme_color_override("font_color_disabled", Color(1.0, 0.4, 0.35))
+		else:
+			btn.pressed.connect(_on_repair_section_pressed.bind(panel))
+
+func _on_repair_section_pressed(panel: SandbagPanel) -> void:
+	if _repair_target == null:
+		return
+	var cost: int = panel.repair_cost(_repair_target.section_repair_cost)
+	if not PointsManager.spend_points(cost):
+		_fail("Repair needs %d pts" % cost)
+		return
+	panel.repair()
+	_status("Section repaired — %d pts" % cost)
+	_refresh_repair_panel()
+	_refresh()
+
+func _on_repair_all_pressed() -> void:
+	if _repair_target == null:
+		return
+	var cost: int = _repair_target.repair_all_cost()
+	if cost <= 0:
+		return
+	if not PointsManager.spend_points(cost):
+		_fail("Repair All needs %d pts" % cost)
+		return
+	var spent: int = _repair_target.repair_all()
+	_status("Wall repaired — %d pts" % spent)
+	_refresh_repair_panel()
 	_refresh()
 
 func _status(msg: String) -> void:
