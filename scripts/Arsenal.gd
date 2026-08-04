@@ -16,21 +16,40 @@ func _ready() -> void:
 		"fire_interval": 0.15, "reload_time": 1.6,
 		"body_damage": 34, "hip_spread_radius": 80.0, "recoil_per_shot": 0.03,
 		"max_range": 150.0, "noise_unsuppressed": 40.0, "noise_suppressed": 8.0, "cost": 0,
-		# Pistol: reliable in close, meaningfully weaker at rifle ranges.
-		"falloff_near": 25.0, "falloff_mid": 60.0, "falloff_mid_mult": 0.70,
-		"falloff_far": 100.0, "falloff_far_mult": 0.50,
+		# Pistol: full damage in close, linear falloff to 40% by 40m. Uses the
+		# simple 2-point model rather than the piecewise falloff_near/mid/far
+		# one the SPAS and M249 use — a weapon picks exactly one model (see
+		# WeaponData.damage_mult_at()), so falloff can never double-apply.
+		# This is the pattern for future falloff tuning; set the piecewise
+		# fields only when a curve genuinely needs three segments.
+		"use_simple_falloff": true, "falloff_start_distance": 15.0,
+		"falloff_end_distance": 40.0, "falloff_min_multiplier": 0.4,
 	})
 	_add({
 		"id": "hk416", "display_name": "HK 416", "fire_mode": WeaponData.FireMode.BOTH,
 		"mag_size": 30, "starting_mags": 2, "ammo_cost": 2,
 		"fire_interval": 0.09, "reload_time": 2.0,
-		"body_damage": 30, "hip_spread_radius": 55.0, "recoil_per_shot": 0.025,
+		# 66, up from 30. NOT a taste-based number: it is the MINIMUM integer
+		# that satisfies the requested invariant "the 416 kills in strictly
+		# fewer headshots than the M17 at every night tier and every range".
+		# The binding case is a night-9/10 zombie (132 HP) at point-blank,
+		# where the M17 headshots for 68 and kills in 2 — beating that
+		# strictly means a ONE-headshot kill, i.e. >= 132 headshot damage,
+		# i.e. >= 66 body. See PATROL_BASE_ZERO_V2_SPEC.md "Weapon damage"
+		# for the full derivation and for the roster consequence (this now
+		# exceeds the M110's 60), which is flagged, not silently softened.
+		"body_damage": 66, "hip_spread_radius": 55.0, "recoil_per_shot": 0.025,
 		"max_range": 200.0, "noise_unsuppressed": 45.0, "noise_suppressed": 10.0, "cost": 15,
 		# Semi-auto is the long-range answer: a 0.1 deg cone is effectively a
-		# laser at map scale, and damage only drops 15% by 85m.
+		# laser at map scale.
 		"ads_cone_deg": 0.1,
-		"falloff_near": 30.0, "falloff_mid": 85.0, "falloff_mid_mult": 0.85,
-		"falloff_far": 120.0, "falloff_far_mult": 0.85,
+		# NO falloff: flat damage to max_range. Achieved by absence — with no
+		# falloff fields set at all, WeaponData's inert defaults (9999 / 1.0)
+		# make damage_mult_at() return 1.0 everywhere.
+		# Rifle rounds carry through flesh: up to 2 zombies BEHIND the first,
+		# at 60% each. Never through obstacles/sandbags/the player — see
+		# Player._fire_ray(), which stops the ray on any non-zombie collider.
+		"max_penetration_targets": 2, "penetration_damage_multiplier": 0.6,
 		# Full auto walks off target fast; semi stays the precise choice at range.
 		"auto_penalty": WeaponData.AutoPenalty.RAMP,
 		"auto_recoil_start_mult": 1.4, "auto_recoil_growth": 0.12,
@@ -104,6 +123,48 @@ func _ready() -> void:
 		# from the player's 75° hip FOV so 1x reads as "no zoom" consistently.
 		"ads_fov": 28.7,
 	})
+
+	_validate_damage_invariants()
+
+# --- Startup invariants ---------------------------------------------------
+## INVARIANT: the HK 416's effective per-shot damage must exceed the M17's at
+## EVERY distance from 0 to the M17's max range, using each weapon's own
+## falloff curve.
+##
+## This exists because the exact inversion it forbids is what shipped: the
+## 416 sat at 30 base damage against the M17's 34, so the free starter pistol
+## out-damaged the 15-point rifle inside the M17's full-damage band and
+## killed late-night zombies in fewer headshots. That is a data error no
+## reader can see by looking at either weapon's definition alone — it only
+## appears when the two curves are compared across the whole range band — so
+## it is asserted rather than left to review.
+##
+## Compared on BODY damage: the headshot multiplier is a single shared
+## constant applied identically to both weapons downstream (Zombie.gd's
+## HEADSHOT_MULT), so it cancels out of the comparison entirely. Checking
+## the body figure proves the headshot figure. Deliberately NOT reaching
+## into Zombie.gd for the constant — that would need a class_name added
+## purely to satisfy this check.
+func _validate_damage_invariants() -> void:
+	var m17 := get_weapon("m17")
+	var hk := get_weapon("hk416")
+	if m17 == null or hk == null:
+		return
+	# 0.25m steps: fine enough to catch a crossing anywhere in a falloff
+	# ramp, and this runs once at startup, not per frame.
+	var step := 0.25
+	var d := 0.0
+	var limit: float = maxf(m17.max_range, hk.max_range)
+	while d <= limit:
+		var m17_dmg: float = float(m17.body_damage) * m17.damage_mult_at(d)
+		var hk_dmg: float = float(hk.body_damage) * hk.damage_mult_at(d)
+		assert(hk_dmg > m17_dmg,
+			"WEAPON BALANCE INVARIANT VIOLATED at %.2fm: HK 416 deals %.2f but M17 deals %.2f. The 416 must out-damage the M17 at every range — see Arsenal._validate_damage_invariants()." % [d, hk_dmg, m17_dmg])
+		# asserts are stripped from release builds, so fail loudly there too.
+		if hk_dmg <= m17_dmg:
+			push_error("WEAPON BALANCE INVARIANT VIOLATED at %.2fm: HK 416 %.2f <= M17 %.2f" % [d, hk_dmg, m17_dmg])
+			return
+		d += step
 
 func _add(dict: Dictionary) -> void:
 	var w := WeaponData.new()

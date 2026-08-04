@@ -29,6 +29,18 @@ enum AutoPenalty { NONE, RAMP, STANCE }
 ## Accuracy cone applied even when aiming down sights. 0 = pinpoint.
 @export var ads_cone_deg: float = 0.0
 
+## Rounds that kill/wound a zombie keep travelling into further zombies
+## standing behind it, up to this many ADDITIONAL targets past the first.
+## 0 (default, every weapon but the 416) = no penetration, the ray stops at
+## its first hit exactly like before this system existed. Penetration NEVER
+## carries through a non-zombie collider — the round stops dead on the first
+## obstacle, sandbag panel, wall, or the player, regardless of this value.
+@export var max_penetration_targets: int = 0
+## Flat damage multiplier applied to every target after the first hit by a
+## penetrating round (not compounded per extra target — the 2nd and 3rd
+## zombie both take this same fraction, not this fraction squared).
+@export var penetration_damage_multiplier: float = 0.6
+
 # --- Damage falloff (piecewise linear over distance) ----------------------
 # Full damage out to `falloff_near`, then linearly to `falloff_mid_mult` at
 # `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond.
@@ -39,8 +51,27 @@ enum AutoPenalty { NONE, RAMP, STANCE }
 @export var falloff_far: float = 9999.0
 @export var falloff_far_mult: float = 1.0
 
+## Simpler 2-point linear falloff, an alternative to the piecewise model
+## above: full damage out to `falloff_start_distance`, linear down to
+## `falloff_min_multiplier` at `falloff_end_distance`, flat beyond. A weapon
+## uses ONE model or the other, never both — `use_simple_falloff` picks
+## which, so a weapon's falloff fields can never silently double-apply.
+## Defaults keep this model off; a weapon opts in explicitly (currently only
+## the M17 — see Arsenal.gd).
+@export var use_simple_falloff: bool = false
+@export var falloff_start_distance: float = 9999.0
+@export var falloff_end_distance: float = 9999.0
+@export var falloff_min_multiplier: float = 1.0
+
 ## Damage multiplier at a given distance (metres).
 func damage_mult_at(distance: float) -> float:
+	if use_simple_falloff:
+		if distance <= falloff_start_distance:
+			return 1.0
+		if distance >= falloff_end_distance:
+			return falloff_min_multiplier
+		var span3: float = maxf(0.001, falloff_end_distance - falloff_start_distance)
+		return lerpf(1.0, falloff_min_multiplier, (distance - falloff_start_distance) / span3)
 	if distance <= falloff_near:
 		return 1.0
 	if distance <= falloff_mid:

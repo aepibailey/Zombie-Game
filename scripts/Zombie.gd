@@ -916,8 +916,17 @@ func footstep_range() -> float:
 
 # --- Combat ---------------------------------------------------------------
 ## Returns the damage actually dealt, so the shooter can report it.
-func take_damage(amount: int, headshot: bool) -> int:
-	var dmg := amount * (HEADSHOT_MULT if headshot else 1)
+##
+## `falloff_mult` is applied AFTER the headshot multiplier, not before —
+## callers must pass the weapon's raw, un-multiplied damage here rather than
+## pre-multiplying by falloff themselves. Rounding only happens once, at the
+## end, in this function. Applying falloff first and rounding to an int
+## before the headshot multiplier (the previous behaviour, with callers
+## pre-multiplying) silently produced different final damage than this order
+## whenever the intermediate round truncated a fraction — e.g. 34 body dmg at
+## a 0.4 falloff multiplier: round(34*0.4)*2 = 28, but round(34*2*0.4) = 27.
+func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
+	var dmg: int = maxi(1, int(round(float(amount) * (HEADSHOT_MULT if headshot else 1) * falloff_mult)))
 	hp -= dmg
 	last_hit_headshot = headshot
 	if headshot:

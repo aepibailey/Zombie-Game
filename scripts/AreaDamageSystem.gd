@@ -15,7 +15,7 @@ extends Node
 ## the two existing take_damage() signatures are incompatible in a way that
 ## fails SILENTLY —
 ##     Player.take_damage(amount: int, source_pos = null)
-##     Zombie.take_damage(amount: int, headshot: bool)
+##     Zombie.take_damage(amount: int, headshot: bool, falloff_mult := 1.0)
 ## Passing a Vector3 origin to a zombie would bind it to `headshot`, and a
 ## non-null Vector3 is truthy, so every blast would register as a headshot and
 ## deal DOUBLE damage with no error. take_area_damage(amount, origin) is

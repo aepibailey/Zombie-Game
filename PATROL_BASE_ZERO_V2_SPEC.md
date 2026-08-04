@@ -431,3 +431,240 @@ interface, so a wall's richer per-section payload flows through the existing
 generic pipeline unmodified. A restored wall's `active` flag is recomputed
 from the restored panel states (`apply_dict()` → `_refresh_active()`), not
 itself persisted.
+
+---
+
+## 4. Weapon damage: M17 falloff, HK 416 buff, and the damage-order fix
+
+Scope: this section covers only the M17 and the HK 416. **SPAS-12, M249, and
+M110 stats are untouched in this pass, as are zombie HP scaling and every
+weapon price.** Their pre-existing tuning stays under `PROJECT_SPEC.md`.
+
+### 4.1 The bug found first (fixed before any tuning)
+
+The reported symptom was "the M17 kills late-night zombies in 2 headshots
+while the 416 takes 3". Diagnosing it turned up **two separate things**, one a
+code defect and one a data fact.
+
+**Defect — headshot and falloff were applied in the wrong order, with a
+rounding step between them.** `Player._fire_ray()` computed
+
+```gdscript
+var dmg: int = maxi(1, int(round(weapon.body_damage * mult)))   # falloff, ROUNDED
+var dealt: int = target.take_damage(dmg, headshot)              # headshot, applied after
+```
+
+and `Zombie.take_damage()` then did `amount * HEADSHOT_MULT`. So falloff was
+applied **first**, truncated to an integer, and the headshot multiplier was
+applied to that already-rounded value. That is not equivalent to
+headshot-then-falloff, because the intermediate `round()` throws away a
+fraction that the ×2 would otherwise have doubled:
+
+| body dmg | falloff | old order (falloff → round → ×2) | correct order (×2 → falloff → round) |
+|---|---|---|---|
+| 34 | 0.40 | `round(34×0.40)=14`, `×2` = **28** | `round(34×2×0.40)` = **27** |
+| 34 | 0.52 | `round(34×0.52)=18`, `×2` = **36** | `round(34×2×0.52)` = **35** |
+
+The old order quietly inflated long-range headshots by up to one point per
+half-unit of discarded fraction. It was never large, but it was wrong, and it
+made the headshot damage of any weapon with falloff impossible to predict from
+its stated numbers.
+
+**Fix:** the entire formula now lives in one place, `Zombie.take_damage()`:
+
+```gdscript
+func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
+	var dmg: int = maxi(1, int(round(float(amount) * (HEADSHOT_MULT if headshot else 1) * falloff_mult)))
+```
+
+Callers pass **raw, un-multiplied `body_damage`** plus the multiplier, and
+never pre-multiply. Headshot applies first, falloff second, and rounding
+happens exactly once at the end. The `falloff_mult: float = 1.0` default keeps
+the two existing non-weapon callers (`Zombie.take_area_damage()` and
+`Minefield.gd`) working unchanged — explosions and mines pass no multiplier
+and are unaffected by this change.
+
+**Data fact — the 416 genuinely had lower base damage than the M17** (30 vs
+34). That is not a bug and was not "fixed" as one; it is the balance problem
+§4.3 addresses. Note that the rounding defect did **not** cause the reported
+symptom: at the ranges involved the two orders agree, and the M17's 2-headshot
+kill came purely from its higher base damage. Both were fixed, but only the
+second was the player-visible complaint.
+
+**Correction to the framing of the request.** The request assumed other
+weapons "default to no falloff". They did not: **all four of M17, HK 416,
+SPAS-12, and M249 already had falloff curves** under the pre-existing
+piecewise system; only the M110 had none. The SPAS and M249 curves are left
+exactly as they were.
+
+### 4.2 Falloff as a reusable per-weapon property
+
+`WeaponData` now carries **two** falloff models, and each weapon selects
+exactly one:
+
+| Model | Fields | Used by |
+|---|---|---|
+| Simple 2-point (new) | `use_simple_falloff`, `falloff_start_distance`, `falloff_end_distance`, `falloff_min_multiplier` | M17 |
+| Piecewise 3-segment (pre-existing) | `falloff_near`, `falloff_mid`, `falloff_mid_mult`, `falloff_far`, `falloff_far_mult` | SPAS-12, M249 |
+| None | *(no fields set — inert defaults)* | HK 416, M110 |
+
+`damage_mult_at(distance)` branches on `use_simple_falloff` and evaluates
+**one model or the other, never both**. This is deliberate: adding the new
+fields as an additional multiplier on top of the old ones would have silently
+double-applied falloff to any weapon carrying values under both systems. The
+flag defaults to `false`, so the SPAS and M249 keep their existing curves with
+no edit to their definitions at all.
+
+**This is the pattern for future falloff tuning.** Reach for the simple
+2-point model by default — it is two distances and a floor, and it reads
+directly off a design intent like "full damage to 15m, 40% by 40m". Use the
+piecewise model only when a curve genuinely needs three segments with a
+different slope in each (the SPAS's cliff between 10m and 20m, then a second
+shallower drop, is the case it exists for).
+
+### 4.3 M17 — range falloff
+
+```gdscript
+"use_simple_falloff": true,
+"falloff_start_distance": 15.0,
+"falloff_end_distance": 40.0,
+"falloff_min_multiplier": 0.4,
+```
+
+Full damage at or under 15m, linear to ×0.4 at 40m, flat ×0.4 beyond. Falloff
+applies to **both body and headshot damage** — the headshot multiplier is
+applied first, then falloff (§4.1).
+
+| Range | Multiplier | Body | Headshot |
+|---|---|---|---|
+| 0–15m | 1.000 | 34 | 68 |
+| 20m | 0.880 | 30 | 60 |
+| 25m | 0.760 | 26 | 52 |
+| 30m | 0.640 | 22 | 44 |
+| 35m | 0.520 | 18 | 35 |
+| 40m+ | 0.400 | 14 | 27 |
+
+This replaces the M17's previous piecewise curve (full damage to 25m, ×0.70 at
+60m, ×0.50 at 100m). **The new curve is substantially harsher**: the old one
+still paid 34 body damage at 25m where the new one pays 26, and bottomed out
+at ×0.50 rather than ×0.40. That is the intent — the starter pistol should not
+be a viable rifle — but it is a real nerf to the M17 at 15–40m, not a
+like-for-like reshaping, and it is stated here rather than left to be
+discovered in play.
+
+### 4.4 HK 416 — damage
+
+**`body_damage`: 30 → 66.**
+
+This number is derived, not chosen by feel. The requirement was that the 416
+kill in **strictly fewer headshots than the M17 at every night tier and every
+range**. The binding case is a **night-9/10 zombie (132 HP) at point-blank**,
+where the M17 headshots for 68 and kills in 2. Beating 2 strictly means a
+one-headshot kill, which needs ≥132 headshot damage, i.e. **≥66 base**. Every
+lower value fails somewhere:
+
+| 416 base | First failure |
+|---|---|
+| 30 (old) | night 1, 100 HP, 0m — both kill in 2 |
+| 50 | night 3, 108 HP, 0m — both kill in 2 |
+| 60 | night 7, 124 HP, 0m — both kill in 2 |
+| 64 | night 9, 132 HP, 0m — both kill in 2 |
+| 65 | night 9, 132 HP, 0m — both kill in 2 |
+| **66** | **none** — verified across nights 1–200 × 0–150m at 0.25m steps |
+
+Resulting **headshot** shots-to-kill (zombie HP = `100 + 8×floor((night−1)/2)`):
+
+| Night | HP | M17 @10m (68) | M17 @35m (35) | 416 @any range (132) |
+|---|---|---|---|---|
+| 1 | 100 | 2 | 3 | **1** |
+| 3 | 108 | 2 | 4 | **1** |
+| 5 | 116 | 2 | 4 | **1** |
+| 7 | 124 | 2 | 4 | **1** |
+| 9 | 132 | 2 | 4 | **1** |
+| 11 | 140 | 3 | 4 | **2** |
+| 13 | 148 | 3 | 5 | **2** |
+| 15 | 156 | 3 | 5 | **2** |
+| 17 | 164 | 3 | 5 | **2** |
+| 19 | 172 | 3 | 5 | **2** |
+| 21 | 180 | 3 | 6 | **2** |
+
+**Flagged, not acted on.** 66 base damage puts the 416 **above the M110's 60**,
+and the 416 also has a 30-round magazine, an 11.1 rps cycle, and now
+penetration. On the numbers the M110 is strictly dominated except by its scope
+and its tighter moving cone. The request explicitly forbade touching the M110,
+the SPAS, the M249, prices, or HP scaling in this pass, so none of them were
+changed — but the roster consequence is real and this is the note it asked
+for. The cleanest resolutions, if wanted later, are (a) raise the M110's damage
+and the top-tier zombie HP together, or (b) relax the rule from "strictly fewer
+headshots at *every* night tier" to "from night 11 on", which drops the minimum
+416 base from 66 to **51** — still a large buff over 30, still comfortably
+ahead of the M17 at all ranges, but back below the M110's 60. Option (b) costs
+only the early nights, where a 100 HP zombie dying to 1 headshot instead of 2
+is the least interesting part of the change anyway.
+
+### 4.5 HK 416 — penetration
+
+```gdscript
+"max_penetration_targets": 2,
+"penetration_damage_multiplier": 0.6,
+```
+
+A 416 round passes through the zombie it hits and continues into **up to 2
+additional zombies** behind it. Both fields live on `WeaponData` and default to
+`0` / `0.6`, so **every other weapon is unaffected** — with
+`max_penetration_targets == 0` the trace loop in `Player._fire_ray()` runs
+exactly once and behaves identically to the single-hit ray it replaced.
+
+Rules:
+
+- **60% damage per target after the first, flat — not compounded.** The 2nd
+  and 3rd zombie each take ×0.6, not ×0.6 and ×0.36. This is modelled as flesh
+  resistance, distinct from ballistic falloff (the 416 has none).
+- **The headshot multiplier is resolved independently per target.** A round can
+  body the first zombie and head the second; each hit is graded by whichever
+  collider that segment struck, exactly as a single-target shot is.
+- **Penetration is flesh-only. The round stops dead on the first non-zombie
+  collider** — world geometry, obstacles, sandbag panels, the player. This is
+  enforced structurally: the loop breaks on any hit that is not in the
+  `zombies` or `zombie_heads` group, so no obstacle type has to opt out and a
+  future obstacle inherits the behaviour for free.
+- A zombie can only be damaged **once per round**. Its head `Area3D` and body
+  collider are separate, so consecutive ray segments can both strike the same
+  zombie; the second strike is skipped and, importantly, **does not consume
+  penetration budget**.
+
+Per-target damage at base 66:
+
+| Target | Body | Headshot |
+|---|---|---|
+| 1st | 66 | 132 |
+| 2nd | 40 | 79 |
+| 3rd | 40 | 79 |
+
+### 4.6 HK 416 — no falloff
+
+The 416 deals flat damage to its 200m max range. Achieved **by absence**: its
+falloff fields are simply not set, so `WeaponData`'s inert defaults
+(`9999` / `1.0`) make `damage_mult_at()` return `1.0` everywhere. Its previous
+curve (full to 30m, ×0.85 at 85m) was removed.
+
+### 4.7 The invariant
+
+`Arsenal._validate_damage_invariants()` runs once at startup and asserts that
+the **416's effective per-shot damage exceeds the M17's at every distance from
+0 to max range**, sweeping in 0.25m steps and using each weapon's own
+`damage_mult_at()` curve. It fires both an `assert()` (with the offending
+distance and both damage figures in the message) and a `push_error()`, because
+asserts are stripped from release builds.
+
+This exists because the exact inversion it forbids is what shipped: the free
+starter pistol out-damaged the 15-point rifle at every range, and nothing in
+either weapon's definition made that visible — it only appears when the two
+are compared across the whole range band. Any future tuning that re-introduces
+it fails loudly at boot rather than silently in play.
+
+The check compares **body** damage. The headshot multiplier is a single shared
+constant (`Zombie.HEADSHOT_MULT`) applied identically to both weapons
+downstream, so it cancels out of the comparison entirely and checking the body
+figure proves the headshot figure. This also avoids adding a `class_name` to
+`Zombie.gd` purely to expose a constant to the check.

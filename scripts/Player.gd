@@ -642,43 +642,96 @@ func _fire() -> void:
 		_fire_ray(from, dir)
 
 # Traces one round/pellet, applies damage, and draws a tracer.
+#
+# For weapons with max_penetration_targets > 0 (currently only the 416) the
+# round keeps travelling after damaging a zombie and can hit up to that many
+# ADDITIONAL zombies behind it, each at penetration_damage_multiplier. It
+# stops dead on the first NON-zombie collider — world geometry, obstacles,
+# sandbag panels, the player — so penetration is strictly a flesh mechanic
+# and can never punch through cover. Every other weapon has
+# max_penetration_targets == 0, so the loop runs once and behaves exactly
+# like the single-hit ray this replaced.
+#
+# Headshot is resolved independently per target: the ray can body the first
+# zombie and head the second, and each gets its own multiplier.
 func _fire_ray(from: Vector3, dir: Vector3) -> void:
 	var to := from + dir * weapon.max_range
 	var space := get_world_3d().direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(from, to)
-	q.exclude = [get_rid()]
-	# World/bodies (layer 1) + zombie head hitboxes (layer 3). Areas are opted
-	# into so the head Area3D can be hit; other areas sit on other layers.
-	q.collision_mask = HIT_MASK
-	q.collide_with_areas = true
-	var hit := space.intersect_ray(q)
-
+	var exclude: Array[RID] = [get_rid()]
+	var segment_from := from
 	var impact := to
-	if hit:
+	# Counts zombies DAMAGED so far, not ray segments traced — a zombie's
+	# head Area3D and body sit on separate colliders, so a single zombie can
+	# be struck twice by consecutive segments. Only the first strike deals
+	# damage (see `damaged` below) and only that one spends penetration
+	# budget; the second is skipped without costing a target.
+	var targets_damaged := 0
+	var damaged: Array = []
+
+	while true:
+		var q := PhysicsRayQueryParameters3D.create(segment_from, to)
+		q.exclude = exclude
+		# World/bodies (layer 1) + zombie head hitboxes (layer 3). Areas are opted
+		# into so the head Area3D can be hit; other areas sit on other layers.
+		q.collision_mask = HIT_MASK
+		q.collide_with_areas = true
+		var hit := space.intersect_ray(q)
+		if not hit:
+			break
 		impact = hit.position
+
 		# Head vs body comes from WHICH collider was hit — the head hitbox is a
 		# distinct Area3D — not from inferring a hit height.
 		var col = hit.collider
 		var target = null
 		var headshot := false
+		var is_zombie_part := false
 		if col and col.is_in_group("zombie_heads"):
 			target = col.get_meta("zombie", null)
 			headshot = true
+			is_zombie_part = true
 		elif col and col.is_in_group("zombies"):
 			target = col
+			is_zombie_part = true
 
-		if target != null and is_instance_valid(target):
-			# Damage falls off with distance from the muzzle.
+		if not is_zombie_part:
+			# Cover, not flesh: the round stops here for every weapon.
+			break
+
+		var is_new_target: bool = target != null and is_instance_valid(target) \
+				and not damaged.has(target)
+		if not is_new_target and weapon.max_penetration_targets <= 0:
+			# Non-penetrating weapon that struck a zombie collider it can't
+			# damage (already-hit, or a head hitbox with no zombie meta): the
+			# round still stops, exactly as it did before penetration existed.
+			break
+		if is_new_target:
+			damaged.append(target)
+			# Damage falls off with distance from the muzzle; a penetrating
+			# round loses a further flat fraction on every zombie behind the
+			# first (flat, not compounded — flesh resistance, not falloff).
 			var dist := from.distance_to(hit.position)
 			var mult := weapon.damage_mult_at(dist)
-			var dmg: int = maxi(1, int(round(weapon.body_damage * mult)))
-			var dealt: int = target.take_damage(dmg, headshot)
+			if targets_damaged > 0:
+				mult *= weapon.penetration_damage_multiplier
+			# Raw body_damage + the multiplier, NOT a pre-multiplied value:
+			# Zombie.take_damage() applies headshot first, then falloff, and
+			# rounds exactly once. See its docstring.
+			var dealt: int = target.take_damage(weapon.body_damage, headshot, mult)
 			var remaining: int = maxi(0, target.hp)
-			print("[HIT] %s — %d dmg @ %.1fm (x%.2f falloff), %d HP remaining" % [
-				"HEAD" if headshot else "BODY", dealt, dist, mult, remaining])
+			print("[HIT] %s — %d dmg @ %.1fm (x%.2f mult, target %d), %d HP remaining" % [
+				"HEAD" if headshot else "BODY", dealt, dist, mult, targets_damaged + 1, remaining])
 			zombie_hit.emit(headshot, dealt, remaining)
 			if _sfx_impact.stream:
 				_sfx_impact.play()
+			targets_damaged += 1
+			if targets_damaged > weapon.max_penetration_targets:
+				break
+
+		# Continue past this collider. Nudged forward so the next segment
+		# can't re-register the surface it just left.
+		exclude.append(col.get_rid())
+		segment_from = hit.position + dir * 0.05
 
 	_spawn_tracer(_muzzle_position(), impact)
 
