@@ -21,9 +21,34 @@ const MASS := 0.4
 const BOUNCE := 0.28
 const FRICTION := 0.65
 ## Rolling grenades that never settle are worse than ones that stop slightly
-## early: without damping a sphere on a flat plane rolls indefinitely.
+## early: without damping a sphere on a flat plane rolls indefinitely. This is
+## ANGULAR only — see _ready() for why linear damping is forced to zero.
 const ANGULAR_DAMP := 1.6
-const LINEAR_DAMP := 0.25
+
+## World/sandbags (1) + the ditch revetment, so a grenade can come to rest at
+## the bottom of the pit. C-wire's player-barrier layer is deliberately absent
+## — a grenade rolls under wire.
+##
+## THE PREVIEW ARC RAYCASTS WITH THIS SAME MASK, so the drawn line terminates
+## on exactly the surfaces the real grenade would first strike.
+const COLLISION_MASK := 1 | Obstacle.SOLID_NO_NAV_LAYER
+
+## The project's 24.0 gravity is tuned for how the PLAYER should fall — it is
+## 2.4x real, which makes jumps feel crisp. Applied to a thrown object it is
+## crushing: a hand grenade thrown flat at any believable speed drops out of
+## the air in 0.42s and lands about 6m away, which is not a grenade throw.
+##
+## Halving it to ~12 m/s^2 puts the projectile near real gravity and gives the
+## throw distances in Player.GRENADE_SPEED_*. The player's own fall is
+## untouched — this scale applies to the grenade body only, and is deliberate
+## divergence rather than an oversight.
+const GRAVITY_SCALE := 0.5
+
+## The gravity a launched grenade actually falls under, from the same setting
+## the physics server reads, times the scale above. The preview arc calls this
+## so the simulation and the projectile can't disagree about the curve.
+static func projectile_gravity() -> float:
+	return float(ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)) * GRAVITY_SCALE
 
 var _fuse := 0.0
 var _profile: AreaDamageProfile
@@ -51,19 +76,27 @@ func launch(origin: Vector3, velocity: Vector3, fuse: float,
 
 func _ready() -> void:
 	mass = MASS
+	# Must match projectile_gravity(), which the preview arc simulates with.
+	gravity_scale = GRAVITY_SCALE
 	# LAYER 0 ON PURPOSE. The grenade must not appear on layer 1, because
 	# AreaDamageSystem's line-of-sight COVER_MASK includes layer 1 — a grenade
 	# that was its own cover would block its own blast. Layer 0 also keeps it
 	# out of weapon rays (Player.HIT_MASK) and the laser. Collision still
 	# happens because the MASK below matches the world's layers.
 	collision_layer = 0
-	# World/sandbags (1) + the ditch revetment (SOLID_NO_NAV_LAYER) so it can
-	# come to rest at the bottom of the pit. C-wire's player-barrier layer is
-	# deliberately excluded — a grenade rolls under wire.
-	collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
+	collision_mask = COLLISION_MASK
 	continuous_cd = true   # a fast throw must not tunnel through a sandbag
 	angular_damp = ANGULAR_DAMP
-	linear_damp = LINEAR_DAMP
+	# ZERO LINEAR DAMPING, AND REPLACE RATHER THAN COMBINE. Flight has to be
+	# purely ballistic or the preview arc — which simulates plain
+	# position += velocity*dt, velocity.y -= g*dt — would drift from the real
+	# throw and land the grenade short of the drawn line. REPLACE is required
+	# because the default mode COMBINES with the project's ambient
+	# default_linear_damp (0.1), which would otherwise apply even at 0.0 here.
+	# Settling is handled by friction + angular damping instead, which only
+	# act once the grenade is in contact with something.
+	linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	linear_damp = 0.0
 	can_sleep = true
 
 	var phys := PhysicsMaterial.new()

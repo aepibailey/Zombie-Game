@@ -135,20 +135,35 @@ const GRENADE_FUSE := 5.0
 const GRENADE_SCRIPT := preload("res://scripts/Grenade.gd")
 const GRENADE_PROFILE := preload("res://resources/frag_grenade.tres")
 
-## Overhand: thrown flat along the look vector at full speed.
-## Underhand: slower AND lofted, so it lands visibly shorter and higher —
-## the lob is for dropping one into the ditch or over near cover without
-## stepping out. Both are read by the trajectory preview (see
-## grenade_launch_velocity()) so the arc can never disagree with the throw.
-const GRENADE_SPEED_OVERHAND := 17.0
-const GRENADE_SPEED_UNDERHAND := 8.0
-const GRENADE_PITCH_OVERHAND_DEG := 2.0
-const GRENADE_PITCH_UNDERHAND_DEG := 38.0
+## Overhand: fast, lofted a little above the aim vector — an arm coming over
+## the top releases upward, and on this map that buys ~28m of range.
+## Underhand: much slower and lofted hard, landing ~10m out over a higher
+## peak. The lob is for dropping one into the ditch or over near cover
+## without stepping out.
+##
+## Both are read by the trajectory preview through grenade_launch_velocity(),
+## so the drawn arc can never disagree with the throw.
+##
+## DERIVED, not guessed. At the grenade's effective gravity (12 m/s^2 — see
+## Grenade.GRAVITY_SCALE) and a 1.6m release height, these give:
+##   overhand   24 m/s @ 14deg -> 27.6m range, 3.0m peak, 1.18s flight
+##   underhand  10 m/s @ 45deg ->  9.7m range, 3.6m peak, 1.37s flight
+## which satisfies "the lob lands visibly shorter AND higher" on both counts,
+## and leaves both well inside the 5s fuse so an uncooked throw lands and
+## rolls before it goes off.
+const GRENADE_SPEED_OVERHAND := 24.0
+const GRENADE_SPEED_UNDERHAND := 10.0
+const GRENADE_PITCH_OVERHAND_DEG := 14.0
+const GRENADE_PITCH_UNDERHAND_DEG := 45.0
 ## Spawn offset from the camera, along the look direction — clear of the
 ## player's own capsule so the throw doesn't start inside it.
 const GRENADE_SPAWN_FORWARD := 0.45
 
 @export var grenade_max_carry: int = 4
+## Master switch for the throw-trajectory preview, so the arc can be turned
+## off and the throw playtested on instinct alone. Read every frame by
+## GrenadeArc, so toggling it at runtime takes effect immediately.
+@export var grenade_arc_enabled: bool = true
 ## Grenades are bought (EQUIPMENT tab) or found in resupply drops, never
 ## granted at spawn. Exposed so the arc/throw/detonation work can be
 ## playtested before the store tab exists — set it in the inspector.
@@ -333,6 +348,7 @@ func _ready() -> void:
 	_build_listener()
 	_build_viewmodel()
 	_build_audio()
+	_build_grenade_arc()
 
 	# Starting loadout: M17 only, 2 mags total (one loaded, one spare).
 	_grant_starting_ammo(STARTING_WEAPON)
@@ -1013,6 +1029,14 @@ func owned_weapons() -> Array:
 	return owned
 
 # --- Hand grenade ---------------------------------------------------------
+## The preview arc is a sibling in world space, not a child transform of the
+## player — it draws absolute coordinates and sets top_level itself.
+func _build_grenade_arc() -> void:
+	var arc := GrenadeArc.new()
+	arc.name = "GrenadeArc"
+	add_child(arc)
+	arc.setup(self, camera)
+
 ## G. A slot toggle, not a throw — the throw is LMB/RMB once it's in hand.
 func _toggle_grenade() -> void:
 	if not control_enabled or _mantling:
