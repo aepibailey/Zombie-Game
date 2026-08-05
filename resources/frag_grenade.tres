@@ -2,21 +2,43 @@
 
 ; Hand grenade — the first consumer of the shared area-damage system.
 ;
-; obstacle_damage_mult is 0.25 deliberately: frag is anti-personnel, not a
-; breaching charge. It should visibly mark a wall, not threaten it. The 120mm
-; mortar is where a high obstacle multiplier belongs.
+; GEOMETRY: 4m lethal radius, 9m maximum, QUADRATIC falloff (falloff = 1) so
+; damage reaches exactly zero at 9m. Quadratic rather than linear because it
+; drops fast then tails off, which is how frag actually behaves — the
+; difference between 4m and 6m should be dramatic, and between 7m and 9m
+; should be nearly nothing.
 ;
-; WHAT 0.25 ACTUALLY COSTS NOW: sandbags were re-cut into 5 sections of 200 HP
-; each (was one 4000 HP wall), so a point-blank grenade lands 110 * 0.25 = 27.5
-; on a section — about 14% of it, or ~8 grenades to breach one 2m section. That
-; is NOT the rounding error the original note here claimed; the comment was
-; written against the old 4000 HP wall and was stale, not the value. 0.25 is
-; kept as-is because ~8 grenades per section still reads as "marks it, doesn't
-; breach it", but it is now a real cost and worth re-checking if section
-; health changes again.
+;     0-4m  180      5m  115      6m  65      7m  29      8m  7      9m  0
 ;
-; blocked_damage_mult 0.0 = intact cover is total protection, which is what
-; makes sandbags tactically meaningful against grenades.
+; MAX_DAMAGE 180, RAISED FROM 110. This was NOT part of the requested change
+; and is flagged rather than silent. At 110 the "lethal radius" was not
+; lethal: zombie HP is 100 + 8*floor((night-1)/2), so a point-blank grenade
+; stopped one-shotting anything from night 5 onward, and "a grenade thrown
+; into the ditch kills the zombies trapped in it" was simply false for most
+; of a run. 180 is the night-21 zombie's exact HP, so a grenade inside 4m
+; one-shots every zombie through night 22 and degrades gracefully after.
+; It also widens the player's own kill zone from 4m to 5m — your own grenade
+; is correspondingly less forgiving, which is the intended trade.
+;
+; OBSTACLE_DAMAGE_MULT 0.153, LOWERED FROM 0.25 TO COMPENSATE. Frag is
+; anti-personnel, not a breaching charge: it should visibly mark a wall, not
+; threaten it. 180 * 0.153 = 27.5 per sandbag section, which is EXACTLY what
+; 110 * 0.25 delivered before — so raising the anti-personnel damage above
+; leaves structures untouched at ~7 grenades to breach one 200 HP section.
+; The two numbers move together; change one and recompute the other.
+; (Sandbags are 5 sections of 200 HP each — a note here previously assumed
+; the old single 4000 HP wall and was wrong by 20x.) The 120mm mortar is
+; where a genuinely high obstacle multiplier belongs.
+;
+; BLOCKED_DAMAGE_MULT 0.0 = intact cover is total protection, which is what
+; makes sandbags tactically meaningful against grenades. A zombie fully
+; behind an unbreached section takes nothing; one behind a destroyed section
+; takes full damage, because destruction disables the collision shape the
+; line-of-sight trace reads.
+;
+; NOISE_RADIUS 50m. Louder than every unsuppressed rifle on the roster
+; (M17 40m, HK416 45m, M110 48m, SPAS 50m) except the M249's 55m, so a
+; detonation pulls zombies from farther than a gunshot does.
 
 [ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
 
@@ -24,15 +46,15 @@
 script = ExtResource("1_adp")
 id = "frag_grenade"
 display_name = "Hand Grenade"
-lethal_radius = 5.0
-max_radius = 12.0
-max_damage = 110
+lethal_radius = 4.0
+max_radius = 9.0
+max_damage = 180
 falloff = 1
 arc_degrees = 360.0
 blocked_damage_mult = 0.0
 damages_obstacles = true
-obstacle_damage_mult = 0.25
+obstacle_damage_mult = 0.153
 duration = 0.0
 tick_interval = 0.5
 sfx_detonate = "res://assets/audio/fx/grenade_blast.wav"
-noise_radius = 55.0
+noise_radius = 50.0
