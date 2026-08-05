@@ -39,12 +39,24 @@ const FIRST_SPAWN_DELAY := 1.5
 var _type_walker: ZombieType = preload("res://resources/zombie_walker.tres")
 var _type_leaper: ZombieType = preload("res://resources/zombie_leaper.tres")
 
-# All-clear prompt keybinds (shown on the prompt).
+# All-clear prompt keybinds (shown on the prompt). Deliberately kept as raw
+# keycodes rather than input-map actions: they are a modal yes/no answer that
+# only exists while the prompt is up, not a rebindable game control.
+#
+# N NOW DOUBLE-BOOKS. It answers "finish the night" here AND, since the NVG
+# toggle moved off G, it is the global nvg_toggle bind. The prompt wins while
+# it is visible — see _unhandled_input(), which checks the prompt FIRST and
+# marks the event handled. Y/N is kept rather than re-lettering "finish the
+# night" to something free, because yes/no IS the mnemonic and a prompt
+# answered with Y and, say, F reads worse than one gated by visibility.
 const KEY_SKIP_TO_DAY := KEY_Y
 const KEY_FINISH_NIGHT := KEY_N
 
-# Night-vision toggle (v1: always-on, no battery — PROJECT_SPEC.md "NVGs").
-const KEY_NVG_TOGGLE := KEY_G
+## Night-vision toggle (v1: always-on, no battery — PROJECT_SPEC.md "NVGs").
+## Moved from G to N; G is now the grenade equip toggle. Both live in the
+## input map (project.godot `[input]`) so they stay remappable — this is the
+## action NAME, not a keycode, and nothing here assumes which key it is.
+const ACTION_NVG_TOGGLE := "nvg_toggle"
 
 # Debug: show distance to every zombie within footstep-audible range.
 const KEY_DEBUG_AUDIO := KEY_F3
@@ -820,7 +832,21 @@ func _update_wave_hud() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	if event.keycode == KEY_NVG_TOGGLE:
+	# MODAL FIRST. The all-clear prompt owns Y/N while it is visible, and N is
+	# also the global NVG bind — without this ordering the NVG toggle would
+	# swallow "finish the night" and the prompt would look broken. Handled
+	# events stop here so nothing downstream sees the answer either.
+	if _hud and _hud.all_clear_visible():
+		if event.keycode == KEY_SKIP_TO_DAY:
+			_hud.hide_all_clear()
+			GameManager.force_phase(GameManager.Phase.DAY)
+			get_viewport().set_input_as_handled()
+			return
+		elif event.keycode == KEY_FINISH_NIGHT:
+			_hud.hide_all_clear()
+			get_viewport().set_input_as_handled()
+			return
+	if event.is_action_pressed(ACTION_NVG_TOGGLE):
 		_toggle_nvg()
 		return
 	if event.keycode == KEY_DEBUG_AUDIO:
@@ -838,12 +864,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hud.show_message("DEBUG BLAST — %d actors, %d killed, %d structures" % [
 			r.get("actors", 0), r.get("killed", 0), r.get("structures", 0)])
 		return
-	if _hud and _hud.all_clear_visible():
-		if event.keycode == KEY_SKIP_TO_DAY:
-			_hud.hide_all_clear()
-			GameManager.force_phase(GameManager.Phase.DAY)
-		elif event.keycode == KEY_FINISH_NIGHT:
-			_hud.hide_all_clear()
 
 # --- Zombie bookkeeping ---------------------------------------------------
 func _prune_zombies() -> void:

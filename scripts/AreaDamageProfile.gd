@@ -54,7 +54,15 @@ enum FalloffMode { LINEAR, QUADRATIC, CURVE }
 ## > 0.0 = damage-over-time zone: `max_damage` becomes damage PER TICK and is
 ## applied every `tick_interval` for `duration` seconds. Implemented but not
 ## yet used by anything — white phosphorus is the intended first consumer.
+##
+## NOT THE MORTAR. Every tick lands at the SAME origin, so this models a
+## persistent burn zone (WP), not a barrage. A 120mm mission is N separate
+## detonate() calls at N scattered origins, scheduled by the mortar itself —
+## the delay before the first round and the spread between impacts are the
+## caller's, because a profile describes ONE burst. Setting `duration` on a
+## mortar profile would produce a pillar of fire at one point instead.
 @export var duration: float = 0.0
+## Clamped to a 0.05s floor by AreaDamageSystem — 0 would never terminate.
 @export var tick_interval: float = 0.5
 
 # --- Presentation ----------------------------------------------------------

@@ -174,6 +174,10 @@ var mouse_captured := true
 var ads_active := false
 
 var hp := MAX_HP
+## True only for the remainder of the frame in which the player died. The
+## player respawns instantly, so this is the only window in which a death is
+## observable at all — see is_alive().
+var _died_this_frame := false
 
 # Weapon state. `ammo`/`reserve` mirror the CURRENT weapon. Loaded magazines
 # live here per weapon; RESERVE ammo is owned by the AmmoManager autoload.
@@ -1377,6 +1381,21 @@ func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 func take_area_damage(amount: int, origin: Vector3) -> void:
 	take_damage(amount, origin)
 
+## AreaDamageSystem's optional liveness convention, same as Zombie.is_alive().
+##
+## Without this the player was silently absent from every blast's `killed`
+## tally: _apply_once() guards on has_method("is_alive"), so killing yourself
+## with your own grenade reported 0 kills.
+##
+## `hp > 0` would NOT have worked. The player has no persistent dead state —
+## take_damage() calls _respawn() synchronously at 0 HP, which restores full
+## HP before take_area_damage() even returns — so a naive HP test reads true
+## both before and after the killing blow and still never counts. Hence the
+## latch below: _respawn() sets it, and it clears deferred, i.e. after every
+## same-frame consumer (the blast loop is synchronous) has sampled it.
+func is_alive() -> bool:
+	return not _died_this_frame
+
 ## Line-of-sight sample points for a blast: feet / chest / head. Uses the live
 ## head height so crouching behind sandbags genuinely reduces exposure.
 func area_damage_points() -> Array:
@@ -1403,6 +1422,11 @@ func take_damage(amount: int, source_pos = null) -> void:
 		_respawn()
 
 func _respawn() -> void:
+	# One-frame death latch for is_alive() — see its docstring. Set before
+	# anything else so a same-frame observer (AreaDamageSystem's kill tally)
+	# sees the death that the immediate HP restore below would otherwise hide.
+	_died_this_frame = true
+	_clear_death_latch.call_deferred()
 	# Dying with the store open must not soft-lock: force it shut (which
 	# restores control and mouse capture) before the normal death flow.
 	died_while_busy.emit()
@@ -1413,6 +1437,9 @@ func _respawn() -> void:
 	global_position = _spawn_point
 	velocity = Vector3.ZERO
 	health_changed.emit(hp, MAX_HP)
+
+func _clear_death_latch() -> void:
+	_died_this_frame = false
 
 # --- Attachment pipeline --------------------------------------------------
 ## Fit a suppressor to a specific weapon (defaults to the equipped one).

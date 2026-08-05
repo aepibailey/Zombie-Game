@@ -2,10 +2,18 @@
 
 ; Hand grenade — the first consumer of the shared area-damage system.
 ;
-; obstacle_damage_mult is 0.25 deliberately: 110 damage against a 4000 HP
-; sandbag section is already a rounding error, and frag is anti-personnel,
-; not a breaching charge. It should visibly mark a wall, not threaten it.
-; The 120mm mortar is where a high obstacle multiplier belongs.
+; obstacle_damage_mult is 0.25 deliberately: frag is anti-personnel, not a
+; breaching charge. It should visibly mark a wall, not threaten it. The 120mm
+; mortar is where a high obstacle multiplier belongs.
+;
+; WHAT 0.25 ACTUALLY COSTS NOW: sandbags were re-cut into 5 sections of 200 HP
+; each (was one 4000 HP wall), so a point-blank grenade lands 110 * 0.25 = 27.5
+; on a section — about 14% of it, or ~8 grenades to breach one 2m section. That
+; is NOT the rounding error the original note here claimed; the comment was
+; written against the old 4000 HP wall and was stale, not the value. 0.25 is
+; kept as-is because ~8 grenades per section still reads as "marks it, doesn't
+; breach it", but it is now a real cost and worth re-checking if section
+; health changes again.
 ;
 ; blocked_damage_mult 0.0 = intact cover is total protection, which is what
 ; makes sandbags tactically meaningful against grenades.

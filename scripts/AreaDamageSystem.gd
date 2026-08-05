@@ -234,10 +234,15 @@ func _spawn_dot_zone(origin: Vector3, profile: AreaDamageProfile,
 	if debug_log:
 		print("[AREADMG] DoT zone '%s' at (%.1f, %.1f, %.1f) for %.1fs every %.2fs"
 			% [profile.id, origin.x, origin.y, origin.z, profile.duration, profile.tick_interval])
+	# Clamped: a profile authored with tick_interval 0 would never advance
+	# `elapsed` and would burn forever. create_timer(0) still yields a frame,
+	# so it wouldn't hard-hang — it would just quietly become a permanent
+	# damage zone, which is worse to diagnose than a crash.
+	var tick: float = maxf(0.05, profile.tick_interval)
 	var elapsed := 0.0
 	while elapsed < profile.duration and is_instance_valid(zone):
 		_apply_once(origin, profile, facing, source_name)
-		await get_tree().create_timer(profile.tick_interval).timeout
-		elapsed += profile.tick_interval
+		await get_tree().create_timer(tick).timeout
+		elapsed += tick
 	if is_instance_valid(zone):
 		zone.queue_free()

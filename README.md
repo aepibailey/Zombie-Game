@@ -31,18 +31,23 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | `E` | Interact — open/close the supply crate when in range (any phase) |
 | `H` | Apply IFAK (4s, cancels on sprint/fire) |
 | `Space` | Jump (0.9m) — or mantle a ledge when holding forward |
-
-In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.
-| `G` | Toggle NVGs (green night-vision tint + brightness) |
+| `N` | Toggle NVGs (green night-vision tint + brightness) |
+| `G` | Equip / stow hand grenade |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
 | `F3` | Debug: list audible zombies + their distance |
 | `F4` | Debug: show zombie head/body hitbox volumes |
 
+In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.
+
 In the store: `1`/`2`/`3` or `←`/`→` switch tabs, `Esc` closes.
 
-`E` is bound via a remappable **Input Map** action (`interact`) in Project
-Settings, not hardcoded.
+`E`, `N` and `G` are bound via remappable **Input Map** actions (`interact`,
+`nvg_toggle`, `equip_grenade`) in Project Settings, not hardcoded.
+
+`N` intentionally does double duty: it is the global NVG toggle, and it also
+answers "finish the night" on the all-clear prompt. The prompt is modal and
+takes N while it is visible; NVGs get it the rest of the time.
 
 The HUD shows a top-center day/night clock with a **"Night N"** counter and the
 live **wave count** (hostiles alive · spawned/total) beneath it, plus points,
