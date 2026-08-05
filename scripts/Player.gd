@@ -12,6 +12,10 @@ signal weapon_changed(display_name: String, fire_mode: String)
 signal message(text: String)
 signal ifak_changed(count: int, max_count: int)
 signal ifak_progress(active: bool, progress: float)
+signal grenade_changed(count: int, max_count: int)
+## Equip state changed. The trajectory preview and the HUD both key off this
+## rather than polling.
+signal grenade_equipped_changed(equipped: bool)
 ## Emitted on death so any open modal UI (the store) can close itself cleanly.
 signal died_while_busy
 ## Player took a hit. `dir_angle` is radians relative to facing (0 = ahead,
@@ -121,6 +125,35 @@ const HIT_MASK := 1 | 4
 const STARTING_WEAPON := "m17"
 const MAX_HP := 100
 
+# --- Hand grenade ----------------------------------------------------------
+## Input-map action name, not a keycode — see project.godot `[input]`.
+const ACTION_EQUIP_GRENADE := "equip_grenade"
+## Total fuse, in seconds, from the moment the throw button goes DOWN. Cooking
+## and flight share one clock: a grenade cooked for 2s detonates 3s after it
+## leaves the hand. Let it run out in your hand and it kills you.
+const GRENADE_FUSE := 5.0
+const GRENADE_SCRIPT := preload("res://scripts/Grenade.gd")
+const GRENADE_PROFILE := preload("res://resources/frag_grenade.tres")
+
+## Overhand: thrown flat along the look vector at full speed.
+## Underhand: slower AND lofted, so it lands visibly shorter and higher —
+## the lob is for dropping one into the ditch or over near cover without
+## stepping out. Both are read by the trajectory preview (see
+## grenade_launch_velocity()) so the arc can never disagree with the throw.
+const GRENADE_SPEED_OVERHAND := 17.0
+const GRENADE_SPEED_UNDERHAND := 8.0
+const GRENADE_PITCH_OVERHAND_DEG := 2.0
+const GRENADE_PITCH_UNDERHAND_DEG := 38.0
+## Spawn offset from the camera, along the look direction — clear of the
+## player's own capsule so the throw doesn't start inside it.
+const GRENADE_SPAWN_FORWARD := 0.45
+
+@export var grenade_max_carry: int = 4
+## Grenades are bought (EQUIPMENT tab) or found in resupply drops, never
+## granted at spawn. Exposed so the arc/throw/detonation work can be
+## playtested before the store tab exists — set it in the inspector.
+@export var starting_grenades: int = 0
+
 # --- IFAK ------------------------------------------------------------------
 ## A 4-second commitment, not an instant heal: it forces the player to break
 ## contact before patching up, rather than button-mashing through a fight.
@@ -188,6 +221,21 @@ var owned_items: Array[String] = []   # non-weapon purchases (radio, etc.)
 var ifaks := 0
 var _ifak_applying := false
 var _ifak_timer := 0.0
+
+# --- Grenade state ---------------------------------------------------------
+## Carried count. Persists across nights and is never restocked at dawn.
+var grenades := 0
+## True while a grenade is in hand. The equipped WEAPON is deliberately left
+## untouched — nothing is swapped out — so "stow and return to the previously
+## equipped weapon" is just clearing this flag. Firing is gated on it instead.
+var grenade_equipped := false
+## Cooking = a throw button is held. Counts DOWN from GRENADE_FUSE.
+var _cooking := false
+var _cook_remaining := 0.0
+## Which button started the cook. Only that button's RELEASE throws — the
+## other one is ignored, because the throw type is committed at press.
+var _cook_button := -1
+var _cook_underhand := false
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
@@ -289,6 +337,10 @@ func _ready() -> void:
 	# Starting loadout: M17 only, 2 mags total (one loaded, one spare).
 	_grant_starting_ammo(STARTING_WEAPON)
 	_equip(STARTING_WEAPON)
+	# Normally 0 — grenades are bought or found, never issued. Routed through
+	# the same grant path as everything else so the cap holds even here.
+	grenades = 0
+	grant_grenades(starting_grenades)
 	# Reserve changes (crate purchases, supply drops) keep the HUD honest.
 	AmmoManager.reserve_changed.connect(_on_reserve_changed)
 
@@ -322,9 +374,13 @@ func _physics_process(delta: float) -> void:
 		_handle_movement(delta)
 		_handle_noise(delta)
 		_update_ifak(delta)
+		_update_cook(delta)
 		_update_laser_detection(delta)
-		# Full-auto: keep firing while the trigger is held (rate-limited in _fire).
-		if _wants_auto_fire() and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		# Full-auto: keep firing while the trigger is held (rate-limited in
+		# _fire). Gated on the grenade too, or holding LMB to cook a throw
+		# would empty a magazine at the same time.
+		if not grenade_equipped and _wants_auto_fire() \
+				and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_fire()
 	else:
 		velocity.x = 0.0
@@ -356,7 +412,11 @@ func _handle_movement(_delta: float) -> void:
 	var new_state: int
 	if is_crouching:
 		new_state = MoveState.CROUCH
-	elif sprint_held and is_moving:
+	elif sprint_held and is_moving and not _cooking:
+		# No sprinting with a live fuse in your hand. Note this gates only
+		# COOKING, not merely having a grenade equipped — walking around with
+		# one in hand is free, and normal movement speed is untouched while
+		# cooking. Only the sprint option is taken away.
 		new_state = MoveState.SPRINT
 	else:
 		new_state = MoveState.WALK
@@ -466,8 +526,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 		head.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
 		head.rotation.x = clampf(head.rotation.x, -1.4, 1.4)
-	elif event is InputEventMouseButton and event.pressed:
+	elif event is InputEventMouseButton:
 		if not (mouse_captured and control_enabled):
+			return
+		# A grenade in hand takes both mouse buttons: LMB overhand, RMB
+		# underhand. Handled before the `pressed` filter below because a
+		# throw fires on RELEASE, which the weapon path never needs.
+		if grenade_equipped:
+			_handle_grenade_mouse(event)
+			return
+		if not event.pressed:
 			return
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if not _wants_auto_fire():   # semi: one shot per click (auto is in _physics_process)
@@ -479,6 +547,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_toggle_scope()
 	elif event is InputEventKey and event.pressed and not event.echo:
+		# Input-map action, so it stays remappable — see project.godot.
+		if event.is_action_pressed(ACTION_EQUIP_GRENADE):
+			_toggle_grenade()
+			return
 		match event.keycode:
 			KEY_C:
 				if control_enabled:
@@ -556,6 +628,8 @@ func _kill_scope_tween() -> void:
 func _fire() -> void:
 	if _mantling:
 		return   # both hands on the ledge
+	if grenade_equipped:
+		return   # a grenade is in that hand — stow it (G, or a weapon slot) first
 	# Firing cancels an in-progress IFAK (nothing consumed) and does not shoot
 	# on that input — the cancel IS the action.
 	if _ifak_applying:
@@ -834,18 +908,31 @@ func _reload_shells() -> void:
 		reloading = false
 
 # --- Weapon inventory -----------------------------------------------------
+## Drops ADS unconditionally. FOV, zoom level and laser/reticle state are all
+## specific to whichever weapon was equipped when ADS turned on, so carrying
+## any of it across a change of what's in your hands is wrong in general.
+##
+## Extracted from _equip() so that bringing a GRENADE to hand goes through
+## exactly the same rule as a weapon switch, rather than a parallel copy that
+## could drift from it.
+func _force_unads() -> void:
+	if not ads_active:
+		return
+	ads_active = false
+	_kill_scope_tween()
+	camera.fov = HIP_FOV
+
 func _equip(id: String) -> void:
+	# Switching to ANY weapon puts the grenade away — including re-pressing
+	# the slot that's already equipped, which is why this runs before the
+	# same-weapon early-out below. Silent: the weapon swap is its own
+	# feedback, and "grenade stowed" on every 1-5 press would be noise.
+	if grenade_equipped:
+		_set_grenade_equipped(false)
 	if weapon and id == current_weapon_id:
 		return
-	# Force un-ADS on every switch. FOV, zoom level and laser/reticle state
-	# are all specific to whichever weapon was equipped when ADS turned on,
-	# so carrying any of it onto the new weapon is wrong in general — this is
-	# the single choke point every weapon switch passes through, not a
-	# per-weapon fix.
-	if ads_active:
-		ads_active = false
-		_kill_scope_tween()
-		camera.fov = HIP_FOV
+	# This is the single choke point every weapon switch passes through.
+	_force_unads()
 	# Stash the outgoing weapon's loaded magazine before swapping.
 	if weapon:
 		_mag[current_weapon_id] = ammo
@@ -888,6 +975,11 @@ func _on_reserve_changed(weapon_id: String, rounds: int) -> void:
 func _try_equip_slot(index: int) -> void:
 	if not control_enabled or index >= Arsenal.order.size():
 		return
+	if _cooking:
+		# Same reason as _toggle_grenade(): you cannot put a burning fuse away
+		# by reaching for a rifle.
+		message.emit("Fuse is burning — throw it.")
+		return
 	var id: String = Arsenal.order[index]
 	if id in owned:
 		_equip(id)
@@ -919,6 +1011,169 @@ func _fire_mode_label() -> String:
 
 func owned_weapons() -> Array:
 	return owned
+
+# --- Hand grenade ---------------------------------------------------------
+## G. A slot toggle, not a throw — the throw is LMB/RMB once it's in hand.
+func _toggle_grenade() -> void:
+	if not control_enabled or _mantling:
+		return
+	if _cooking:
+		# The fuse is burning. Stowing can't defuse it, and silently accepting
+		# the input would leave the player holding a live grenade with no way
+		# to throw it (the throw lives behind grenade_equipped) — a guaranteed
+		# death they never chose. Refusing is the honest answer.
+		message.emit("Fuse is burning — throw it.")
+		return
+	if grenade_equipped:
+		_set_grenade_equipped(false)
+		return
+	if grenades <= 0:
+		message.emit("No grenades.")
+		return
+	if _ifak_applying:
+		_cancel_ifak("switched to grenade")
+	_set_grenade_equipped(true)
+
+func _set_grenade_equipped(on: bool) -> void:
+	if grenade_equipped == on:
+		return
+	# Backstop for the same trap _toggle_grenade() and _try_equip_slot() guard
+	# at their own entry points: nothing may put a COOKING grenade away, because
+	# the throw is only reachable while it's in hand. The three paths that
+	# legitimately end a cook (throw / cook-off / death) all clear `_cooking`
+	# before calling here, so none of them are blocked by this.
+	if not on and _cooking:
+		return
+	grenade_equipped = on
+	if on:
+		# Same rule as a weapon switch, through the same function.
+		_force_unads()
+	else:
+		_cook_button = -1
+	grenade_equipped_changed.emit(on)
+
+## Routes LMB/RMB while a grenade is in hand. Press starts the cook and
+## commits the throw type; only the SAME button's release throws.
+func _handle_grenade_mouse(event: InputEventMouseButton) -> void:
+	var b: int = event.button_index
+	if b != MOUSE_BUTTON_LEFT and b != MOUSE_BUTTON_RIGHT:
+		return
+	if event.pressed:
+		if _cooking:
+			return   # throw type is committed at press; the other button is inert
+		_cooking = true
+		_cook_button = b
+		_cook_underhand = (b == MOUSE_BUTTON_RIGHT)
+		_cook_remaining = GRENADE_FUSE
+	elif _cooking and b == _cook_button:
+		_throw_grenade()
+
+## Initial velocity for a throw. THE PREVIEW ARC READS THIS TOO — the arc and
+## the projectile cannot disagree about where a grenade goes, because there is
+## only one function that decides.
+func grenade_launch_velocity(underhand: bool) -> Vector3:
+	var speed: float = GRENADE_SPEED_UNDERHAND if underhand else GRENADE_SPEED_OVERHAND
+	var pitch: float = GRENADE_PITCH_UNDERHAND_DEG if underhand else GRENADE_PITCH_OVERHAND_DEG
+	var dir := -camera.global_transform.basis.z.normalized()
+	# Loft the aim vector upward around the camera's own right axis, so the
+	# lob arcs above where you're looking rather than in world-space terms.
+	var right := camera.global_transform.basis.x.normalized()
+	dir = dir.rotated(right, deg_to_rad(pitch)).normalized()
+	return dir * speed
+
+## Where a thrown grenade starts. Shared with the preview arc for the same
+## reason as the velocity.
+func grenade_launch_origin() -> Vector3:
+	var fwd := -camera.global_transform.basis.z.normalized()
+	return camera.global_position + fwd * GRENADE_SPAWN_FORWARD
+
+## Which trajectory the preview should draw right now: whichever button is
+## cooking, or the overhand default when neither is held.
+func grenade_preview_underhand() -> bool:
+	return _cook_underhand if _cooking else false
+
+func _throw_grenade() -> void:
+	# Fuse carries over: flight time is whatever is LEFT after cooking, not a
+	# fresh 5s. Cooking is only useful because of this.
+	var remaining: float = _cook_remaining
+	_cooking = false
+	_cook_button = -1
+	_cook_remaining = 0.0
+	if grenades <= 0:
+		return
+	grenades -= 1
+	grenade_changed.emit(grenades, grenade_max_carry)
+	_spawn_grenade(grenade_launch_origin(), grenade_launch_velocity(_cook_underhand), remaining)
+	# Out of grenades means empty hands — stow rather than leave the player
+	# holding a grenade they don't have.
+	if grenades <= 0:
+		_set_grenade_equipped(false)
+
+func _spawn_grenade(origin: Vector3, vel: Vector3, fuse: float) -> void:
+	var g = GRENADE_SCRIPT.new()
+	get_tree().current_scene.add_child(g)
+	g.launch(origin, vel, fuse, GRENADE_PROFILE, self)
+
+## Fuse burn while the button is held. Reaching zero in the hand is a real
+## detonation at the player's own position — see _cook_off().
+func _update_cook(delta: float) -> void:
+	if not _cooking:
+		return
+	_cook_remaining -= delta
+	if _cook_remaining <= 0.0:
+		_cook_off()
+
+## Cooked too long. Detonates in hand, at the hand — not at the feet — and is
+## expected to kill: the frag profile's 110 max damage exceeds the player's
+## 100 HP, and the player's own body is excluded from the blast's line-of-
+## sight trace, so exposure is 1.0 and nothing softens it.
+func _cook_off() -> void:
+	_cooking = false
+	_cook_button = -1
+	_cook_remaining = 0.0
+	if grenades > 0:
+		grenades -= 1
+		grenade_changed.emit(grenades, grenade_max_carry)
+	_set_grenade_equipped(false)
+	message.emit("Cooked off.")
+	AreaDamageSystem.detonate(grenade_launch_origin(), GRENADE_PROFILE, Vector3.ZERO, "cook-off")
+
+## Died mid-cook: the grenade goes off where the body dropped. Deferred and
+## position-captured because this is called from _respawn(), which can itself
+## be running inside AreaDamageSystem's actor loop — detonating inline would
+## re-enter that loop mid-iteration. `_cooking` is cleared first so a chain of
+## deaths can't recurse.
+func _drop_cooking_grenade() -> void:
+	if not _cooking:
+		return
+	var where := global_position + Vector3(0.0, 0.4, 0.0)
+	_cooking = false
+	_cook_button = -1
+	_cook_remaining = 0.0
+	if grenades > 0:
+		grenades -= 1
+		grenade_changed.emit(grenades, grenade_max_carry)
+	_set_grenade_equipped(false)
+	_detonate_at.call_deferred(where)
+
+func _detonate_at(where: Vector3) -> void:
+	AreaDamageSystem.detonate(where, GRENADE_PROFILE, Vector3.ZERO, "dropped")
+
+# --- Grenade inventory ----------------------------------------------------
+## Single grant path for every source — store purchase and resupply drop both
+## come through here, so the carry cap can only be enforced in one place.
+## Returns how many were ACTUALLY taken; a drop's grenade is lost at the cap
+## rather than overflowing it.
+func grant_grenades(count: int = 1) -> int:
+	var before := grenades
+	grenades = mini(grenade_max_carry, grenades + maxi(0, count))
+	var taken := grenades - before
+	if taken > 0:
+		grenade_changed.emit(grenades, grenade_max_carry)
+	return taken
+
+func grenades_full() -> bool:
+	return grenades >= grenade_max_carry
 
 # --- Laser (beam + terminal dot) -----------------------------------------
 func _build_laser() -> void:
@@ -1427,6 +1682,9 @@ func _respawn() -> void:
 	# sees the death that the immediate HP restore below would otherwise hide.
 	_died_this_frame = true
 	_clear_death_latch.call_deferred()
+	# A grenade cooking in a dead hand goes off where the body dropped —
+	# before the respawn teleport below moves the player away from it.
+	_drop_cooking_grenade()
 	# Dying with the store open must not soft-lock: force it shut (which
 	# restores control and mouse capture) before the normal death flow.
 	died_while_busy.emit()
