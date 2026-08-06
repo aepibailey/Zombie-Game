@@ -23,6 +23,12 @@ class StoreItem:
 	var weapon_id: String = ""    # parent weapon for ammo/attachment entries
 	var kind: String = ""         # "weapon" | "ammo" | "attachment"
 	var repeatable: bool = false  # ammo can be bought over and over
+	## Purchasable during Day only. The crate itself is open in BOTH phases
+	## (see SupplyCrateZone — night shopping is deliberate), so this is a
+	## PER-ITEM restriction, not a property of the store. Declared here as
+	## data so a future Day-only item is a catalog entry and not another
+	## branch in Player.store_item_blocked().
+	var day_only: bool = false
 	## Which attachment slot this fills, for "attachment" kind items with a
 	## weapon_id: "suppressor" | "foregrip" | "choke" | "drum" | "zoom".
 	## Non-weapon attachments (radio, ir_laser) leave this "" and dispatch
@@ -31,10 +37,14 @@ class StoreItem:
 
 # Tab order. Categories not listed here are appended alphabetically, so a new
 # category still produces a working tab without touching this list.
-const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES"]
+const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES", "EQUIPMENT"]
 
 ## ~27% of a typical night's earnings (see PROJECT_SPEC.md "Economy").
 const IFAK_COST := 15
+## Cheap per unit, but capped at 4 carried and never restocked at dawn, so the
+## real cost of leaning on grenades is 24 points per full load-out plus a trip
+## to the crate in daylight.
+const GRENADE_COST := 6
 
 ## Weapon-specific attachment costs (flat, not derived from weapon cost).
 const FOREGRIP_COST := 12          # HK 416
@@ -157,6 +167,14 @@ func rebuild() -> void:
 			"weapon_id": id, "cost": w.ammo_cost, "repeatable": true,
 			"description": "+1 magazine (%d rounds)." % w.mag_size,
 		}))
+
+	# --- EQUIPMENT: ordnance you carry and permanently consume ---
+	items.append(_mk({
+		"id": "grenade", "category": "EQUIPMENT", "kind": "equipment",
+		"display_name": "Hand Grenade", "cost": GRENADE_COST, "repeatable": true,
+		"day_only": true,
+		"description": "4m lethal / 9m blast. Carry up to 4. Never restocked at dawn.",
+	}))
 
 func _mk(d: Dictionary) -> StoreItem:
 	var it := StoreItem.new()

@@ -17,6 +17,7 @@ var _tab_bar: HBoxContainer
 var _list: VBoxContainer
 var _tab_buttons: Dictionary = {}   # category -> Button
 var _categories: Array = []
+var _hint_label: Label
 var _current := ""
 var _sfx_confirm: AudioStreamPlayer
 var _sfx_deny: AudioStreamPlayer
@@ -84,13 +85,18 @@ func _ready() -> void:
 	_status_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	root.add_child(_status_label)
 
-	var hint := Label.new()
-	hint.add_theme_font_size_override("font_size", 12)
-	hint.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
-	hint.text = "Tabs: click · 1/2/3 · ←/→     Esc to close"
-	root.add_child(hint)
+	_hint_label = Label.new()
+	_hint_label.add_theme_font_size_override("font_size", 12)
+	_hint_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	root.add_child(_hint_label)
 
 	_build_tabs()
+	# Blocked states can depend on the phase (Day-only items), so the rows
+	# have to re-render when the sun goes down mid-shop — the crate stays
+	# open across the boundary.
+	GameManager.phase_changed.connect(func(_p):
+		if visible:
+			_refresh.call_deferred())
 	_sfx_confirm = _mk_sfx(SFX_CONFIRM)
 	_sfx_deny = _mk_sfx(SFX_DENY)
 	PointsManager.points_changed.connect(func(_p): _refresh.call_deferred())
@@ -118,6 +124,21 @@ func _build_tabs() -> void:
 		_tab_buttons[c] = btn
 	if _current == "" or not (_current in _categories):
 		_current = _categories[0] if _categories.size() > 0 else ""
+	_refresh_hint()
+
+## Number-key hint is DERIVED from the tab count, not spelled out. It used to
+## read a literal "1/2/3", which silently became wrong the moment a fourth
+## category was added to the catalog — the exact kind of hardcoding the
+## "adding a tab is config" claim is supposed to rule out.
+func _refresh_hint() -> void:
+	if _hint_label == null:
+		return
+	var keys: Array = []
+	# Bounded by the number keys _unhandled_input() actually binds (1-4).
+	for i in range(mini(_categories.size(), 4)):
+		keys.append(str(i + 1))
+	var key_text: String = "/".join(keys) if keys.size() > 0 else "—"
+	_hint_label.text = "Tabs: click · %s · ←/→     Esc to close" % key_text
 
 func _select_tab(category: String) -> void:
 	if category == "" or not (category in _categories):
@@ -226,7 +247,11 @@ func _refresh() -> void:
 	if _list.get_child_count() == 0:
 		var empty := Label.new()
 		empty.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
-		empty.text = "Nothing available here yet — buy a weapon first."
+		# Only the weapon-gated tabs can be empty for that reason; a tab whose
+		# items are unconditional (EQUIPMENT) would be lying with that copy.
+		empty.text = "Nothing available here yet."
+		if _current in ["ATTACHMENTS", "SUPPLIES"]:
+			empty.text += " Attachments and ammo unlock with the weapon they fit."
 		_list.add_child(empty)
 
 func _add_group_header(text: String) -> void:

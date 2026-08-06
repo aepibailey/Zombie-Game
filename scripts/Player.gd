@@ -2025,12 +2025,30 @@ func apply_store_purchase(item) -> String:
 			if item.id == "ifak":
 				add_ifak(1)
 				return "IFAK stowed (%d/%d)." % [ifaks, ifak_max_carry]
+		"equipment":
+			if item.id == "grenade":
+				# Same capped grant path a resupply drop uses — the cap can
+				# only ever be enforced in one place.
+				grant_grenades(1)
+				return "Grenade stowed (%d/%d)." % [grenades, grenade_max_carry]
 	return ""
 
-## Consumables aren't "owned", but a full IFAK pouch blocks further purchase.
+## Repeatable items are never "owned", but a full pouch blocks further
+## purchase. Carry caps deliberately stay per-item rather than generic: each
+## one reads a different counter against a different maximum, and collapsing
+## them behind a shared interface would hide which field a cap belongs to.
 func store_item_blocked(item) -> String:
+	# Generic and data-driven: any catalog entry can set day_only and this
+	# needs no new branch. The crate itself is open at night on purpose (see
+	# SupplyCrateZone) — the restriction belongs to the item, not the store.
+	if item.day_only and not GameManager.is_day():
+		return "DAY ONLY"
+	# Carry caps, by contrast, are NOT generic — each is a different counter
+	# on a different field. See the note on apply_store_purchase().
 	if item.kind == "consumable" and item.id == "ifak" and ifak_full():
 		return "CARRYING %d/%d" % [ifaks, ifak_max_carry]
+	if item.kind == "equipment" and item.id == "grenade" and grenades_full():
+		return "CARRYING %d/%d" % [grenades, grenade_max_carry]
 	return ""
 
 ## Prerequisite satisfied? Prereqs may name a weapon id or a non-weapon item id.
