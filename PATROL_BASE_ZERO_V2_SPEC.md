@@ -901,8 +901,12 @@ reaches exactly zero at max:
 |---|---|---|---|---|---|
 | 180 | 115 | 65 | 29 | 7 | 0 |
 
-**Noise 50m.** Against the roster (M17 40, HK416 45, M110 48, SPAS 50, M249
-55) a detonation out-pulls every unsuppressed weapon except the SAW.
+**Noise 50m.** Against the roster (M17 40, HK416 45, M249 47, M110 48, SPAS
+50) a detonation out-pulls every unsuppressed rifle and ties the shotgun — so
+it is at least as loud as anything you can fire, and louder than all but one.
+
+> The M249 was 55m until the noise pass in §8 dropped it to 47m; before that
+> it was the one weapon a detonation did not out-pull.
 
 **Flagged: `max_damage` was raised 110 → 180, which was not requested.** At
 110 the "lethal radius" was not lethal. Zombie HP is
@@ -1006,3 +1010,46 @@ equipment has no `weapon_id` so it skips the owned-weapon filter, takes the
 as OWNED. The crate stays open across the day/night boundary, so
 `phase_changed` now triggers a re-render (guarded on `visible`) — otherwise a
 grenade row would still read "Buy" after dusk.
+
+---
+
+## 8. Weapon noise: M249 brought in line with the HK 416
+
+**`M249.noise_unsuppressed`: 55m → 47m.**
+
+The SAW and the 416 fire the **same cartridge (5.56×45 NATO)**, so a single
+report should carry about the same distance. 55m against the 416's 45m implied
+a fundamentally louder weapon, which the ammunition does not support. 47m keeps
+the SAW marginally the louder of the two — longer barrel, open-bolt action —
+without pretending it is a different class of noise.
+
+**The SAW's threat was never its muzzle blast; it is its volume of fire.** A
+100-round belt at 12.5 rounds/second emits a noise event *per shot*, so holding
+the trigger still floods the area with overlapping 47m events. Nothing about
+that changed. What changed is that one burst no longer announces itself 10m
+farther than the same round out of a 416.
+
+**This puts the whole roster in caliber order**, which it was not in before:
+
+| Weapon | Cartridge | Unsuppressed | Suppressed |
+|---|---|---|---|
+| M17 | 9×19mm | 40m | 8m |
+| HK 416 | 5.56×45mm | 45m | 10m |
+| M249 SAW | 5.56×45mm | **47m** | 14m |
+| KAC M110 | 7.62×51mm | 48m | 11m |
+| SPAS-12 | 12 gauge | 50m | 12m |
+
+9mm < 5.56 < 7.62 < 12ga, with the two 5.56 weapons 2m apart. Previously the
+SAW sat above the 7.62 DMR and the 12-gauge shotgun on nothing but its own
+say-so.
+
+**Knock-on effect, intended:** the hand grenade's 50m blast now out-ranges
+every rifle on the roster and ties only the SPAS-12. The M249 was previously
+the single weapon that pulled zombies from farther than a detonation.
+
+**Flagged, not changed:** `noise_suppressed` remains **14m** on the SAW
+against the 416's **10m** — the same 5.56-parity argument applies there and was
+left alone because the request specified the unsuppressed figure. There is a
+defensible reason to keep a gap (suppressor performance depends on barrel
+length and gas system, not just cartridge), but if the caliber argument is
+meant to hold throughout, this is the other number to move.

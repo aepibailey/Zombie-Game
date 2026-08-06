@@ -80,7 +80,13 @@ func _ready() -> void:
 		"mag_size": 100, "starting_mags": 2, "ammo_cost": 4,
 		"fire_interval": 0.08, "reload_time": 5.0,
 		"body_damage": 28, "hip_spread_radius": 110.0, "recoil_per_shot": 0.03,
-		"max_range": 220.0, "noise_unsuppressed": 55.0, "noise_suppressed": 14.0, "cost": 30,
+		# Noise 47m, down from 55m. The SAW and the 416 are the same cartridge
+		# (5.56x45 NATO), so a single report should sound broadly the same —
+		# the SAW's threat is its volume of fire, not a louder muzzle blast.
+		# 2m over the 416's 45m is the whole difference, for the longer barrel
+		# and open-bolt action. This also puts the roster in caliber order:
+		# 9mm 40 < 5.56 45/47 < 7.62 48 < 12ga 50.
+		"max_range": 220.0, "noise_unsuppressed": 47.0, "noise_suppressed": 14.0, "cost": 30,
 		# Penalty is driven by stance, not shot count: controllable prone-ish
 		# (crouched), sloppy standing, near-useless on the move.
 		"auto_penalty": WeaponData.AutoPenalty.STANCE,

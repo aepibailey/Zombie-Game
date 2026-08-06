@@ -36,9 +36,10 @@
 ; takes full damage, because destruction disables the collision shape the
 ; line-of-sight trace reads.
 ;
-; NOISE_RADIUS 50m. Louder than every unsuppressed rifle on the roster
-; (M17 40m, HK416 45m, M110 48m, SPAS 50m) except the M249's 55m, so a
-; detonation pulls zombies from farther than a gunshot does.
+; NOISE_RADIUS 50m — as loud as the loudest thing on the roster and louder
+; than every rifle: M17 40m, HK416 45m, M249 47m, M110 48m, SPAS-12 50m
+; (a tie). A detonation therefore pulls zombies from at least as far as any
+; unsuppressed shot, and farther than any of them except the shotgun.
 
 [ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
 
