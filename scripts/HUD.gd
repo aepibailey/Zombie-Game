@@ -14,6 +14,7 @@ var _wave_label: Label
 var _points_label: Label
 var _health_label: Label
 var _ammo_label: Label
+var _grenade_label: Label
 var _state_label: Label
 var _supp_label: Label
 var _msg_label: Label
@@ -53,6 +54,9 @@ func _ready() -> void:
 	_points_label = _mk(panel)
 	_health_label = _mk(panel)
 	_ammo_label = _mk(panel)
+	# Directly under the ammo readout: grenades are ordnance you're carrying,
+	# and the two get checked together before pushing out.
+	_grenade_label = _mk(panel)
 	_ifak_label = _mk(panel)
 	_state_label = _mk(panel)
 	_supp_label = _mk(panel)
@@ -304,7 +308,11 @@ func bind_player(player: Player) -> void:
 	player.zombie_hit.connect(show_hitmarker)
 	player.ifak_changed.connect(_on_ifak_changed)
 	player.ifak_progress.connect(_on_ifak_progress)
+	player.grenade_changed.connect(_on_grenade_changed)
+	player.grenade_equipped_changed.connect(_on_grenade_equipped_changed)
 	_on_ifak_changed(player.ifaks, player.ifak_max_carry)
+	_on_grenade_changed(player.grenades, player.grenade_max_carry)
+	_on_grenade_equipped_changed(player.grenade_equipped)
 	# The player's _ready() emitted its initial values before we connected,
 	# so pull the current state once to seed the labels.
 	_on_ammo_changed(player.ammo, player.reserve)
@@ -357,6 +365,27 @@ func _on_ammo_changed(loaded: int, reserve: int) -> void:
 
 func _on_state_changed(state_name: String) -> void:
 	_state_label.text = "Move: %s" % state_name
+
+## Grenades are bought or found and permanently consumed — never restocked at
+## dawn — so the count is a running total for the whole run, not a per-night
+## allowance. Greys out at zero, the same language the IFAK line uses.
+func _on_grenade_changed(count: int, max_count: int) -> void:
+	_grenade_label.text = "Grenades: %d / %d   [G]" % [count, max_count]
+	_refresh_grenade_colour(count)
+
+## Equipping highlights the line, so "a grenade is in my hand and my weapon
+## will not fire" is visible on the HUD rather than only in the viewmodel.
+func _on_grenade_equipped_changed(_equipped: bool) -> void:
+	if _player:
+		_refresh_grenade_colour(_player.grenades)
+
+func _refresh_grenade_colour(count: int) -> void:
+	var col := Color(1, 1, 1)
+	if count <= 0:
+		col = Color(0.55, 0.55, 0.55)
+	elif _player and _player.grenade_equipped:
+		col = Color(1.0, 0.85, 0.4)
+	_grenade_label.add_theme_color_override("font_color", col)
 
 func _on_ifak_changed(count: int, max_count: int) -> void:
 	_ifak_label.text = "IFAK: %d / %d   [H]" % [count, max_count]
