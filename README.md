@@ -40,7 +40,8 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 
 In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.
 
-In the store: `1`/`2`/`3` or `←`/`→` switch tabs, `Esc` closes.
+In the store: `1`–`4` or `←`/`→` switch tabs (WEAPONS / ATTACHMENTS /
+SUPPLIES / EQUIPMENT), `Esc` closes.
 
 `E`, `N` and `G` are bound via remappable **Input Map** actions (`interact`,
 `nvg_toggle`, `equip_grenade`) in Project Settings, not hardcoded.

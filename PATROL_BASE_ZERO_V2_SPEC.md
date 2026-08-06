@@ -668,3 +668,341 @@ constant (`Zombie.HEADSHOT_MULT`) applied identically to both weapons
 downstream, so it cancels out of the comparison entirely and checking the body
 figure proves the headshot figure. This also avoids adding a `class_name` to
 `Zombie.gd` purely to expose a constant to the check.
+
+---
+
+## 5. Area-damage system: audit findings
+
+The shared area-damage system was built and partially playtested in an earlier
+pass. It was audited before the grenade was built on top of it. **It was not
+rebuilt**, and almost everything checked out; this section records what was
+verified and the four things that were changed.
+
+### 5.1 Interface
+
+```gdscript
+AreaDamageSystem.detonate(
+    origin: Vector3,
+    profile: AreaDamageProfile,
+    facing: Vector3 = Vector3.ZERO,
+    source_name: String = ""
+) -> Dictionary        # {actors, structures, total_damage, killed}
+```
+
+Everything else is on the `AreaDamageProfile` resource. `AreaDamageSystem.gd`
+is the "how"; the `.tres` is the "what".
+
+### 5.2 Is it generic, or grenade-shaped?
+
+Generic. All three planned consumers are expressible with the interface
+unchanged:
+
+| Consumer | Verdict |
+|---|---|
+| Directional claymore | Fully covered. `arc_degrees` + the `facing` argument, and `in_arc()` is applied to **both** actors and structures — so a directional charge won't blow up a wall behind it. Pure `.tres`. |
+| White phosphorus | Covered. `duration > 0` spawns a ticking zone that re-queries the damageable group **every tick**, so a zombie that walks into an already-burning zone is burned. That is the part that is easy to get wrong and it is right. Pure `.tres`. |
+| 120mm mortar | Covered, but **not via `duration`**. See below. |
+
+**The mortar footgun, documented rather than coded around.** `duration`
+repeats at ONE fixed origin — it models a persistent burn zone, not a barrage.
+A 120mm mission is N separate `detonate()` calls at N scattered origins,
+scheduled by the mortar itself: the delay before the first round and the
+spread between impacts are the caller's business, because a profile describes
+ONE burst. An implementer who reaches for `duration` gets a pillar of fire at
+a single point. This is now stated on the field itself in
+`AreaDamageProfile.gd`.
+
+### 5.3 What was verified and left alone
+
+- **No faction filtering, structurally.** Iterates the `damageable` group with
+  no filter of any kind. Player and Zombie both join in `_ready()`. `source`
+  is logging-only and explicitly not excluded — your own grenade kills you. A
+  future allied fighter is picked up by joining the group and implementing
+  `take_area_damage()`, and nothing else.
+- **FALLEN and ENTANGLED zombies are valid targets**, confirmed by absence:
+  nothing anywhere filters on zombie state. Two details make it actually work:
+  **C-wire does not block frag** (`COVER_MASK` deliberately excludes
+  `PLAYER_BARRIER_LAYER` — wire is strands, not cover), while **the ditch
+  revetment does** (`SOLID_NO_NAV_LAYER` is in the mask). Both are correct: a
+  grenade landing *in* the pit has clear line of sight to everything in it,
+  and one on the lip is blocked by the wall.
+- **Line of sight is multi-point, not a single ray.** `_exposure()` traces to
+  3 body sample points and returns a 0–1 fraction. Zombies supply
+  silhouette-scaled points, so a tall leaper is harder to fully cover than a
+  walker; the player uses its **live** head height, so crouching genuinely
+  reduces exposure. Actor bodies are excluded from the trace — bodies never
+  shield each other, only real geometry does.
+- **Per-section sandbag damage already worked**, and needed no change when
+  sandbags were re-cut into 5 panels: `SandbagPanel` joins the `sandbags`
+  group *directly* (the wall does not), and `_damage_structures()` measures to
+  each panel's own `nearest_point()`. A **destroyed** panel also stops
+  providing cover for free, because destruction disables the collision shape
+  the LOS ray reads.
+
+### 5.4 What was changed (four fixes)
+
+1. **`tick_interval` is clamped to a 0.05s floor.** A profile authored with
+   `0.0` never advanced `elapsed` and became a permanent damage zone —
+   `create_timer(0)` still yields a frame, so it would not have hard-hung, it
+   would have quietly burned forever. White phosphorus is the first consumer
+   of that exact path.
+2. **`Player.is_alive()` added.** `_apply_once()` guards on
+   `has_method("is_alive")`, so the player was silently absent from every
+   blast's `killed` tally. **`hp > 0` does not work here**: the player has no
+   persistent dead state — `take_damage()` calls `_respawn()` synchronously at
+   0 HP, restoring full HP before `take_area_damage()` even returns — so a
+   naive HP test reads true on both sides of the killing blow. It uses a
+   one-frame death latch set in `_respawn()` and cleared deferred, which is
+   also what the grenade's "died while cooking" hook hangs on.
+3. **`duration`'s mortar footgun documented** (5.2).
+4. **`frag_grenade.tres`'s obstacle note corrected.** It justified
+   `obstacle_damage_mult` against a **4000 HP** sandbag wall; sections are
+   **200 HP**. The reasoning was wrong by 20x, not the value.
+
+---
+
+## 6. Hand grenade
+
+### 6.1 Keybinds
+
+| Key | Action | Input-map action |
+|---|---|---|
+| `N` | Toggle NVGs (**moved from G**) | `nvg_toggle` |
+| `G` | Equip / stow hand grenade | `equip_grenade` |
+
+Both are **input-map actions**, not keycodes, so they stay remappable; the
+code refers to action names and never assumes which key is bound. Physical
+keycodes, matching the existing `interact` convention.
+
+**N was already taken.** `Main.KEY_FINISH_NIGHT` is `KEY_N` — the "finish the
+night" answer on the all-clear prompt — and worse, the NVG check ran *before*
+the prompt block in the same `_unhandled_input`, so N would have toggled NVGs
+and the prompt would have looked broken. **Resolved by ordering, not
+re-lettering:** `_unhandled_input()` now checks the modal prompt first and
+marks the event handled. `Y`/`N` keeps its yes/no mnemonic, and NVGs get N
+whenever the prompt is not up.
+
+### 6.2 Equip state
+
+`grenade_equipped` is a flag. **The weapon slot is never swapped out** — so
+"stow and return to the previously equipped weapon" needs no save/restore,
+because the weapon was always still there, merely gated.
+
+- **Equipping forces un-ADS through the same function as a weapon switch.**
+  The un-ADS block was *extracted* from `_equip()` into `_force_unads()`
+  rather than copied, so the grenade rule cannot drift from the weapon rule.
+- Switching to any weapon stows it, including re-pressing the already-equipped
+  slot. Silent — the swap is its own feedback.
+- Zero grenades: G does nothing, emits "No grenades."
+- Firing is blocked while a grenade is in hand, **including the full-auto hold
+  path** — otherwise holding LMB to cook would also empty a magazine.
+
+### 6.3 Cooking and throwing
+
+LMB = overhand, RMB = underhand. The throw type is **committed at press**; the
+other button goes inert, and only the committed button's *release* throws.
+
+- **`GRENADE_FUSE = 5.0`**, started the instant the button goes down. Cooking
+  and flight share one clock, so a grenade cooked 2s has 3s of flight. That is
+  the whole reason to cook.
+- **Cook-off is genuinely lethal**, and the arithmetic was checked rather than
+  assumed: 180 blast damage vs the player's 100 HP, detonated at the hand, and
+  the player's own body is excluded from the LOS trace, so exposure is 1.0 and
+  nothing softens it.
+- **Death mid-cook** detonates where the body dropped. Position-captured and
+  `call_deferred`, because `_respawn()` can itself be running *inside*
+  `AreaDamageSystem`'s actor loop and detonating inline would re-enter that
+  loop mid-iteration.
+- Movement speed is untouched while cooking; **only sprint** is removed.
+  Merely holding a grenade costs nothing.
+
+**Deviation from the literal request, deliberate.** Stowing (G) or switching
+weapons **while the fuse burns is refused**, with "Fuse is burning — throw
+it." Allowing it would leave the player holding a live grenade with no way to
+throw it — the throw lives behind `grenade_equipped` — i.e. a guaranteed death
+they never chose. Guarded at both entry points and backstopped in
+`_set_grenade_equipped()`. The three legitimate ways a cook ends (throw,
+cook-off, death) all clear `_cooking` first, so none are blocked.
+
+### 6.4 Projectile
+
+`Grenade.gd`, a `RigidBody3D`. **It owns no damage code**: detonation is one
+`AreaDamageSystem.detonate()` call with `frag_grenade.tres`.
+
+- **Collision layer 0, on purpose.** Layer 1 would put the grenade inside the
+  blast's own `COVER_MASK` and let a grenade act as its own cover. Its *mask*
+  still covers world + sandbags + the ditch revetment, so it collides
+  normally. C-wire is excluded — a grenade rolls under wire.
+- `continuous_cd` on, so a fast throw cannot tunnel a sandbag.
+- **Zero linear damping, with `DAMP_MODE_REPLACE`** — see 6.5.
+
+### 6.5 Trajectory preview arc
+
+`GrenadeArc.gd`. Visible only with a grenade in hand, rebuilt every frame,
+terminates at first impact. No bounce or roll prediction, no impact marker, no
+blast ring. Where it ends is where the grenade first *touches*, not where it
+comes to rest; reading that difference is the player's job.
+
+It reproduces the throw rather than resembling it: origin and velocity come
+from `Player.grenade_launch_origin()`/`grenade_launch_velocity()` — the same
+functions `_throw_grenade()` calls — gravity from
+`Grenade.projectile_gravity()`, and raycasts on `Grenade.COLLISION_MASK`.
+**Two things had to change to make that literally true:**
+
+1. **The projectile's linear damping is now zero, with `DAMP_MODE_REPLACE`.**
+   The mode matters: the default *combines* with the project's ambient
+   `default_linear_damp` (0.1), which would have applied even at 0.0. Settling
+   is left to friction and angular damping, which act only on contact.
+2. **The simulation integrates at the PHYSICS tick rate**, emitting a drawn
+   sample every 4 ticks, and raycasts every *sub*-step. Integrating
+   sample-to-sample instead adds `g·t·(dt_sample − dt_physics)/2` of extra
+   droop under semi-implicit Euler — about **1.0m low after 1s of flight**.
+   The arc would have pointed a metre short of the real impact.
+
+**Rendering.** A camera-facing ribbon, not `PRIMITIVE_LINE_STRIP` — Godot 4
+fixes 3D line width at 1px, too thin to read against greybox terrain.
+Unshaded, alpha-blended, **never additive**, no emission, albedo under 1.0.
+Per-vertex alpha 0.85 → 0.10 along the curve under a 0.55 global dimmer, so
+short throws read confident and long ones trail off.
+
+**NVG legibility** was checked against the implementation, not assumed: the
+night NVG path is a green `ColorRect` overlay with **no glow pass at all**
+(`Main._apply_gain_limit()` enables glow only during the *daylight* gain-limit
+whiteout), so the arc cannot bloom at night by construction. Keeping albedo
+under 1.0 also holds it below the HDR glow threshold if glow is ever enabled
+at night later.
+
+Visibility sits behind `Player.grenade_arc_enabled`, read every frame so it
+can be toggled at runtime.
+
+### 6.6 Throw ballistics — and a gravity divergence
+
+**Flagged: the grenade body runs at `gravity_scale = 0.5`. The player's own
+fall is untouched.** The project's 24.0 gravity is tuned for how the *player*
+falls (2.4x real, makes jumps crisp). Applied to a thrown object it is
+crushing: an overhand throw travelled **6.5m and was in the air 0.42s**, which
+is not a grenade throw. Halving it puts the projectile near real gravity.
+
+| | Speed / pitch | Range | Peak | Flight |
+|---|---|---|---|---|
+| Overhand | 24 m/s @ 14° | 27.6m | 3.0m | 1.18s |
+| Underhand | 10 m/s @ 45° | 9.7m | 3.6m | 1.37s |
+
+The lob is **both shorter and higher** — both conditions checked, not inferred
+from the loft angle. Both flights land well inside the 5s fuse, so an uncooked
+throw lands and rolls before it goes off.
+
+### 6.7 Detonation
+
+`resources/frag_grenade.tres`. 4m lethal, 9m max, QUADRATIC falloff so damage
+reaches exactly zero at max:
+
+| 0–4m | 5m | 6m | 7m | 8m | 9m |
+|---|---|---|---|---|---|
+| 180 | 115 | 65 | 29 | 7 | 0 |
+
+**Noise 50m.** Against the roster (M17 40, HK416 45, M110 48, SPAS 50, M249
+55) a detonation out-pulls every unsuppressed weapon except the SAW.
+
+**Flagged: `max_damage` was raised 110 → 180, which was not requested.** At
+110 the "lethal radius" was not lethal. Zombie HP is
+`100 + 8·floor((night−1)/2)`, so a point-blank grenade **stopped one-shotting
+anything from night 5 onward**, and "a grenade thrown into the ditch kills the
+zombies trapped in it" was false for most of a run. 180 is the night-21
+zombie's exact HP: a grenade inside 4m one-shots every zombie through night 22
+and degrades gracefully after. **Accepted side effect: the player's own kill
+zone widens from 4m to 5m.**
+
+`obstacle_damage_mult` moved 0.25 → **0.153** to compensate, because
+180 × 0.153 = 27.5 per sandbag section — *exactly* what 110 × 0.25 delivered.
+Sandbag durability against grenades is unchanged at ~7 grenades per 200 HP
+section. **The two numbers move together; change one and recompute the other.**
+
+**Verified by simulation, not assumed:** a grenade falling the pit's full 3m
+settles in **2 bounces** (rebound apex 0.24m, then 0.02m at `BOUNCE = 0.28`),
+so it comes to rest in the ditch and cannot bounce back out.
+
+### 6.8 Inventory
+
+- **Hard cap 4.** `grant_grenades()` is the only path that raises the count and
+  it clamps; every other write is a decrement. Store purchases and resupply
+  drops both route through it, so the cap is enforced in exactly one place.
+- **Not restocked at dawn.** `Main._begin_day()` has no refill path — nothing
+  in the codebase does — matching the existing "ammo does NOT regenerate, not
+  on death, not at dawn" rule. Grenades also survive death: `_respawn()`
+  restores HP and position only.
+- **Persist across nights**, because night transitions are phase changes on a
+  live scene, never a reload.
+- HUD shows `Grenades: N / 4  [G]` under the ammo readout, greyed at zero and
+  amber while equipped.
+
+**Noted, not fixed:** `GameState` captures obstacles, night and points but no
+player-held inventory, so grenades inherit the gap **IFAKs already have** and
+would be lost across a real scene transition. Latent for the multi-level work,
+not a bug today; it should be fixed for IFAKs and grenades together rather
+than as a grenade special case.
+
+### 6.9 Resupply drops
+
+Each guaranteed drop grants **1 grenade** alongside its ammo, through
+`grant_grenades()` — the same capped path as a purchase. At 4 carried the
+grenade is **lost**, not held over, and the collection summary says so
+explicitly ("Grenade lost (carrying 4/4)") so a wasted grenade is visible
+rather than silent.
+
+Note that `SupplyDrop.setup()` **replaces** the contents dictionary rather
+than merging into it, so `Main._spawn_supply_drop()` has to spell out
+`"grenades": 1` even though `SupplyDrop` defaults to it. Omitting it would
+silently drop the grenade.
+
+---
+
+## 7. Store: the EQUIPMENT tab, and what "data-driven" does not cover
+
+A fourth tab, EQUIPMENT, alongside WEAPONS / ATTACHMENTS / SUPPLIES. Hand
+grenade at **6 points**, repeatable, **Day-only**, blocked at the carry cap
+with `CARRYING 4/4` on a disabled button — the same visual language the full
+IFAK pouch uses.
+
+**The store's "adding a category is a config change" claim is half true**, and
+the half that isn't is worth knowing before the ENABLERS tab is built.
+
+**Genuinely data-driven:** `categories()` builds the tabs, `items_in()` builds
+the rows. Adding a category really does produce a working tab with no UI
+changes.
+
+**Not configuration — five things:**
+
+1. **Purchase dispatch is a `match item.kind` in `Player.gd`.**
+   `apply_store_purchase()` needed a new `"equipment"` arm.
+   `owns_store_item()` did **not** — its `_` default already returns `false`,
+   which is correct for anything repeatable.
+2. **Carry caps are per-item by construction.** `store_item_blocked()` reads a
+   different counter against a different maximum for each, so the grenade
+   needed its own line beside the IFAK's. **Left per-item deliberately** —
+   collapsing them behind a shared interface would hide which field a cap
+   belongs to.
+3. **There was no day-gating mechanism for store items at all.** The crate is
+   deliberately open in *both* phases (`SupplyCrateZone`: "usable in BOTH
+   phases now"), so Day-only is a per-item restriction with no precedent.
+   Rather than hardcode it, `StoreItem` gained a **`day_only` flag** and
+   `store_item_blocked()` checks it generically — a future Day-only item is
+   now a catalog entry, not another branch.
+4. **The key hint was a literal `"1/2/3"`** and went stale the instant a fourth
+   category existed — exactly the hardcoding the claim rules out. Now derived
+   from the tab count, bounded by the number keys actually bound (1–4).
+5. **The empty-tab message was weapon-centric** ("buy a weapon first") and
+   would have been wrong on any tab that is not weapon-gated. Now conditional.
+
+**For ENABLERS:** the tab appears for free, but expect the same **two edits in
+`Player.gd`** (an `apply_store_purchase` arm, plus a `store_item_blocked` line
+if it has a cap) unless that dispatch is reworked first. The shape of a rework
+would be a `grant_method` field on `StoreItem` that `apply_store_purchase`
+calls.
+
+**No other tab regresses.** All five item kinds were traced through the UI:
+equipment has no `weapon_id` so it skips the owned-weapon filter, takes the
+`item.cost` path rather than the drum-scaled ammo path, and can never render
+as OWNED. The crate stays open across the day/night boundary, so
+`phase_changed` now triggers a re-render (guarded on `visible`) — otherwise a
+grenade row would still read "Buy" after dusk.

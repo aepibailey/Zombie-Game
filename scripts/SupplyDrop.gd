@@ -10,9 +10,11 @@ signal collected(summary: String)
 const PLACE_ATTEMPTS := 10
 const MIN_PLAYER_DISTANCE := 2.0
 
-## Contents config. `magazines` = mags granted per owned weapon.
+## Contents config.
+##   `magazines` — mags granted per owned weapon.
+##   `grenades`  — hand grenades granted, subject to the carry cap.
 ## Future enablers can pass a different config (e.g. specific weapons only).
-var contents: Dictionary = {"magazines": 1}
+var contents: Dictionary = {"magazines": 1, "grenades": 1}
 
 var _player_inside := false
 var _player: Player = null
@@ -154,6 +156,20 @@ func _collect() -> void:
 		var rounds: int = AmmoManager.grant_ammo(id, mags)
 		if rounds > 0:
 			granted.append("%s +%d" % [Arsenal.get_weapon(id).display_name, rounds])
+
+	# Grenades go through the SAME capped grant path a crate purchase uses, so
+	# the carry cap is enforced in exactly one place. grant_grenades() returns
+	# what it actually took: at 4 carried it takes 0 and the drop's grenade is
+	# LOST rather than overflowing the cap or being held for later. Reported
+	# either way, so a wasted grenade is visible and not silent.
+	var want_nades: int = contents.get("grenades", 0)
+	if want_nades > 0:
+		var took: int = _player.grant_grenades(want_nades)
+		if took > 0:
+			granted.append("Grenade +%d" % took)
+		else:
+			granted.append("Grenade lost (carrying %d/%d)" % [
+				_player.grenades, _player.grenade_max_carry])
 
 	var summary := ", ".join(granted) if granted.size() > 0 else "nothing (no weapons owned)"
 	print("[RESUPPLY] collected — %s" % summary)

@@ -627,7 +627,10 @@ func _begin_day() -> void:
 ## purchasable enabler instances the same scene with a different anchor.
 func _spawn_supply_drop() -> void:
 	var drop := SupplyDrop.new()
-	drop.setup(_hud, {"magazines": 1})
+	# Contents are passed WHOLE — setup() replaces the default dict rather than
+	# merging into it — so "grenades" has to be spelled out here even though
+	# SupplyDrop defaults to 1. Omitting it silently drops the grenade.
+	drop.setup(_hud, {"magazines": 1, "grenades": 1})
 	add_child(drop)
 	drop.global_position = SupplyDrop.find_spawn_point(
 		get_world_3d(), _crate_position, drop_radius, player.global_position)
