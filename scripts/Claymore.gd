@@ -366,6 +366,17 @@ func _spawn_burst(origin: Vector3, face: Vector3) -> void:
 	p.finished.connect(p.queue_free)
 
 # --- Placement validity ----------------------------------------------------
+# --- Recovery --------------------------------------------------------------
+## Can this claymore be picked back up right now?
+##
+## A TRIGGERED mine is refused. It detonates within trigger_delay either way,
+## so this changes nothing a player could actually react to — but "walk up and
+## defuse a mine that has already fired" is not a mechanic that should exist
+## even by accident. Arming state is deliberately NOT a barrier: a mine you
+## just put down in the wrong place is exactly the one you want back.
+func can_recover() -> bool:
+	return not _triggered and not _detonated
+
 ## Is `pos` far enough from every claymore already emplaced? Static because
 ## the placement ghost needs to answer this before any claymore exists there.
 static func separation_clear(tree: SceneTree, pos: Vector3, min_sep: float) -> bool:

@@ -1053,3 +1053,191 @@ left alone because the request specified the unsuppressed figure. There is a
 defensible reason to keep a gap (suppressor performance depends on barrel
 length and gas system, not just cartridge), but if the caliber argument is
 meant to hold throughout, this is the other number to move.
+
+---
+
+## 9. M18A1 Claymore
+
+A purchasable, carryable, emplaceable directional mine. Built as a **consumer**
+of the two systems the hand grenade established — the shared area-damage
+system and the equipment equip-state — not as a parallel implementation of
+either. The whole claymore adds **no damage code at all**: `_detonate()` hands
+`AreaDamageSystem` an origin and a facing vector, and everything else is
+`.tres`.
+
+### 9.1 Audit: what the grenade work actually left behind
+
+| Claymore requirement | Already existed |
+|---|---|
+| Directional filter | `AreaDamageProfile.arc_degrees` + `in_arc()`, applied to **both** actors and structures; `facing` was already a `detonate()` parameter |
+| Zero damage outside the cone | `in_arc()` fails → target skipped before damage is computed |
+| Friendly fire on the player | No faction filtering anywhere; the player is in `damageable` |
+| LOS blocked by sandbags/terrain, not C-wire | `COVER_MASK` deliberately excludes `PLAYER_BARRIER_LAYER` |
+| Doesn't damage sandbags | `damages_obstacles`, the per-source opt-in |
+| Noise matching the grenade | `noise_radius`; reused the grenade's 50m rather than inventing one |
+| Equip / un-ADS / fire-gating | `_force_unads()` was already extracted and generic |
+
+Two things did **not** exist and had to be built: a generic equipment slot (the
+equip state was grenade-*specific*, though not grenade-*shaped*), and a
+standalone arc test usable without an `AreaDamageProfile`.
+
+### 9.2 The equipment slot, generalised
+
+`Player.grenade_equipped` (a bool) became
+`Player.equipped_item: Equipment { NONE, GRENADE, CLAYMORE }`, with
+`grenade_equipped` / `claymore_equipped` / `equipment_equipped` as **read-only
+property views**.
+
+Two independent bools were rejected: they make "both equipped at once" a
+representable state and force every gate to test both. Keeping
+`grenade_equipped` as a property view (rather than replacing it with
+`equipped_item ==` at each call site) meant **`HUD.gd` and `GrenadeArc.gd`
+needed no changes at all**.
+
+Behaviour-preserving for grenades, verified case by case — equip from none,
+stow while not cooking, the refusal to stow a burning fuse, and the re-equip
+early-out all take the same branches and emit the same values. One deliberate
+new behaviour: **G while a claymore is out unequips it** — switching to the
+grenade if you have any, cancelling placement if you don't — so the input is
+never a silent no-op.
+
+### 9.3 AreaMath
+
+`scripts/AreaMath.gd`: static, stateless containment geometry
+(`in_horizontal_arc`, `in_height_band`, `arc_fan_points`).
+
+`AreaDamageProfile.in_arc()` now **delegates** to it — same signature, same
+answers, internals only. This exists because the claymore's DETECTION arc and
+the blast's DAMAGE arc were about to be two implementations of the same
+question, and a mine that triggers over a different wedge than it damages is a
+genuinely nasty bug to see from the outside. The Apache patrol box and the
+mortar target-paint will both need containment tests and neither owns a
+profile, which is why this cannot live on that resource.
+
+### 9.4 Keybind
+
+**V** (`equip_claymore`, physical 86), registered in `project.godot` alongside
+`nvg_toggle` and `equip_grenade`.
+
+**C was the obvious choice and is already crouch** — not incidental, either:
+crouch is silent movement, it drives the M249 stance penalty, and it lowers
+the player's blast-exposure sample points. Unlike the N/NVG collision, this
+one could not be solved by ordering, because crouch and equip are both
+always-live rather than modal. V was picked from the free keys (V/X/F) after
+sweeping every keycode in `scripts/`.
+
+### 9.5 Emplacement
+
+Claymore is a **scene instantiated into the world**, parented to the current
+scene and never to the player. Deliberately **not** an `Obstacle` subclass:
+that hierarchy carries `ObstacleCatalog` pricing, a placement footprint on
+layer 4, and BuildMode's placement cap, none of which apply to a store-bought
+item emplaced from the equip state. Same reasoning that keeps `SandbagPanel`
+out of it.
+
+The ghost renders the **same body builder and the same wedge** as a real
+claymore — a preview that looked different from the thing it previews would be
+a lie in exactly the place the player is making a decision. Facing is the
+**player's yaw**, not the camera pitch, so looking down to place doesn't tip
+the mine at the dirt.
+
+The aim ray is clamped to `placement_max_range` with a **downward probe
+fallback**, so aiming at the horizon still previews a spot at your feet rather
+than failing outright. Rejections: no ground in range, slope beyond 40°,
+another claymore within 1m, an obstacle footprint (the same layer BuildMode's
+own placement test uses), or a point off the navmesh.
+
+### 9.6 Arming and detection
+
+**Arming is structural, not a flag.** Detection and the trigger countdown both
+sit *below* the arming early-return in `_physics_process`, so during the 2.0s
+window neither can have started — there is no path by which a mine detonates
+before it is live. An emissive dot blinks amber while arming and goes steady
+green when live; it stops blinking once armed, because a mine flashing all
+night is a beacon and the state it was signalling is over.
+
+Detection runs on a **0.1s accumulator, not per frame**, cheapest test first,
+returning on the first hit:
+
+1. distance, squared, no `sqrt`
+2. height band (`AreaMath.in_height_band`)
+3. arc (`AreaMath.in_horizontal_arc` — the same function the blast uses)
+4. line of sight — last, because it is the only expensive test
+
+Zombie RIDs are excluded from the LOS ray so zombies never shield each other,
+matching the blast's own rule that only real geometry is cover. The mask is
+`AreaDamageSystem.COVER_MASK` **by reference**: a mine that could *see*
+further than its blast can *reach* would trigger on targets it then failed to
+damage.
+
+**Only the `zombies` group is scanned**, so the player cannot trip a claymore
+from any position at any range. The player can still be killed by one — but
+only ever by something else setting it off.
+
+The **0.15s trigger delay is committed**: once started it runs to detonation
+whether or not the zombie that tripped it is still in the arc. That is what
+catches a cluster rather than only the lead.
+
+### 9.7 Damage
+
+`resources/claymore_blast.tres`. 60° arc, and inside it:
+
+| 0–6m | 7m | 8m | 9m | 10m+ |
+|---|---|---|---|---|
+| 250 | 202 | 155 | 107 | **0** |
+
+**`FalloffMode.CURVE` is required, not stylistic.** `LINEAR` and `QUADRATIC`
+both drive damage to *zero* at `max_radius` and cannot hold 60 at the edge.
+The curve runs 1.0 → 0.24 across the 6→10m band with tangents set to the chord
+slope, so the Hermite interpolation is exactly straight.
+
+- Lethal to the 100 HP player anywhere inside **~9.1m of the cone**.
+- **Zero outside the cone at any distance**, because `in_arc` fails before
+  damage is computed. No backblast in either direction.
+- One-shots a standard zombie inside 6m **through night 38**.
+- A leaper is above the 2.0m band for ~10 consecutive detection sweeps of its
+  1.29s arc, and below it only during the 0.145s of launch and 0.145s of
+  landing — i.e. only while it is genuinely on the ground.
+
+### 9.8 Persistence and recovery
+
+**Persistence is free.** Night transitions are phase changes on a live scene,
+never a reload, and nothing frees scene children between phases — so an
+emplaced claymore survives dawn by simply existing, exactly as placed
+obstacles already do. No save step was written. (Same latent caveat as
+grenades and IFAKs: `GameState` captures obstacles, night and points but no
+player-held or player-placed state, so this would be lost across a real scene
+transition. Not a bug today.)
+
+**Recovery** is Day-only, within 1.5m, instant, and returns the claymore to
+inventory through `grant_claymores()` — the same capped path a purchase uses.
+At the cap the prompt is **replaced** rather than the recovery silently
+failing: it reads "Claymore — inventory full (2/2)". A triggered mine refuses
+recovery; an arming one allows it, because a mine you just put down in the
+wrong place is exactly the one you want back.
+
+The prompt is owned by the **Player**, not by each claymore:
+`HUD.show_prompt()` has a single owner slot, so two claymores in range would
+fight over it and one would strand the other's `hide_prompt()`. The Player
+picks the nearest and emits `prompt` / `prompt_cleared` — matching how every
+other Player→HUD channel already works, rather than giving the Player a HUD
+reference it does not otherwise have. Emission is **on change only**, because
+the crate and tent zones re-assert their prompts every frame from their own
+`_process` and pushing ours every frame too would make overlapping
+interactables flicker against each other.
+
+### 9.9 Store and inventory
+
+EQUIPMENT tab, **15 points**, Day-only, cap **2**, separate line item and
+separate inventory from the grenade. **Not in resupply drops** — the drop
+logic is untouched and still grants exactly 1 grenade.
+
+`grant_claymores()` was deliberately **not** merged with `grant_grenades()`
+into a generic `grant_equipment(kind, n)`: they are independent inventories
+with independent caps, and a shared function would take the counter and the
+max as arguments anyway, so the only thing sharing buys is an indirection
+between a purchase and the field it changes.
+
+Adding the item cost exactly the **two `Player.gd` edits** §7 predicted — an
+`apply_store_purchase()` arm and a `store_item_blocked()` cap line.
+`owns_store_item()` needed nothing.

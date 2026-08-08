@@ -317,6 +317,11 @@ func bind_player(player: Player) -> void:
 	_on_ifak_changed(player.ifaks, player.ifak_max_carry)
 	player.claymore_changed.connect(_on_claymore_changed)
 	player.claymore_equipped_changed.connect(_on_claymore_equipped_changed)
+	# Contextual prompts the PLAYER owns (claymore recovery), as opposed to the
+	# zone-owned ones the crate and tent push directly. Same owner-scoped
+	# show/hide pair either way, so the two can't strand each other.
+	player.prompt.connect(show_prompt)
+	player.prompt_cleared.connect(hide_prompt)
 	_on_grenade_changed(player.grenades, player.grenade_max_carry)
 	_on_grenade_equipped_changed(player.grenade_equipped)
 	_on_claymore_changed(player.claymores, player.claymore_max_carry)

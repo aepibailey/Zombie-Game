@@ -15,6 +15,12 @@ signal ifak_progress(active: bool, progress: float)
 signal grenade_changed(count: int, max_count: int)
 signal claymore_changed(count: int, max_count: int)
 signal claymore_equipped_changed(equipped: bool)
+## Contextual interaction prompt. Emitted rather than the player holding a HUD
+## reference, matching how every other Player->HUD channel already works.
+## `source` is passed through to HUD.show_prompt/hide_prompt's owner argument
+## so this prompt can't be stolen or stranded by another prompt owner.
+signal prompt(text: String, source)
+signal prompt_cleared(source)
 ## Equip state changed. The trajectory preview and the HUD both key off this
 ## rather than polling.
 signal grenade_equipped_changed(equipped: bool)
@@ -300,6 +306,11 @@ var _cook_underhand := false
 ## Persists across nights and is never restocked at dawn.
 var claymores := 0
 var _claymore_placer: ClaymorePlacer
+## Nearest recoverable claymore in range, or null. Recomputed every frame;
+## only ever non-null during Day.
+var _recovery_target: Claymore
+var _prompt_showing := false
+var _prompt_text := ""
 
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
@@ -428,6 +439,11 @@ func _physics_process(delta: float) -> void:
 		_update_feedback(delta)
 		_update_laser()
 		return
+
+	# Outside the control_enabled block on purpose: when control is taken away
+	# (crate, build mode) this still runs and CLEARS a showing prompt, rather
+	# than stranding "Press E — recover claymore" on screen behind a menu.
+	_update_claymore_recovery()
 
 	# Gravity always applies.
 	if not is_on_floor():
@@ -629,6 +645,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if event.is_action_pressed(ACTION_EQUIP_CLAYMORE):
 			_toggle_claymore()
+			return
+		# Claymore recovery shares E with the crate and the tent. Only consumed
+		# when a claymore is actually the thing in range, and marked handled so
+		# a zone whose trigger happens to overlap can't also act on it.
+		if event.is_action_pressed("interact") and _recovery_target != null:
+			if _try_recover_claymore():
+				get_viewport().set_input_as_handled()
 			return
 		match event.keycode:
 			KEY_C:
@@ -1358,6 +1381,72 @@ func _try_emplace_claymore() -> void:
 	# stock means empty hands, so drop the slot.
 	if claymores <= 0:
 		_set_equipped(Equipment.NONE)
+
+# --- Claymore recovery (Day only) -----------------------------------------
+## Picks the NEAREST recoverable claymore in range and owns the prompt for it.
+##
+## Centralised here rather than each claymore prompting for itself, because
+## HUD.show_prompt() has a single owner: two claymores in range would fight
+## over it and one would strand the other's hide_prompt(). One chooser, one
+## owner, no contention.
+func _update_claymore_recovery() -> void:
+	var best: Claymore = null
+	# Day only. A claymore is a live mine at night and reaching into its arc
+	# to pocket it is not something the game should be inviting.
+	if GameManager.is_day() and control_enabled:
+		var best_d: float = CLAYMORE_CONFIG.recovery_range
+		for node in get_tree().get_nodes_in_group(Claymore.GROUP):
+			var c := node as Claymore
+			if c == null or not is_instance_valid(c) or not c.can_recover():
+				continue
+			var d := global_position.distance_to(c.global_position)
+			if d <= best_d:
+				best_d = d
+				best = c
+	_recovery_target = best
+
+	if best == null:
+		if _prompt_showing:
+			_prompt_showing = false
+			_prompt_text = ""
+			prompt_cleared.emit(self)
+		return
+	# At the cap the prompt is REPLACED, not spammed: emitting a message every
+	# frame would flood the feed, and a silent dead "press E" would be worse.
+	var text: String
+	if claymores_full():
+		text = "Claymore — inventory full (%d/%d)" % [claymores, claymore_max_carry]
+	else:
+		text = "Press E — recover claymore"
+	# Emitted only on CHANGE. HUD.show_prompt() takes ownership of the single
+	# prompt slot, and the crate/tent zones re-assert theirs every frame from
+	# their own _process — pushing ours every frame too would make two
+	# overlapping interactables flicker against each other instead of the last
+	# state change simply winning.
+	if _prompt_showing and text == _prompt_text:
+		return
+	_prompt_text = text
+	_prompt_showing = true
+	prompt.emit(text, self)
+
+## Instant. No partial refund, no points — you get the claymore back.
+func _try_recover_claymore() -> bool:
+	if _recovery_target == null or not is_instance_valid(_recovery_target):
+		return false
+	if not _recovery_target.can_recover():
+		return false
+	if claymores_full():
+		message.emit("Inventory full — can't recover that claymore.")
+		return true   # consumed: the input was ABOUT the claymore, it just failed
+	# Same capped grant path as a store purchase.
+	grant_claymores(1)
+	_recovery_target.queue_free()
+	_recovery_target = null
+	_prompt_showing = false
+	_prompt_text = ""
+	prompt_cleared.emit(self)
+	message.emit("Claymore recovered (%d/%d)." % [claymores, claymore_max_carry])
+	return true
 
 # --- Laser (beam + terminal dot) -----------------------------------------
 func _build_laser() -> void:
