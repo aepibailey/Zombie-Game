@@ -36,17 +36,46 @@ const COLOR_BODY := Color(0.24, 0.26, 0.22)
 ## grenade arc: alpha-blended, never additive.
 const WEDGE_COLOR := Color(0.85, 0.35, 0.25, 0.10)
 
+## Height the blast originates from and the detection ray is cast from — the
+## middle of the body, not the ground, so neither is clipped by the surface
+## the mine is standing on.
+const EMIT_HEIGHT := 0.19
+
+## Arming indicator: blinks while arming, steady and dim once live.
+const INDICATOR_RADIUS := 0.022
+const INDICATOR_BLINK_HZ := 4.0
+const COLOR_ARMING := Color(1.0, 0.65, 0.1)
+const COLOR_ARMED := Color(0.3, 1.0, 0.4)
+
 var config: ClaymoreConfig
 
 var _wedge: ArcWedge
 var _player: Node3D
+
+# --- Runtime state ---------------------------------------------------------
+var _arm_remaining := 0.0
+var _armed := false
+## Committed: once the trigger delay starts it runs to detonation whether or
+## not the zombie that tripped it is still in the arc.
+var _triggered := false
+var _trigger_remaining := 0.0
+var _detonated := false
+## Accumulates to config.detection_interval — the sweep is NOT per-frame.
+var _detect_accum := 0.0
+
+var _indicator: MeshInstance3D
+var _indicator_mat: StandardMaterial3D
+var _blink := 0.0
 
 func setup(cfg: ClaymoreConfig) -> void:
 	config = cfg
 	_validate_config()
 	add_to_group(GROUP)
 	_build_visual()
+	_build_indicator()
 	_build_wedge()
+	_arm_remaining = config.arming_delay
+	_armed = false
 
 ## The direction the front plate points, flattened to the ground plane. This
 ## is what gets handed to AreaDamageSystem.detonate() as `facing`, and what
@@ -130,6 +159,38 @@ static func _flat_mat(c: Color, alpha: float) -> StandardMaterial3D:
 func _build_visual() -> void:
 	add_child(build_body(COLOR_FRONT, COLOR_BODY))
 
+## Small emissive dot on top of the body. Blinks amber while arming, then goes
+## steady green — so "is this thing live yet" is readable from across the base
+## without a HUD element or a sound.
+func _build_indicator() -> void:
+	_indicator = MeshInstance3D.new()
+	var s := SphereMesh.new()
+	s.radius = INDICATOR_RADIUS
+	s.height = INDICATOR_RADIUS * 2.0
+	s.radial_segments = 8
+	s.rings = 4
+	_indicator.mesh = s
+	_indicator.position = Vector3(0.0, LEG_HEIGHT + BODY_SIZE.y + INDICATOR_RADIUS, 0.0)
+	_indicator_mat = StandardMaterial3D.new()
+	_indicator_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_indicator_mat.albedo_color = COLOR_ARMING
+	_indicator.material_override = _indicator_mat
+	_indicator.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_indicator)
+
+func _set_indicator_color(c: Color) -> void:
+	if _indicator_mat:
+		_indicator_mat.albedo_color = c
+
+## Blink only while arming. Once live it holds steady — a mine that kept
+## flashing all night would be a beacon, and the state it needs to communicate
+## ("not yet dangerous") is over.
+func _update_indicator(delta: float) -> void:
+	if _indicator == null or _armed or _detonated:
+		return
+	_blink += delta * INDICATOR_BLINK_HZ
+	_indicator.visible = fmod(_blink, 1.0) < 0.5
+
 ## The emplaced ground wedge is behind config.show_emplaced_arc, and only
 ## drawn when the player is close, so a base with a dozen mines doesn't turn
 ## the night view into a light show. The PLACEMENT wedge is not behind this —
@@ -145,7 +206,8 @@ func _build_wedge() -> void:
 	_wedge.setup(config.detection_arc_degrees, config.detection_range, WEDGE_COLOR)
 	_wedge.visible = false
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_update_indicator(delta)
 	if _wedge == null:
 		return
 	if _player == null or not is_instance_valid(_player):
@@ -154,6 +216,154 @@ func _process(_delta: float) -> void:
 			return
 	_wedge.visible = global_position.distance_to(_player.global_position) \
 		<= config.emplaced_arc_visible_range
+
+# --- Arming, detection, detonation ----------------------------------------
+func _physics_process(delta: float) -> void:
+	if _detonated or config == null:
+		return
+
+	# ARMING. Nothing below runs until this elapses, so the mine genuinely
+	# cannot detonate for any reason during the window — not by proximity,
+	# not by a trigger already in flight, because neither can have started.
+	if not _armed:
+		_arm_remaining -= delta
+		if _arm_remaining > 0.0:
+			return
+		_armed = true
+		_set_indicator_color(COLOR_ARMED)
+		if _indicator:
+			_indicator.visible = true   # end the blink on-state, not mid-flash
+
+	# Committed trigger: runs to detonation regardless of whether whatever
+	# tripped it is still there. That is the point of the delay — a cluster
+	# walking in together gets caught, not just whoever crossed the line.
+	if _triggered:
+		_trigger_remaining -= delta
+		if _trigger_remaining <= 0.0:
+			_detonate()
+		return
+
+	# Detection sweep on an interval, not per frame.
+	_detect_accum += delta
+	if _detect_accum < config.detection_interval:
+		return
+	_detect_accum = 0.0
+	if _scan():
+		_triggered = true
+		_trigger_remaining = config.trigger_delay
+
+## Returns true the moment ANY zombie passes all three tests. Ordered
+## cheapest-first and returns on the first hit, so the raycast — the only
+## expensive part — runs rarely and never more than once per candidate.
+##
+## THE PLAYER IS NOT CONSIDERED. Only the "zombies" group is scanned, so no
+## amount of standing in front of your own claymore trips it. The player can
+## still be killed by one, but only ever by something else setting it off.
+func _scan() -> bool:
+	var origin := global_position + Vector3(0.0, EMIT_HEIGHT, 0.0)
+	var face := facing()
+	var range_sq: float = config.detection_range * config.detection_range
+	var zombies := get_tree().get_nodes_in_group("zombies")
+
+	# Built once per sweep, not per candidate: zombies must not shield each
+	# other from detection, matching the blast's own rule that only real
+	# geometry provides cover.
+	var zombie_rids: Array[RID] = []
+	for z in zombies:
+		if z is CollisionObject3D:
+			zombie_rids.append((z as CollisionObject3D).get_rid())
+
+	var space := get_world_3d().direct_space_state
+	for node in zombies:
+		var z := node as Node3D
+		if z == null or not is_instance_valid(z):
+			continue
+		if z.has_method("is_alive") and not z.is_alive():
+			continue   # a corpse this frame is not a target
+		# 1. Distance — squared, no sqrt.
+		if origin.distance_squared_to(z.global_position) > range_sq:
+			continue
+		# 2. Height band. A leaper at the apex of its 5m jump is far above
+		#    this and passes over untriggered; the same leaper standing in the
+		#    arc is caught. Uses the zombie's origin, which sits at its feet.
+		if not AreaMath.in_height_band(global_position.y, z.global_position.y,
+				config.detection_height):
+			continue
+		# 3. Arc — same function the blast uses, so trigger and damage can
+		#    never disagree about the wedge.
+		if not AreaMath.in_horizontal_arc(origin, face, z.global_position,
+				config.detection_arc_degrees):
+			continue
+		# 4. Line of sight. Last because it is the only expensive test.
+		if _has_los(space, origin, z, zombie_rids):
+			return true
+	return false
+
+## Sandbags, structures and terrain block detection; C-wire does not. That is
+## exactly AreaDamageSystem's COVER_MASK, referenced rather than re-derived —
+## a mine that can SEE further than its blast can REACH would trigger on
+## targets it then fails to damage.
+func _has_los(space: PhysicsDirectSpaceState3D, origin: Vector3,
+		z: Node3D, zombie_rids: Array[RID]) -> bool:
+	var target: Vector3 = z.global_position + Vector3(0.0, 0.7, 0.0)
+	if z.has_method("area_damage_points"):
+		var pts: Array = z.area_damage_points()
+		if pts.size() >= 2:
+			target = pts[1]   # centre of mass, sized to this variant
+	var q := PhysicsRayQueryParameters3D.create(origin, target)
+	q.collision_mask = AreaDamageSystem.COVER_MASK
+	q.collide_with_areas = false
+	q.exclude = zombie_rids
+	return space.intersect_ray(q).is_empty()
+
+## Single use. Hands the shared system an origin and a facing vector and owns
+## no damage logic of its own — the arc, the falloff curve, the cover test,
+## the faction-blind targeting and the "does not touch obstacles" opt-out are
+## all in claymore_blast.tres.
+func _detonate() -> void:
+	if _detonated:
+		return
+	_detonated = true
+	var origin := global_position + Vector3(0.0, EMIT_HEIGHT, 0.0)
+	var face := facing()
+	_spawn_burst(origin, face)
+	AreaDamageSystem.detonate(origin, config.damage_profile, face, "claymore")
+	queue_free()
+
+## Placeholder directional VFX: a one-shot cone of particles along the facing
+## vector. Detached from this node and self-freeing, because the claymore is
+## queue_free()'d in the same breath — same pattern as
+## AreaDamageSystem._play_detonation() and Zombie._play_death_sound().
+func _spawn_burst(origin: Vector3, face: Vector3) -> void:
+	var p := GPUParticles3D.new()
+	p.amount = 48
+	p.lifetime = 0.45
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.emitting = true
+
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = face
+	mat.spread = config.detection_arc_degrees * 0.5
+	mat.initial_velocity_min = 14.0
+	mat.initial_velocity_max = 26.0
+	mat.gravity = Vector3(0.0, -6.0, 0.0)
+	mat.scale_min = 0.4
+	mat.scale_max = 1.0
+	p.process_material = mat
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.06, 0.06)
+	var qm := StandardMaterial3D.new()
+	qm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	qm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	qm.albedo_color = Color(1.0, 0.85, 0.5)
+	quad.material = qm
+	p.draw_pass_1 = quad
+
+	get_tree().current_scene.add_child(p)
+	p.global_position = origin
+	p.finished.connect(p.queue_free)
 
 # --- Placement validity ----------------------------------------------------
 ## Is `pos` far enough from every claymore already emplaced? Static because
