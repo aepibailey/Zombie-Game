@@ -13,6 +13,7 @@ signal message(text: String)
 signal ifak_changed(count: int, max_count: int)
 signal ifak_progress(active: bool, progress: float)
 signal grenade_changed(count: int, max_count: int)
+signal claymore_changed(count: int, max_count: int)
 ## Equip state changed. The trajectory preview and the HUD both key off this
 ## rather than polling.
 signal grenade_equipped_changed(equipped: bool)
@@ -169,6 +170,15 @@ const GRENADE_SPAWN_FORWARD := 0.45
 ## playtested before the store tab exists — set it in the inspector.
 @export var starting_grenades: int = 0
 
+# --- Claymore --------------------------------------------------------------
+## Carry cap is deliberately separate from the grenade's: they are independent
+## inventories with independent caps, so nothing is shared but the pattern.
+@export var claymore_max_carry: int = 2
+## Bought at the crate (EQUIPMENT tab), never issued and never in a resupply
+## drop. Exposed for the same reason as starting_grenades — so emplacement and
+## detonation can be playtested without shopping first.
+@export var starting_claymores: int = 0
+
 # --- IFAK ------------------------------------------------------------------
 ## A 4-second commitment, not an instant heal: it forces the player to break
 ## contact before patching up, rather than button-mashing through a fight.
@@ -251,6 +261,13 @@ var _cook_remaining := 0.0
 ## other one is ignored, because the throw type is committed at press.
 var _cook_button := -1
 var _cook_underhand := false
+
+# --- Claymore state --------------------------------------------------------
+## Carried count — what's in the pack, NOT what's emplaced in the world.
+## There is no cap on how many are emplaced; the cap is on carry only.
+## Persists across nights and is never restocked at dawn.
+var claymores := 0
+
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
@@ -357,6 +374,8 @@ func _ready() -> void:
 	# the same grant path as everything else so the cap holds even here.
 	grenades = 0
 	grant_grenades(starting_grenades)
+	claymores = 0
+	grant_claymores(starting_claymores)
 	# Reserve changes (crate purchases, supply drops) keep the HUD honest.
 	AmmoManager.reserve_changed.connect(_on_reserve_changed)
 
@@ -1199,6 +1218,28 @@ func grant_grenades(count: int = 1) -> int:
 func grenades_full() -> bool:
 	return grenades >= grenade_max_carry
 
+# --- Claymore inventory ---------------------------------------------------
+## Single capped grant path, same shape as grant_grenades(): a store purchase
+## and a recovered-from-the-ground claymore both come through here, so the
+## carry cap has exactly one enforcement point. Returns how many were ACTUALLY
+## taken, so a caller at the cap can react rather than silently losing one.
+##
+## Deliberately NOT merged with grant_grenades() into a generic
+## grant_equipment(kind, n): the two are independent inventories with
+## independent caps, and a shared function would need the counter and the max
+## passed in anyway — all the sharing would buy is one more indirection
+## between a purchase and the field it changes.
+func grant_claymores(count: int = 1) -> int:
+	var before := claymores
+	claymores = mini(claymore_max_carry, claymores + maxi(0, count))
+	var taken := claymores - before
+	if taken > 0:
+		claymore_changed.emit(claymores, claymore_max_carry)
+	return taken
+
+func claymores_full() -> bool:
+	return claymores >= claymore_max_carry
+
 # --- Laser (beam + terminal dot) -----------------------------------------
 func _build_laser() -> void:
 	# Beam: a unit-height cylinder scaled to the hit distance each frame.
@@ -2031,6 +2072,10 @@ func apply_store_purchase(item) -> String:
 				# only ever be enforced in one place.
 				grant_grenades(1)
 				return "Grenade stowed (%d/%d)." % [grenades, grenade_max_carry]
+			if item.id == "claymore":
+				# Same capped grant path Day-phase recovery uses.
+				grant_claymores(1)
+				return "Claymore stowed (%d/%d)." % [claymores, claymore_max_carry]
 	return ""
 
 ## Repeatable items are never "owned", but a full pouch blocks further
@@ -2049,6 +2094,8 @@ func store_item_blocked(item) -> String:
 		return "CARRYING %d/%d" % [ifaks, ifak_max_carry]
 	if item.kind == "equipment" and item.id == "grenade" and grenades_full():
 		return "CARRYING %d/%d" % [grenades, grenade_max_carry]
+	if item.kind == "equipment" and item.id == "claymore" and claymores_full():
+		return "CARRYING %d/%d" % [claymores, claymore_max_carry]
 	return ""
 
 ## Prerequisite satisfied? Prereqs may name a weapon id or a non-weapon item id.

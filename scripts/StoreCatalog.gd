@@ -45,6 +45,10 @@ const IFAK_COST := 15
 ## real cost of leaning on grenades is 24 points per full load-out plus a trip
 ## to the crate in daylight.
 const GRENADE_COST := 6
+## 2.5x a grenade. It is emplaced rather than thrown, so it costs a Day trip
+## and a decision about which lane to cover — but it is recoverable, so a
+## claymore that never fires is not spent. Capped at 2 carried.
+const CLAYMORE_COST := 15
 
 ## Weapon-specific attachment costs (flat, not derived from weapon cost).
 const FOREGRIP_COST := 12          # HK 416
@@ -174,6 +178,12 @@ func rebuild() -> void:
 		"display_name": "Hand Grenade", "cost": GRENADE_COST, "repeatable": true,
 		"day_only": true,
 		"description": "4m lethal / 9m blast. Carry up to 4. Never restocked at dawn.",
+	}))
+	items.append(_mk({
+		"id": "claymore", "category": "EQUIPMENT", "kind": "equipment",
+		"display_name": "M18A1 Claymore", "cost": CLAYMORE_COST, "repeatable": true,
+		"day_only": true,
+		"description": "Emplaced directional mine. 60° front arc, 10m. Carry 2, recoverable by day.",
 	}))
 
 func _mk(d: Dictionary) -> StoreItem:

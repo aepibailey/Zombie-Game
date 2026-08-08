@@ -15,6 +15,7 @@ var _points_label: Label
 var _health_label: Label
 var _ammo_label: Label
 var _grenade_label: Label
+var _claymore_label: Label
 var _state_label: Label
 var _supp_label: Label
 var _msg_label: Label
@@ -57,6 +58,9 @@ func _ready() -> void:
 	# Directly under the ammo readout: grenades are ordnance you're carrying,
 	# and the two get checked together before pushing out.
 	_grenade_label = _mk(panel)
+	# Carried ordnance reads as one block: grenades then claymores, both under
+	# the ammo line and both above the IFAK.
+	_claymore_label = _mk(panel)
 	_ifak_label = _mk(panel)
 	_state_label = _mk(panel)
 	_supp_label = _mk(panel)
@@ -311,8 +315,10 @@ func bind_player(player: Player) -> void:
 	player.grenade_changed.connect(_on_grenade_changed)
 	player.grenade_equipped_changed.connect(_on_grenade_equipped_changed)
 	_on_ifak_changed(player.ifaks, player.ifak_max_carry)
+	player.claymore_changed.connect(_on_claymore_changed)
 	_on_grenade_changed(player.grenades, player.grenade_max_carry)
 	_on_grenade_equipped_changed(player.grenade_equipped)
+	_on_claymore_changed(player.claymores, player.claymore_max_carry)
 	# The player's _ready() emitted its initial values before we connected,
 	# so pull the current state once to seed the labels.
 	_on_ammo_changed(player.ammo, player.reserve)
@@ -386,6 +392,14 @@ func _refresh_grenade_colour(count: int) -> void:
 	elif _player and _player.grenade_equipped:
 		col = Color(1.0, 0.85, 0.4)
 	_grenade_label.add_theme_color_override("font_color", col)
+
+## Same visual treatment as the grenade line: greyed at zero, and (once the
+## equip state lands in the next gate) amber while held. The count is CARRIED
+## claymores — emplaced ones are in the world and are not in this number.
+func _on_claymore_changed(count: int, max_count: int) -> void:
+	_claymore_label.text = "Claymores: %d / %d   [V]" % [count, max_count]
+	_claymore_label.add_theme_color_override("font_color",
+		Color(0.55, 0.55, 0.55) if count <= 0 else Color(1, 1, 1))
 
 func _on_ifak_changed(count: int, max_count: int) -> void:
 	_ifak_label.text = "IFAK: %d / %d   [H]" % [count, max_count]
