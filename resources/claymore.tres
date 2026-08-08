@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="ClaymoreConfig" load_steps=3 format=3]
+
+; Every claymore tunable, in one editable file. Damage is NOT here — it is on
+; claymore_blast.tres, because this project has exactly one kind of resource
+; that describes a blast and duplicating radii into a second one is how the
+; two drift apart. detection_range / detection_arc_degrees must agree with
+; that profile's max_radius / arc_degrees, and Claymore._validate_config()
+; asserts it at runtime rather than trusting this comment.
+
+[ext_resource type="Script" path="res://scripts/ClaymoreConfig.gd" id="1_cfg"]
+[ext_resource type="Resource" path="res://resources/claymore_blast.tres" id="2_blast"]
+
+[resource]
+script = ExtResource("1_cfg")
+placement_max_range = 2.5
+min_separation = 1.0
+max_ground_slope_deg = 40.0
+arming_delay = 2.0
+detection_range = 10.0
+detection_arc_degrees = 60.0
+detection_height = 2.0
+trigger_delay = 0.15
+detection_interval = 0.1
+recovery_range = 1.5
+show_emplaced_arc = true
+emplaced_arc_visible_range = 3.0
+damage_profile = ExtResource("2_blast")

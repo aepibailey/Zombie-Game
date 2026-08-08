@@ -1,0 +1,61 @@
+[gd_resource type="Resource" script_class="AreaDamageProfile" load_steps=3 format=3]
+
+; M18A1 claymore — the second consumer of the shared area-damage system, and
+; the first DIRECTIONAL one. It required no new damage code at all: the arc,
+; the line-of-sight cover test, the faction-blind targeting and the obstacle
+; opt-out were all already configuration.
+;
+; ARC 60 degrees. AreaDamageSystem applies arc_degrees to actors AND to
+; structures, and `facing` is already a detonate() parameter, so "full
+; evaluation inside the cone, zero outside" is what the existing code does
+; when handed a non-360 profile. Rear and flank damage is zero by
+; construction — a target outside the arc is skipped before damage is even
+; computed, so there is no backblast in either direction.
+;
+; FALLOFF = 2 (CURVE), and it has to be. The requirement is 250 from 0-6m,
+; linear down to 60 at 10m, then zero. LINEAR and QUADRATIC both drive damage
+; to ZERO at max_radius, so neither can hold 60 at the edge. The curve below
+; runs 1.0 -> 0.24 across the 6m->10m band (0.24 * 250 = 60), with tangents
+; set to the chord slope so the Hermite interpolation is exactly straight.
+; Past max_radius damage_at() returns 0.0 outright, which is the specified
+; cliff from 60 to nothing at 10m rather than an accident.
+;
+;     0-6m  250      7m  202      8m  155      9m  108      ~10m  60      10m+  0
+;
+; DAMAGES_OBSTACLES = false. Pellets, not HE: a claymore shreds people and
+; does nothing to sandbags, wire or a ditch. This flag is the shared system's
+; per-source opt-in, so the mortar can still set it true and level walls.
+;
+; BLOCKED_DAMAGE_MULT 0.0 — intact cover is total protection, same as the
+; grenade. A zombie in the arc but behind a standing sandbag section takes
+; nothing, and once that section is destroyed its collision shape is disabled
+; so the line-of-sight ray passes and it takes full damage.
+;
+; NOISE_RADIUS 50m — deliberately the SAME number as the frag grenade rather
+; than a new one.
+
+[ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
+
+[sub_resource type="Curve" id="Curve_claymore"]
+min_value = 0.0
+max_value = 1.0
+_data = [Vector2(0, 1), 0.0, -0.76, 0, 0, Vector2(1, 0.24), -0.76, 0.0, 0, 0]
+point_count = 2
+
+[resource]
+script = ExtResource("1_adp")
+id = "claymore_blast"
+display_name = "M18A1 Claymore"
+lethal_radius = 6.0
+max_radius = 10.0
+max_damage = 250
+falloff = 2
+falloff_curve = SubResource("Curve_claymore")
+arc_degrees = 60.0
+blocked_damage_mult = 0.0
+damages_obstacles = false
+obstacle_damage_mult = 0.0
+duration = 0.0
+tick_interval = 0.5
+sfx_detonate = "res://assets/audio/fx/grenade_blast.wav"
+noise_radius = 50.0

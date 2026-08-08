@@ -24,6 +24,16 @@ const PLAYER_BARRIER_LAYER := 16
 ## but once inside, they physically cannot climb back out.
 const SOLID_NO_NAV_LAYER := 32
 
+## Every surface a physical object can rest on, bounce off, or be emplaced on:
+## world geometry and sandbags (layer 1) plus the ditch revetment. C-wire's
+## PLAYER_BARRIER_LAYER is deliberately absent — wire is strands, so a grenade
+## rolls under it and a claymore cannot stand on it.
+##
+## Named here because Obstacle already owns every other layer constant, and
+## because the thrown grenade and the claymore placer must agree on what
+## counts as ground. They were about to hold two copies of the same number.
+const SOLID_SURFACE_MASK := 1 | SOLID_NO_NAV_LAYER
+
 var type_id: String = ""
 var obstacle_type                # ObstacleCatalog.ObstacleType
 

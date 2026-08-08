@@ -14,6 +14,7 @@ signal ifak_changed(count: int, max_count: int)
 signal ifak_progress(active: bool, progress: float)
 signal grenade_changed(count: int, max_count: int)
 signal claymore_changed(count: int, max_count: int)
+signal claymore_equipped_changed(equipped: bool)
 ## Equip state changed. The trajectory preview and the HUD both key off this
 ## rather than polling.
 signal grenade_equipped_changed(equipped: bool)
@@ -171,6 +172,14 @@ const GRENADE_SPAWN_FORWARD := 0.45
 @export var starting_grenades: int = 0
 
 # --- Claymore --------------------------------------------------------------
+## Input-map action name, not a keycode — see project.godot `[input]`.
+## V, because C is crouch and G is the grenade.
+const ACTION_EQUIP_CLAYMORE := "equip_claymore"
+## Every claymore tunable lives in this resource — placement range, arming,
+## detection geometry, recovery range, and the damage profile it detonates
+## through. Edit resources/claymore.tres, not this script.
+const CLAYMORE_CONFIG := preload("res://resources/claymore.tres")
+
 ## Carry cap is deliberately separate from the grenade's: they are independent
 ## inventories with independent caps, so nothing is shared but the pattern.
 @export var claymore_max_carry: int = 2
@@ -247,13 +256,36 @@ var ifaks := 0
 var _ifak_applying := false
 var _ifak_timer := 0.0
 
+# --- Equipment slot --------------------------------------------------------
+## What is in the player's hands INSTEAD of the weapon. One slot, one item.
+##
+## The equipped WEAPON is deliberately never swapped out — nothing is stowed
+## and restored — so "put the equipment away and go back to your weapon" is
+## just returning this to NONE. Firing is gated on the slot instead.
+##
+## Generalised from a single `grenade_equipped` bool when the claymore
+## arrived: two independent bools would have made "both equipped at once" a
+## representable state, and every gate would have had to test both.
+enum Equipment { NONE, GRENADE, CLAYMORE }
+var equipped_item: int = Equipment.NONE
+
+## Read-only views. Kept as properties rather than replaced with
+## `equipped_item ==` at every call site so HUD.gd and GrenadeArc.gd — which
+## both read `player.grenade_equipped` — needed no changes at all.
+var grenade_equipped: bool:
+	get:
+		return equipped_item == Equipment.GRENADE
+var claymore_equipped: bool:
+	get:
+		return equipped_item == Equipment.CLAYMORE
+## The single gate the weapon respects: ANY equipment in hand blocks firing.
+var equipment_equipped: bool:
+	get:
+		return equipped_item != Equipment.NONE
+
 # --- Grenade state ---------------------------------------------------------
 ## Carried count. Persists across nights and is never restocked at dawn.
 var grenades := 0
-## True while a grenade is in hand. The equipped WEAPON is deliberately left
-## untouched — nothing is swapped out — so "stow and return to the previously
-## equipped weapon" is just clearing this flag. Firing is gated on it instead.
-var grenade_equipped := false
 ## Cooking = a throw button is held. Counts DOWN from GRENADE_FUSE.
 var _cooking := false
 var _cook_remaining := 0.0
@@ -267,6 +299,7 @@ var _cook_underhand := false
 ## There is no cap on how many are emplaced; the cap is on carry only.
 ## Persists across nights and is never restocked at dawn.
 var claymores := 0
+var _claymore_placer: ClaymorePlacer
 
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
@@ -366,6 +399,7 @@ func _ready() -> void:
 	_build_viewmodel()
 	_build_audio()
 	_build_grenade_arc()
+	_build_claymore_placer()
 
 	# Starting loadout: M17 only, 2 mags total (one loaded, one spare).
 	_grant_starting_ammo(STARTING_WEAPON)
@@ -412,9 +446,9 @@ func _physics_process(delta: float) -> void:
 		_update_cook(delta)
 		_update_laser_detection(delta)
 		# Full-auto: keep firing while the trigger is held (rate-limited in
-		# _fire). Gated on the grenade too, or holding LMB to cook a throw
-		# would empty a magazine at the same time.
-		if not grenade_equipped and _wants_auto_fire() \
+		# _fire). Gated on the equipment slot too, or holding LMB to cook a
+		# throw — or to confirm a claymore — would empty a magazine as well.
+		if not equipment_equipped and _wants_auto_fire() \
 				and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_fire()
 	else:
@@ -572,6 +606,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if not event.pressed:
 			return
+		# A claymore takes LMB only, on PRESS: confirm the emplacement. RMB
+		# falls through to nothing rather than to ADS — aiming down sights
+		# with a mine in your hands is not a state that should exist.
+		if claymore_equipped:
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				_try_emplace_claymore()
+			return
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if not _wants_auto_fire():   # semi: one shot per click (auto is in _physics_process)
 				_fire()
@@ -585,6 +626,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		# Input-map action, so it stays remappable — see project.godot.
 		if event.is_action_pressed(ACTION_EQUIP_GRENADE):
 			_toggle_grenade()
+			return
+		if event.is_action_pressed(ACTION_EQUIP_CLAYMORE):
+			_toggle_claymore()
 			return
 		match event.keycode:
 			KEY_C:
@@ -663,8 +707,8 @@ func _kill_scope_tween() -> void:
 func _fire() -> void:
 	if _mantling:
 		return   # both hands on the ledge
-	if grenade_equipped:
-		return   # a grenade is in that hand — stow it (G, or a weapon slot) first
+	if equipment_equipped:
+		return   # something else is in that hand — stow it (G / V, or a weapon slot)
 	# Firing cancels an in-progress IFAK (nothing consumed) and does not shoot
 	# on that input — the cancel IS the action.
 	if _ifak_applying:
@@ -958,12 +1002,14 @@ func _force_unads() -> void:
 	camera.fov = HIP_FOV
 
 func _equip(id: String) -> void:
-	# Switching to ANY weapon puts the grenade away — including re-pressing
-	# the slot that's already equipped, which is why this runs before the
-	# same-weapon early-out below. Silent: the weapon swap is its own
-	# feedback, and "grenade stowed" on every 1-5 press would be noise.
-	if grenade_equipped:
-		_set_grenade_equipped(false)
+	# Switching to ANY weapon empties the equipment slot — including
+	# re-pressing the slot that's already equipped, which is why this runs
+	# before the same-weapon early-out below. Silent: the weapon swap is its
+	# own feedback, and "stowed" on every 1-5 press would be noise. For a
+	# claymore this also cancels placement, because the placer draws nothing
+	# unless claymore_equipped.
+	if equipment_equipped:
+		_set_equipped(Equipment.NONE)
 	if weapon and id == current_weapon_id:
 		return
 	# This is the single choke point every weapon switch passes through.
@@ -1068,32 +1114,69 @@ func _toggle_grenade() -> void:
 		message.emit("Fuse is burning — throw it.")
 		return
 	if grenade_equipped:
-		_set_grenade_equipped(false)
+		_set_equipped(Equipment.NONE)
 		return
+	# G while a claymore is out puts the claymore away FIRST, so the input is
+	# never a no-op: with grenades you switch to them, without you at least
+	# cancel the placement. Either way the claymore comes off the slot.
 	if grenades <= 0:
+		if claymore_equipped:
+			_set_equipped(Equipment.NONE)
 		message.emit("No grenades.")
 		return
 	if _ifak_applying:
 		_cancel_ifak("switched to grenade")
-	_set_grenade_equipped(true)
+	_set_equipped(Equipment.GRENADE)
 
+## V. Same slot toggle as G — see _set_equipped().
+func _toggle_claymore() -> void:
+	if not control_enabled or _mantling:
+		return
+	if _cooking:
+		# Identical reasoning to _toggle_grenade(): a burning fuse cannot be
+		# put away, and the throw is only reachable while the grenade is in
+		# hand, so accepting this would be a death the player never chose.
+		message.emit("Fuse is burning — throw it.")
+		return
+	if claymore_equipped:
+		_set_equipped(Equipment.NONE)
+		return
+	if claymores <= 0:
+		message.emit("No claymores.")
+		return
+	if _ifak_applying:
+		_cancel_ifak("switched to claymore")
+	_set_equipped(Equipment.CLAYMORE)
+
+## Thin compatibility wrapper. Every grenade path still calls this; it now
+## routes through the shared slot rather than owning a bool of its own.
 func _set_grenade_equipped(on: bool) -> void:
-	if grenade_equipped == on:
+	_set_equipped(Equipment.GRENADE if on else Equipment.NONE)
+
+## THE one place the equipment slot changes. Every rule that used to be
+## grenade-specific lives here now and applies to anything in the slot.
+func _set_equipped(item: int) -> void:
+	if equipped_item == item:
 		return
-	# Backstop for the same trap _toggle_grenade() and _try_equip_slot() guard
-	# at their own entry points: nothing may put a COOKING grenade away, because
-	# the throw is only reachable while it's in hand. The three paths that
-	# legitimately end a cook (throw / cook-off / death) all clear `_cooking`
-	# before calling here, so none of them are blocked by this.
-	if not on and _cooking:
+	# Backstop for the trap _toggle_grenade(), _toggle_claymore() and
+	# _try_equip_slot() each guard at their own entry points: nothing may put a
+	# COOKING grenade away, because the throw is only reachable while it is in
+	# hand. The three paths that legitimately end a cook (throw / cook-off /
+	# death) all clear `_cooking` before calling here, so none are blocked.
+	if equipped_item == Equipment.GRENADE and _cooking:
 		return
-	grenade_equipped = on
-	if on:
+	var was := equipped_item
+	equipped_item = item
+	if item != Equipment.NONE:
 		# Same rule as a weapon switch, through the same function.
 		_force_unads()
-	else:
+	if was == Equipment.GRENADE:
 		_cook_button = -1
-	grenade_equipped_changed.emit(on)
+	# Both signals fire on every transition, so a listener watching one of
+	# them sees the edge when the OTHER item takes the slot too — switching
+	# G -> V has to read as "grenade no longer equipped".
+	grenade_equipped_changed.emit(grenade_equipped)
+	claymore_equipped_changed.emit(claymore_equipped)
 
 ## Routes LMB/RMB while a grenade is in hand. Press starts the cook and
 ## commits the throw type; only the SAME button's release throws.
@@ -1239,6 +1322,42 @@ func grant_claymores(count: int = 1) -> int:
 
 func claymores_full() -> bool:
 	return claymores >= claymore_max_carry
+
+# --- Claymore emplacement -------------------------------------------------
+## The ghost lives in world space (top_level) because it previews a fixture
+## that will NOT be parented to the player once committed.
+func _build_claymore_placer() -> void:
+	_claymore_placer = ClaymorePlacer.new()
+	_claymore_placer.name = "ClaymorePlacer"
+	_claymore_placer.setup(self, camera, CLAYMORE_CONFIG)
+	add_child(_claymore_placer)
+
+## LMB with a claymore in hand. Emplaces at the ghost, if the ghost is legal.
+func _try_emplace_claymore() -> void:
+	if _claymore_placer == null or claymores <= 0:
+		return
+	if not _claymore_placer.is_valid():
+		message.emit("Can't emplace — %s." % _claymore_placer.reason())
+		return
+
+	var c := Claymore.new()
+	# Parented to the CURRENT SCENE, not to the player: an emplaced claymore
+	# is a fixture, and it must not move, rotate or free with whoever put it
+	# there. This is also what makes it survive dawn for free — nothing frees
+	# the scene between nights.
+	get_tree().current_scene.add_child(c)
+	c.global_position = _claymore_placer.ghost_position()
+	c.rotation.y = _claymore_placer.ghost_yaw()
+	c.setup(CLAYMORE_CONFIG)
+
+	claymores -= 1
+	claymore_changed.emit(claymores, claymore_max_carry)
+	message.emit("Claymore emplaced (%d left)." % claymores)
+	# Stay in placement mode while there is another one to place — emplacing a
+	# pair to cover a lane shouldn't need re-equipping between them. Out of
+	# stock means empty hands, so drop the slot.
+	if claymores <= 0:
+		_set_equipped(Equipment.NONE)
 
 # --- Laser (beam + terminal dot) -----------------------------------------
 func _build_laser() -> void:

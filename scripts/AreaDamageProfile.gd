@@ -90,12 +90,10 @@ func damage_at(distance: float) -> float:
 
 ## Is `point` inside the firing arc? Always true for a 360-degree profile, so
 ## omnidirectional consumers pay nothing for the claymore's existence.
+##
+## Delegates to AreaMath so this shares ONE implementation with the claymore's
+## detection test — the damage arc and the detection arc describing the same
+## wedge differently would be a genuinely nasty bug to see from the outside.
+## Same signature and same answers as before; this is an internals change.
 func in_arc(origin: Vector3, facing: Vector3, point: Vector3) -> bool:
-	if arc_degrees >= 360.0 or facing.length_squared() < 0.001:
-		return true
-	var to := point - origin
-	to.y = 0.0
-	if to.length_squared() < 0.001:
-		return true
-	var f := Vector3(facing.x, 0.0, facing.z).normalized()
-	return f.dot(to.normalized()) >= cos(deg_to_rad(arc_degrees * 0.5))
+	return AreaMath.in_horizontal_arc(origin, facing, point, arc_degrees)

@@ -25,13 +25,14 @@ const FRICTION := 0.65
 ## ANGULAR only — see _ready() for why linear damping is forced to zero.
 const ANGULAR_DAMP := 1.6
 
-## World/sandbags (1) + the ditch revetment, so a grenade can come to rest at
-## the bottom of the pit. C-wire's player-barrier layer is deliberately absent
-## — a grenade rolls under wire.
+## World/sandbags + the ditch revetment, so a grenade can come to rest at the
+## bottom of the pit; no C-wire, so it rolls under wire. Same value as before,
+## now named once on Obstacle so the claymore placer shares it rather than
+## keeping a second copy.
 ##
 ## THE PREVIEW ARC RAYCASTS WITH THIS SAME MASK, so the drawn line terminates
 ## on exactly the surfaces the real grenade would first strike.
-const COLLISION_MASK := 1 | Obstacle.SOLID_NO_NAV_LAYER
+const COLLISION_MASK := Obstacle.SOLID_SURFACE_MASK
 
 ## The project's 24.0 gravity is tuned for how the PLAYER should fall — it is
 ## 2.4x real, which makes jumps feel crisp. Applied to a thrown object it is
