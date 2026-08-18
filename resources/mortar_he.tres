@@ -1,0 +1,57 @@
+[gd_resource type="Resource" script_class="AreaDamageProfile" load_steps=2 format=3]
+
+; 120mm HE — one ROUND, not the whole mission. A fire mission is N of these
+; detonated at N scattered origins by FireMissionSystem; the delay before the
+; first round and the spread between impacts belong to the mission, not here.
+; (See AreaDamageProfile.duration's own note on exactly this: setting duration
+; on a mortar profile would make a pillar of fire at one point instead of a
+; barrage. duration stays 0.)
+;
+; GEOMETRY: 8m lethal, 14m max, QUADRATIC falloff. Deliberately NOT the
+; mission's own 20m effect_radius — that is the box rounds LAND in, this is
+; how far one round REACHES. A round landing on the near edge of a 20m mission
+; circle still threatens most of it, and two rounds landing apart cover the
+; whole thing between them. Making them equal would mean every round covered
+; the entire mission area, which removes the reason to fire six of them.
+;
+;     0-8m  400      10m  244      12m  122      13m  61      14m+  0
+;
+; MAX_DAMAGE 400. A 120mm round is not a hand grenade: this one-shots a
+; zombie at ANY night tier well inside lethal radius, and one-shots the
+; 100 HP player anywhere inside ~11.5m. Friendly fire is the entire tension
+; of this enabler and is not softened anywhere in the pipeline — the shared
+; system has no faction filtering to begin with.
+;
+; BLOCKED_DAMAGE_MULT 0.35, NOT 0.0. Every other explosive in this project
+; treats intact cover as total protection. Artillery should not: a 120mm
+; shell landing behind a sandbag wall still ruins the day of whoever is
+; crouched behind it. This is the one profile that deliberately defeats cover
+; partially, and it's why the field exists as a per-profile knob.
+;
+; DAMAGES_OBSTACLES true, at 2.5x. Sandbag sections are 200 HP, so a round
+; landing within lethal radius delivers 400 * 2.5 = 1000 — one round removes
+; any section it lands on top of, and a full mission reshapes a wall. That is
+; intended: calling fire on your own perimeter should cost you the perimeter.
+;
+; NOISE_RADIUS 60m per round, larger than any weapon (M249 47m) or the
+; grenade (50m). Six rounds means six pulls — the mission is also a lure, and
+; that is a feature the player can use deliberately.
+
+[ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
+
+[resource]
+script = ExtResource("1_adp")
+id = "mortar_he"
+display_name = "120mm HE"
+lethal_radius = 8.0
+max_radius = 14.0
+max_damage = 400
+falloff = 1
+arc_degrees = 360.0
+blocked_damage_mult = 0.35
+damages_obstacles = true
+obstacle_damage_mult = 2.5
+duration = 0.0
+tick_interval = 0.5
+sfx_detonate = "res://assets/audio/fx/grenade_blast.wav"
+noise_radius = 60.0

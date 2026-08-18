@@ -102,6 +102,20 @@ var _pending_tent_zone: EngineersTentZone
 var _build_mode: BuildMode
 var _radio_menu: RadioMenu
 var _target_painter: TargetPainter
+var _fire_missions: FireMissionSystem
+
+## Radio-callable fire missions, in menu order. Adding one is a .tres plus a
+## line in _fire_mission_list() — FireMissionSystem registers whatever it's
+## handed, and the radio menu renders whatever is registered.
+const MISSION_MORTAR := preload("res://resources/mission_mortar.tres")
+
+## Built as a typed local rather than a typed `const` array: FireMissionSystem
+## .missions is Array[FireMissionConfig], and handing it an untyped literal
+## fails the assignment at runtime.
+func _fire_mission_list() -> Array[FireMissionConfig]:
+	var list: Array[FireMissionConfig] = []
+	list.append(MISSION_MORTAR)
+	return list
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer
 var _nvg_whiteout: ColorRect
@@ -500,7 +514,14 @@ func _build_ui() -> void:
 	_target_painter.name = "TargetPainter"
 	add_child(_target_painter)
 	_target_painter.setup(player, player.camera)
-	_register_paint_probe()
+
+	# Registers its own missions into EnablerManager.callable_enablers, so
+	# they appear in the radio menu with no menu-side changes.
+	_fire_missions = FireMissionSystem.new()
+	_fire_missions.name = "FireMissionSystem"
+	_fire_missions.missions = _fire_mission_list()
+	add_child(_fire_missions)
+	_fire_missions.setup(player, _hud, _target_painter, _radio_menu)
 
 	_restore_base()
 
@@ -640,38 +661,6 @@ func _begin_day() -> void:
 		_spawn_supply_drop()
 	else:
 		_hud.show_message("DAY — safe. Open the supply crate to spend points.")
-
-# --- Paint-mode verification probe ----------------------------------------
-## TEMPORARY (Step 6a Phase 1 test gate only). A zero-cost radio entry whose
-## whole job is to open paint mode so the marker, the range limit and both
-## cancel paths can be verified BEFORE any fire mission exists to consume
-## them. Confirming it logs the painted point and does nothing else — no
-## charge, no noise, no cooldown.
-##
-## DELETE THIS AND ITS REGISTRATION once the mortar registers real entries in
-## Phase 2; it is scaffolding, not a feature, and it is deliberately free so
-## it can be spammed while testing.
-const PAINT_PROBE_RADIUS := 20.0
-const PAINT_PROBE_MAX_RANGE := 150.0
-
-func _register_paint_probe() -> void:
-	EnablerManager.callable_enablers.append({
-		"id": "paint_probe",
-		"display_name": "TEST — Paint Probe",
-		"cost": 0,
-		"call_fn": _begin_paint_probe,
-	})
-
-func _begin_paint_probe() -> void:
-	_target_painter.begin(PAINT_PROBE_RADIUS, PAINT_PROBE_MAX_RANGE,
-		func(point: Vector3):
-			print("[PAINT] confirmed at (%.1f, %.1f, %.1f)" % [point.x, point.y, point.z])
-			_hud.show_message("PAINT CONFIRMED — %.0fm out" % \
-				Vector2(point.x - player.global_position.x,
-					point.z - player.global_position.z).length()),
-		func():
-			print("[PAINT] cancelled")
-			_hud.show_message("Paint cancelled."))
 
 ## Instances the reusable SupplyDrop scene near the crate. The future
 ## purchasable enabler instances the same scene with a different anchor.

@@ -1,0 +1,33 @@
+[gd_resource type="Resource" script_class="FireMissionConfig" load_steps=3 format=3]
+
+; 120mm mortar fire mission. Every number here is a playtest knob.
+;
+; effect_radius (20m) is the box rounds LAND in. It is NOT the same as the HE
+; profile's max_radius (14m), which is how far one round REACHES from where
+; it lands — see mortar_he.tres. The paint circle is drawn at effect_radius,
+; so the real danger area is slightly LARGER than the circle shown: a round
+; landing on the rim still reaches 14m outward. That understatement is
+; deliberate and is the one place the marker is not the whole truth; the spec
+; records it explicitly.
+;
+; wp_radius 0 = pure HE, no burn zone left behind. Shake-and-bake is a
+; separate config with the same pipeline and a nonzero wp_radius.
+
+[ext_resource type="Script" path="res://scripts/FireMissionConfig.gd" id="1_cfg"]
+[ext_resource type="Resource" path="res://resources/mortar_he.tres" id="2_he"]
+
+[resource]
+script = ExtResource("1_cfg")
+id = "mortar"
+display_name = "120mm Mortar"
+cost = 50
+cooldown = 180.0
+time_of_flight = 8.0
+round_count = 6
+mission_duration = 9.0
+effect_radius = 20.0
+he_profile = ExtResource("2_he")
+wp_radius = 0.0
+wp_duration = 45.0
+wp_damage_per_second = 25.0
+wp_tick_interval = 0.2

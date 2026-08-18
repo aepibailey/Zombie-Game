@@ -154,6 +154,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func _try_open() -> void:
 	if not _player.control_enabled:
 		return
+	# Already painting a mission — T must not stack a second call flow on top
+	# of an aim the player is midway through committing.
+	if _player.painting:
+		return
 	if not _player.owns_item_id(RADIO_ITEM_ID):
 		# Matches EngineersTentZone's own convention for external denial
 		# feedback — straight to HUD, not through the player's own signal.
