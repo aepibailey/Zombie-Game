@@ -1201,6 +1201,10 @@ slope, so the Hermite interpolation is exactly straight.
 
 ### 9.8 Persistence and recovery
 
+> **Superseded by §10.2** (playtest fix pass) for the recovery mechanism
+> itself. This subsection is kept for the persistence reasoning, which is
+> still exactly accurate.
+
 **Persistence is free.** Night transitions are phase changes on a live scene,
 never a reload, and nothing frees scene children between phases — so an
 emplaced claymore survives dawn by simply existing, exactly as placed
@@ -1209,28 +1213,22 @@ grenades and IFAKs: `GameState` captures obstacles, night and points but no
 player-held or player-placed state, so this would be lost across a real scene
 transition. Not a bug today.)
 
-**Recovery** is Day-only, within 1.5m, instant, and returns the claymore to
-inventory through `grant_claymores()` — the same capped path a purchase uses.
-At the cap the prompt is **replaced** rather than the recovery silently
-failing: it reads "Claymore — inventory full (2/2)". A triggered mine refuses
-recovery; an arming one allows it, because a mine you just put down in the
-wrong place is exactly the one you want back.
-
-The prompt is owned by the **Player**, not by each claymore:
-`HUD.show_prompt()` has a single owner slot, so two claymores in range would
-fight over it and one would strand the other's `hide_prompt()`. The Player
-picks the nearest and emits `prompt` / `prompt_cleared` — matching how every
-other Player→HUD channel already works, rather than giving the Player a HUD
-reference it does not otherwise have. Emission is **on change only**, because
-the crate and tent zones re-assert their prompts every frame from their own
-`_process` and pushing ours every frame too would make overlapping
-interactables flicker against each other.
+Recovery was originally Day-only, proximity-based, and instant. **See §10.2
+for the current mechanism** — look-at-and-hold, available any time, with a
+3m noise cost on completion.
 
 ### 9.9 Store and inventory
 
-EQUIPMENT tab, **15 points**, Day-only, cap **2**, separate line item and
-separate inventory from the grenade. **Not in resupply drops** — the drop
-logic is untouched and still grants exactly 1 grenade.
+> Cost and cap corrected in §10.1 — the numbers below are what shipped
+> originally, not current. **15 points, cap 2** were the launch values;
+> current values are **10 points, cap 4** (see §10.1).
+
+Cap applies to **carried** claymores only, and always did — placing one
+already removed it from the carried count with no separate cap on how many
+can be emplaced in the world, before the playtest pass ever touched this
+file. EQUIPMENT tab, separate line item and separate inventory from the
+grenade. **Not in resupply drops** — the drop logic is untouched and still
+grants exactly 1 grenade.
 
 `grant_claymores()` was deliberately **not** merged with `grant_grenades()`
 into a generic `grant_equipment(kind, n)`: they are independent inventories
@@ -1241,3 +1239,158 @@ between a purchase and the field it changes.
 Adding the item cost exactly the **two `Player.gd` edits** §7 predicted — an
 `apply_store_purchase()` arm and a `store_item_blocked()` cap line.
 `owns_store_item()` needed nothing.
+
+---
+
+## 10. Playtest fix pass: night purchases, claymore rework, radio menu
+
+Three isolated changes, one commit each, driven by a fresh audit against live
+code rather than trusting this file. The audit found real drift between what
+this document claimed and what the code actually did — corrected below,
+alongside the actual changes.
+
+### 10.0 Audit corrections (nothing changed, framing was wrong)
+
+Two assumptions going into this pass turned out to be false, checked against
+source rather than assumed:
+
+- **The store was never gated behind the Engineers' Tent.** Purchases happen
+  at the supply crate (`SupplyCrateZone`), which has been usable in **both**
+  Day and Night since an earlier pass — its own comment says so explicitly.
+  The Tent (`EngineersTentZone`) is a separate zone that gates **BuildMode**
+  (obstacle placement) only, and is genuinely Day-only, but has nothing to do
+  with buying anything. There was no spatial gate on purchases to preserve
+  beyond what already existed: walking to the crate, exposed, at night.
+- **Weapons, attachments, ammo and the radio were never Day-restricted
+  either.** Only the grenade and the claymore had `day_only: true` set. The
+  per-item `day_only` flag on `StoreItem` — the thing this pass needed to use
+  — already existed, already had exactly the right generic semantics
+  (opt-in restriction, default available), and needed no redesign. The whole
+  of §10.1 below is two boolean flips.
+
+### 10.1 Grenades and claymores purchasable at night
+
+`StoreCatalog.gd`: `day_only: true` removed from the `grenade` and `claymore`
+entries. Nothing else changed — `SupplyCrateUI` already rendered a `day_only`
+item as a disabled, greyed `"DAY ONLY"` row (used for these two items
+already), so no UI work was needed either.
+
+**Claymore cost and cap corrected in the same pass** (bundled with the
+recovery rework, §10.2, since both touch the same catalog entry and Player
+fields): **15 → 10 points**, **carry cap 2 → 4** (`Player.claymore_max_carry`).
+The "carried only, unlimited placed" rule needed **no code change** —
+emplacing already decremented `claymores` with no separate placed-count cap
+anywhere in the original implementation; that was already correct.
+
+Grenade cost/cap (6 pts / 4 carried) were untouched — only its Day
+restriction lifted.
+
+### 10.2 Claymore recovery: look-and-hold, any time
+
+Replaced entirely. Was: nearest claymore within 1.5m of the *player*,
+Day-only, a single instant `E` press, no noise, `Player._update_claymore_recovery()`
+doing a full linear scan of the `"claymores"` group **every physics frame**.
+
+Now:
+- Must be **looking at** a specific claymore within **2.0m**
+  (`recovery_range`), **hold** interact for **0.5s** (`recovery_hold_time`),
+  releasing early cancels with no penalty. Available **any time** — the Day
+  gate is gone.
+- Completion emits a **3m noise event** (`recovery_noise_radius`) at the
+  player's position — browsing/holding is silent, committing costs you, the
+  same convention the radio's transmission noise (§10.3) uses.
+- "Looking at" is a **real raycast**, not a proximity/angle heuristic.
+  `Claymore` previously had zero collision of any kind (pure visual meshes).
+  Added a ray-detectable-only `Area3D` per claymore (`monitoring = false`,
+  tagged via `set_meta("claymore", self)`) on a new dedicated layer,
+  `Obstacle.INTERACT_LAYER` (64) — isolated from every other mask in the
+  project, so weapon fire and the claymore's own detection LOS check cannot
+  hit it. The query mask includes world geometry (layer 1) alongside it, so
+  a wall between the player and the mine correctly blocks recovery.
+- **This is also the performance fix.** A raycast query is O(1) with respect
+  to how many claymores exist in the world; only the one actually being
+  looked at is ever touched. This replaces the flagged-in-audit unbounded
+  per-frame scan, which would have degraded as placed count grows — and
+  Phase 2b/10.1 explicitly forbids capping placed count.
+- `Claymore.can_recover()` **reversed**: previously refused a *triggered*
+  mine outright, as an explicit, documented design choice ("not a mechanic
+  that should exist even by accident"). That decision is overridden here —
+  recovery is now required to be able to cancel a pending detonation, and
+  does so for free: completing recovery calls `queue_free()`, which halts
+  `_physics_process()` before `_detonate()` can run. In practice this rarely
+  matters — the 0.15s trigger delay is far shorter than the 0.5s recovery
+  hold, so it only changes anything if a mine triggers in roughly the last
+  third of an *already in-progress* hold. Otherwise the mine wins the race
+  and detonates on schedule; if the player is in the blast, that's the same
+  friendly-fire outcome any other bystander gets.
+
+Not implemented, left as explicitly flagged: blocking recovery while a
+zombie is inside the detection arc. No such gate exists, matching the
+default the earlier audit proposed.
+
+### 10.3 Radio menu: `T`, currently empty
+
+`scripts/RadioMenu.gd` (new `CanvasLayer`, built in code like every other UI
+in this project). Bound to `T` (`radio_menu` input action, physical 84,
+confirmed unbound in the audit).
+
+**Genuinely empty today, and that's correct, not a placeholder bug.** It
+lists `EnablerManager.callable_enablers` — a new `Array`, honestly empty
+until the first real enabler (UAV, a *called* Supply Drop distinct from the
+existing automatic Night 3+ crate, Apache, mortar, WP) registers into it.
+Opening it with the Radio owned shows `"No transmissions available."`; the
+row-rendering and selection/confirm code are fully written against a
+documented minimal shape (`id` / `display_name` / `cost`) so the day a real
+entry exists, **no menu-side changes are needed** — this is infrastructure,
+not a stub.
+
+- Gated on `Player.owns_item_id("radio")` — the radio's existing generic
+  non-weapon purchase path (`owned_items`), left as-is. Not migrated to
+  `EnablerManager`, and the radio's price/tab/purchase-time gating are
+  unchanged — nothing in this pass asked for either.
+- **Does not pause the game.** Movement stays enabled throughout; only
+  mouse-look is suppressed (`Player.radio_menu_open`), so the camera can't
+  spin by accident while reading, and combat otherwise keeps working. Read
+  as: the menu blocks only the inputs it explicitly claims for itself, not
+  everything indiscriminately.
+- Exit is **Escape or RMB only** — `T` while already open does nothing,
+  matching the spec's own exit list rather than assuming toggle symmetry
+  with the grenade/claymore equip keys.
+- **Transmission noise**: fixed **10m radius**, a single shared constant on
+  `RadioMenu` — never a per-`EnablerType` field, so a mortar strike and a
+  supply drop sound identical to key up. Fires only on **confirm**, never on
+  open/browse. `NoiseManager.emit_noise()` has no duration parameter, so "3s
+  of noise" is a repeating call on a 0.5s accumulator rather than a native
+  sustained event, each pulse reading the player's **current** position so
+  it follows them if they move mid-transmission. Currently unreachable in
+  play (nothing to confirm), fully wired and correct once something is.
+
+**Input-collision handling — all via explicit state checks, not
+`_unhandled_input` dispatch order between sibling nodes**, deliberately, for
+the same reason established earlier in the claymore/crate key collision:
+relying on which node's handler runs first for a shared event is not
+something to build correctness on.
+
+- **RMB**: gated on `radio_menu_open`, plus a sticky
+  `_ads_suppressed_until_release` flag that only clears on an actual
+  button-*release* event. This is what makes "the click that closes the menu
+  can never also open ADS" true regardless of processing order.
+- **Escape**: gated on `control_enabled and not radio_menu_open`, mirroring
+  the crate's existing "let the zone handle Esc instead" pattern. No pause
+  menu exists anywhere in the codebase to leak into — confirmed, not
+  assumed.
+- **Number keys 1–9**: the menu claims them while open (selection), so
+  `Player._try_equip_slot()` independently gates on `radio_menu_open` too —
+  a weapon-slot switch must not fire on the same press that was meant for
+  the menu. This is the one place a real input restriction was necessary;
+  fire, reload, and the grenade/claymore equip keys are deliberately left
+  unblocked while merely browsing, since they don't share a key with the
+  menu and nothing in this pass asked for combat to freeze.
+
+**Considered and reverted:** adding `day_only` to the radio's existing
+catalog entry, to literally satisfy an earlier "radio remain Day-only"
+phrasing. Reverted because the radio was never actually Day-restricted
+(§10.0), and neither the night-purchase phase nor the radio-menu phase's
+concrete diff asked for a *new* restriction on an item neither one otherwise
+touches — that phrasing was describing weapons/attachments in general, not
+instructing a behaviour change to the radio specifically.

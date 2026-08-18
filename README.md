@@ -33,7 +33,8 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | `Space` | Jump (0.9m) — or mantle a ledge when holding forward |
 | `N` | Toggle NVGs (green night-vision tint + brightness) |
 | `G` | Equip / stow hand grenade |
-| `V` | Equip / stow claymore (LMB emplaces; `E` recovers one by day) |
+| `V` | Equip / stow claymore (LMB emplaces; look at a placed one and hold `E` to recover, any time) |
+| `T` | Open the radio menu (requires the Radio; movement stays on, look is frozen while it's open) |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
 | `F3` | Debug: list audible zombies + their distance |
@@ -44,9 +45,9 @@ In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.
 In the store: `1`–`4` or `←`/`→` switch tabs (WEAPONS / ATTACHMENTS /
 SUPPLIES / EQUIPMENT), `Esc` closes.
 
-`E`, `N`, `G` and `V` are bound via remappable **Input Map** actions
-(`interact`, `nvg_toggle`, `equip_grenade`, `equip_claymore`) in Project
-Settings, not hardcoded.
+`E`, `N`, `G`, `V` and `T` are bound via remappable **Input Map** actions
+(`interact`, `nvg_toggle`, `equip_grenade`, `equip_claymore`, `radio_menu`)
+in Project Settings, not hardcoded.
 
 `N` intentionally does double duty: it is the global NVG toggle, and it also
 answers "finish the night" on the all-clear prompt. The prompt is modal and
