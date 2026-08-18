@@ -173,16 +173,21 @@ func rebuild() -> void:
 		}))
 
 	# --- EQUIPMENT: ordnance you carry and permanently consume ---
+	# Purchasable at night as well as day (playtest fix pass) — the `day_only`
+	# field already IS the generic per-item opt-in the codebase uses everywhere
+	# else (see the field's own doc comment on StoreItem above); the crate
+	# itself has been open in both phases all along, so this is the only
+	# change needed. Not day_only means "always available", not "unrestricted
+	# by anything else" — the crate's own physical location is still the
+	# spatial gate: you still have to walk there, exposed, at night.
 	items.append(_mk({
 		"id": "grenade", "category": "EQUIPMENT", "kind": "equipment",
 		"display_name": "Hand Grenade", "cost": GRENADE_COST, "repeatable": true,
-		"day_only": true,
 		"description": "4m lethal / 9m blast. Carry up to 4. Never restocked at dawn.",
 	}))
 	items.append(_mk({
 		"id": "claymore", "category": "EQUIPMENT", "kind": "equipment",
 		"display_name": "M18A1 Claymore", "cost": CLAYMORE_COST, "repeatable": true,
-		"day_only": true,
 		"description": "Emplaced directional mine. 60° front arc, 10m. Carry 2, recoverable by day.",
 	}))
 
