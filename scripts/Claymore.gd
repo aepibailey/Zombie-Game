@@ -51,6 +51,7 @@ var config: ClaymoreConfig
 
 var _wedge: ArcWedge
 var _player: Node3D
+var _interact_area: Area3D
 
 # --- Runtime state ---------------------------------------------------------
 var _arm_remaining := 0.0
@@ -74,6 +75,7 @@ func setup(cfg: ClaymoreConfig) -> void:
 	_build_visual()
 	_build_indicator()
 	_build_wedge()
+	_build_interact_collider()
 	_arm_remaining = config.arming_delay
 	_armed = false
 
@@ -158,6 +160,28 @@ static func _flat_mat(c: Color, alpha: float) -> StandardMaterial3D:
 
 func _build_visual() -> void:
 	add_child(build_body(COLOR_FRONT, COLOR_BODY))
+
+## A ray-detectable-only Area3D (monitoring off — this is never used for
+## overlap signals, only so Player's look-at raycast can hit something
+## precise). Sized a little larger than the visual body: the greybox plate is
+## tiny, and a hitbox that exactly matched it would make "look at it" fussier
+## than the interaction deserves. Tagged with a meta key rather than relying
+## on get_parent(), so the ray-hit resolution is a single dictionary lookup
+## regardless of how this node's own hierarchy is built.
+func _build_interact_collider() -> void:
+	_interact_area = Area3D.new()
+	_interact_area.collision_layer = Obstacle.INTERACT_LAYER
+	_interact_area.collision_mask = 0
+	_interact_area.monitoring = false
+	_interact_area.monitorable = false
+	_interact_area.set_meta("claymore", self)
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = BODY_SIZE * 2.2
+	shape.shape = box
+	shape.position.y = LEG_HEIGHT + BODY_SIZE.y * 0.5
+	_interact_area.add_child(shape)
+	add_child(_interact_area)
 
 ## Small emissive dot on top of the body. Blinks amber while arming, then goes
 ## steady green — so "is this thing live yet" is readable from across the base
@@ -369,13 +393,26 @@ func _spawn_burst(origin: Vector3, face: Vector3) -> void:
 # --- Recovery --------------------------------------------------------------
 ## Can this claymore be picked back up right now?
 ##
-## A TRIGGERED mine is refused. It detonates within trigger_delay either way,
-## so this changes nothing a player could actually react to — but "walk up and
-## defuse a mine that has already fired" is not a mechanic that should exist
-## even by accident. Arming state is deliberately NOT a barrier: a mine you
-## just put down in the wrong place is exactly the one you want back.
+## REVISED (playtest fix pass): this used to also refuse a TRIGGERED mine, on
+## the reasoning that "walk up and defuse a mine that's already fired" wasn't
+## a mechanic worth having even by accident. That's been explicitly
+## overridden — recovery is now required to be able to cancel a pending
+## detonation, and it does so for free: completing recovery queue_free()'s
+## this node, which halts _physics_process before _detonate() can run.
+##
+## In practice this rarely matters: trigger_delay (0.15s) is far shorter than
+## the recovery hold (0.5s), so a mine can only be triggered AND recovered
+## before it goes off if it triggers in roughly the last third of an already
+## in-progress hold. Otherwise the mine wins the race and detonates — and if
+## the player is in the blast, that's the same friendly-fire outcome any
+## other bystander gets, nothing special-cased here.
+##
+## Arming state is still not a barrier: a mine you just put down in the wrong
+## place is exactly the one you want back. Only a fully DETONATED (already
+## freed in spirit, about to be freed in fact) mine refuses — there's nothing
+## left to recover.
 func can_recover() -> bool:
-	return not _triggered and not _detonated
+	return not _detonated
 
 ## Is `pos` far enough from every claymore already emplaced? Static because
 ## the placement ghost needs to answer this before any claymore exists there.

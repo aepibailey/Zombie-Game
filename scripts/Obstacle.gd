@@ -34,6 +34,15 @@ const SOLID_NO_NAV_LAYER := 32
 ## counts as ground. They were about to hold two copies of the same number.
 const SOLID_SURFACE_MASK := 1 | SOLID_NO_NAV_LAYER
 
+## Collision layer 7. Ray-detectable only — an Area3D with monitoring off,
+## used purely so a short "what am I looking at" interaction raycast can hit
+## a small object precisely (a claymore) without either colliding physically
+## (bullets and bodies still pass straight through) or requiring the caller
+## to scan every candidate in the world every frame. World geometry (layer 1)
+## belongs in the same query mask alongside this one, so the ray is naturally
+## occluded by a wall between the player and the thing they're aiming at.
+const INTERACT_LAYER := 64
+
 var type_id: String = ""
 var obstacle_type                # ObstacleCatalog.ObstacleType
 

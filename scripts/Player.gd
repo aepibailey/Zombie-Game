@@ -188,7 +188,11 @@ const CLAYMORE_CONFIG := preload("res://resources/claymore.tres")
 
 ## Carry cap is deliberately separate from the grenade's: they are independent
 ## inventories with independent caps, so nothing is shared but the pattern.
-@export var claymore_max_carry: int = 2
+## 2 -> 4 (playtest fix pass), matching the grenade's cap. This is CARRIED
+## only — placing one removes it from this count entirely (see
+## _try_emplace_claymore()), and there is no cap on how many are emplaced in
+## the world at once.
+@export var claymore_max_carry: int = 4
 ## Bought at the crate (EQUIPMENT tab), never issued and never in a resupply
 ## drop. Exposed for the same reason as starting_grenades — so emplacement and
 ## detonation can be playtested without shopping first.
@@ -306,9 +310,12 @@ var _cook_underhand := false
 ## Persists across nights and is never restocked at dawn.
 var claymores := 0
 var _claymore_placer: ClaymorePlacer
-## Nearest recoverable claymore in range, or null. Recomputed every frame;
-## only ever non-null during Day.
+## What the player is currently looking at, within recovery range, or null.
+## Recomputed every physics frame via a raycast — see _find_recovery_target().
+## Available at any time (Day or Night), not gated by phase.
 var _recovery_target: Claymore
+var _recovery_holding := false
+var _recovery_hold_time := 0.0
 var _prompt_showing := false
 var _prompt_text := ""
 
@@ -441,9 +448,10 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# Outside the control_enabled block on purpose: when control is taken away
-	# (crate, build mode) this still runs and CLEARS a showing prompt, rather
-	# than stranding "Press E — recover claymore" on screen behind a menu.
-	_update_claymore_recovery()
+	# (crate, build mode) this still runs and CLEARS a showing prompt/hold,
+	# rather than stranding "Hold E — recover claymore" on screen (or a
+	# half-finished hold) behind a menu.
+	_update_claymore_recovery(delta)
 
 	# Gravity always applies.
 	if not is_on_floor():
@@ -646,13 +654,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed(ACTION_EQUIP_CLAYMORE):
 			_toggle_claymore()
 			return
-		# Claymore recovery shares E with the crate and the tent. Only consumed
-		# when a claymore is actually the thing in range, and marked handled so
-		# a zone whose trigger happens to overlap can't also act on it.
-		if event.is_action_pressed("interact") and _recovery_target != null:
-			if _try_recover_claymore():
-				get_viewport().set_input_as_handled()
-			return
+		# Claymore recovery is now a HOLD, not a single press — see
+		# _update_claymore_recovery(), polled every physics frame via
+		# Input.is_action_pressed("interact") rather than intercepted here.
 		match event.keycode:
 			KEY_C:
 				if control_enabled:
@@ -1382,71 +1386,128 @@ func _try_emplace_claymore() -> void:
 	if claymores <= 0:
 		_set_equipped(Equipment.NONE)
 
-# --- Claymore recovery (Day only) -----------------------------------------
-## Picks the NEAREST recoverable claymore in range and owns the prompt for it.
+# --- Claymore recovery (any time — Day or Night) --------------------------
+## Resolves what the player is LOOKING AT and owns the prompt for it.
 ##
 ## Centralised here rather than each claymore prompting for itself, because
-## HUD.show_prompt() has a single owner: two claymores in range would fight
-## over it and one would strand the other's hide_prompt(). One chooser, one
-## owner, no contention.
-func _update_claymore_recovery() -> void:
-	var best: Claymore = null
-	# Day only. A claymore is a live mine at night and reaching into its arc
-	# to pocket it is not something the game should be inviting.
-	if GameManager.is_day() and control_enabled:
-		var best_d: float = CLAYMORE_CONFIG.recovery_range
-		for node in get_tree().get_nodes_in_group(Claymore.GROUP):
-			var c := node as Claymore
-			if c == null or not is_instance_valid(c) or not c.can_recover():
-				continue
-			var d := global_position.distance_to(c.global_position)
-			if d <= best_d:
-				best_d = d
-				best = c
-	_recovery_target = best
-
-	if best == null:
-		if _prompt_showing:
-			_prompt_showing = false
-			_prompt_text = ""
-			prompt_cleared.emit(self)
+## HUD.show_prompt() has a single owner: two claymores near each other would
+## fight over it and one would strand the other's hide_prompt(). One chooser,
+## one owner, no contention.
+##
+## LOOK-AT-AND-HOLD (playtest fix pass), available at any time — Day or
+## Night, no more proximity-only auto-pickup. Polled every physics frame
+## rather than event-driven, because "hold for 0.5s" needs a running
+## accumulator, not a single press.
+func _update_claymore_recovery(delta: float) -> void:
+	if not control_enabled:
+		_cancel_recovery_hold()
+		_clear_recovery_prompt()
+		_recovery_target = null
 		return
-	# At the cap the prompt is REPLACED, not spammed: emitting a message every
-	# frame would flood the feed, and a silent dead "press E" would be worse.
-	var text: String
+
+	var target := _find_recovery_target()
+	if target != _recovery_target:
+		# Aim moved to a different claymore (or off it entirely) — the hold
+		# does not carry over to a new target.
+		_cancel_recovery_hold()
+	_recovery_target = target
+
+	if target == null:
+		_clear_recovery_prompt()
+		return
+
 	if claymores_full():
-		text = "Claymore — inventory full (%d/%d)" % [claymores, claymore_max_carry]
+		# Blocked BEFORE the hold can start, not discovered after 0.5s of
+		# holding — the cap is checked every frame regardless, so this also
+		# safely aborts a hold that was already in progress.
+		_cancel_recovery_hold()
+		_show_recovery_prompt("Claymore — inventory full (%d/%d)" % [claymores, claymore_max_carry])
+		return
+
+	if Input.is_action_pressed("interact"):
+		if not _recovery_holding:
+			_recovery_holding = true
+			_recovery_hold_time = 0.0
+		_recovery_hold_time += delta
+		if _recovery_hold_time >= CLAYMORE_CONFIG.recovery_hold_time:
+			_complete_recovery(target)
+			return
+		var pct: int = int(round(100.0 * _recovery_hold_time / CLAYMORE_CONFIG.recovery_hold_time))
+		_show_recovery_prompt("Recovering claymore… %d%%" % pct)
 	else:
-		text = "Press E — recover claymore"
-	# Emitted only on CHANGE. HUD.show_prompt() takes ownership of the single
-	# prompt slot, and the crate/tent zones re-assert theirs every frame from
-	# their own _process — pushing ours every frame too would make two
-	# overlapping interactables flicker against each other instead of the last
-	# state change simply winning.
+		# Released early (or never pressed this frame) — cancels with no
+		# penalty. Nothing was ever spent, so there is nothing to refund.
+		_cancel_recovery_hold()
+		_show_recovery_prompt("Hold [E] — Recover Claymore")
+
+func _cancel_recovery_hold() -> void:
+	_recovery_holding = false
+	_recovery_hold_time = 0.0
+
+## Emitted only on CHANGE. HUD.show_prompt() takes ownership of the single
+## prompt slot, and the crate/tent zones re-assert theirs every frame from
+## their own _process — pushing ours every frame too would make two
+## overlapping interactables flicker against each other instead of the last
+## state change simply winning. The hold's own percentage text changes every
+## frame while active, so this still updates every frame during a hold —
+## the dedupe only ever skips a truly UNCHANGED frame.
+func _show_recovery_prompt(text: String) -> void:
 	if _prompt_showing and text == _prompt_text:
 		return
 	_prompt_text = text
 	_prompt_showing = true
 	prompt.emit(text, self)
 
-## Instant. No partial refund, no points — you get the claymore back.
-func _try_recover_claymore() -> bool:
-	if _recovery_target == null or not is_instance_valid(_recovery_target):
-		return false
-	if not _recovery_target.can_recover():
-		return false
-	if claymores_full():
-		message.emit("Inventory full — can't recover that claymore.")
-		return true   # consumed: the input was ABOUT the claymore, it just failed
-	# Same capped grant path as a store purchase.
+func _clear_recovery_prompt() -> void:
+	if _prompt_showing:
+		_prompt_showing = false
+		_prompt_text = ""
+		prompt_cleared.emit(self)
+
+## What claymore (if any) the player is currently looking at within
+## recovery_range. A short raycast, NOT a scan of every placed claymore —
+## this is the fix for the earlier implementation's per-frame linear scan of
+## the whole "claymores" group, which would have degraded with the unbounded
+## placed count Phase 2b explicitly allows. A raycast query is O(1) with
+## respect to how many claymores exist in the world; only the ONE the player
+## is actually looking at is ever touched.
+##
+## World geometry (layer 1) shares the query mask with the claymore's own
+## interaction layer, so a wall between the player and the mine correctly
+## blocks recovery — the ray hits the wall first and "claymore" meta lookup
+## on a wall collider is simply absent.
+func _find_recovery_target() -> Claymore:
+	var space := get_world_3d().direct_space_state
+	var from := camera.global_position
+	var dir := -camera.global_transform.basis.z.normalized()
+	var q := PhysicsRayQueryParameters3D.create(from, from + dir * CLAYMORE_CONFIG.recovery_range)
+	q.collision_mask = 1 | Obstacle.INTERACT_LAYER
+	q.collide_with_areas = true
+	q.exclude = [get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return null
+	var col = hit.collider
+	if col == null:
+		return null
+	var c = col.get_meta("claymore", null)
+	if c == null or not is_instance_valid(c) or not c.can_recover():
+		return null
+	return c
+
+## No partial refund, no points — you get the claymore back. Emits a 3m
+## noise event AT COMPLETION (not at hold-start): browsing/holding is silent,
+## committing is what costs you, same convention the radio's transmission
+## noise will use.
+func _complete_recovery(target: Claymore) -> void:
+	# Same capped grant path a store purchase uses.
 	grant_claymores(1)
-	_recovery_target.queue_free()
+	target.queue_free()
 	_recovery_target = null
-	_prompt_showing = false
-	_prompt_text = ""
-	prompt_cleared.emit(self)
+	_cancel_recovery_hold()
+	_clear_recovery_prompt()
+	NoiseManager.emit_noise(global_position, CLAYMORE_CONFIG.recovery_noise_radius)
 	message.emit("Claymore recovered (%d/%d)." % [claymores, claymore_max_carry])
-	return true
 
 # --- Laser (beam + terminal dot) -----------------------------------------
 func _build_laser() -> void:

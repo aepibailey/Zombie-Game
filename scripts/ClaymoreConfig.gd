@@ -46,9 +46,22 @@ class_name ClaymoreConfig
 ## emplaced claymore, and the cheap tests exist to keep the raycast rare.
 @export var detection_interval: float = 0.1
 
-# --- Recovery --------------------------------------------------------------
-## Player must be within this to get the Day-phase recovery prompt.
-@export var recovery_range: float = 1.5
+# --- Recovery ----------------------------------------------------------------
+## Recovery is available at ANY time now (Day or Night) — the earlier
+## Day-only restriction was a playtest-pass call, not a mechanic reason, and
+## has been removed. Interaction changed from "walk near it" to "look at it
+## within this range and hold interact" — see Player._find_recovery_target().
+@export var recovery_range: float = 2.0
+## How long interact must be held, continuously, while still looking at the
+## same claymore. Releasing early cancels with no penalty — see
+## Player._update_claymore_recovery().
+@export var recovery_hold_time: float = 0.5
+## Noise emitted at the PLAYER's position the moment recovery completes (not
+## on starting the hold — browsing/holding is silent, same convention the
+## radio transmission work will use for "committing makes noise, looking
+## doesn't"). Deliberately smaller than the blast's own noise: this is a
+## person quietly pocketing a mine, not a detonation.
+@export var recovery_noise_radius: float = 3.0
 
 # --- Readability -----------------------------------------------------------
 ## Draw the ground wedge on EMPLACED claymores when the player is close.
