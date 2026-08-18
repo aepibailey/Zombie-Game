@@ -1394,3 +1394,221 @@ phrasing. Reverted because the radio was never actually Day-restricted
 concrete diff asked for a *new* restriction on an item neither one otherwise
 touches — that phrasing was describing weapons/attachments in general, not
 instructing a behaviour change to the radio specifically.
+
+---
+
+## 11. Fire support: target painting, 120mm mortar, shake-and-bake
+
+Two radio-callable indirect-fire missions built on a shared painting system.
+Both are **consumers** of what already existed — the area-damage system from
+the grenade work and the radio menu from the previous pass — and neither adds
+a damage path of its own.
+
+### 11.1 Audit findings (what actually existed going in)
+
+The prior pass's "enabler architecture" was thinner than the spec implied,
+and this section records the real starting state:
+
+- **No `EnablerType` resource existed**, and still doesn't. Entries in
+  `EnablerManager.callable_enablers` are plain Dictionaries. That was a
+  deliberate deferral ("until a real enabler defines what fields it actually
+  needs"); the shape those needs produced is documented on the field itself.
+- **Nothing invoked anything.** `RadioMenu._select()` ended in a literal
+  `TODO` — no `execute()`, no callback, no interface.
+- **No cooldown state of any kind existed**, shared or otherwise.
+- **Points were never actually spent.** `_select()` checked affordability and
+  returned early, but never called `spend_points()`.
+- **No painting or map-marking flow existed.** No enabler had one.
+- **Sandbags already had full HP** (`SandbagPanel`, 200/section,
+  `take_structure_damage()`), so mortar destruction needed no obstacle work.
+- **C-wire and the ditch have no HP or damage entry point at all**, and
+  `Minefield._detonate()` is private and requires a triggering zombie. Rounds
+  therefore do **not** clear wire or cook off mines. Both would need new
+  obstacle-system API and were reported rather than forced.
+
+### 11.2 Target painting (`TargetPainter`)
+
+Shared infrastructure, built generically — the Apache patrol box is the next
+consumer and must need no changes to it. Nothing in it knows what a mortar is:
+
+```gdscript
+painter.begin(radius, max_range, on_confirm: Callable, on_cancel: Callable)
+```
+
+- Camera-centre raycast on `Obstacle.SOLID_SURFACE_MASK` — the same "what
+  counts as ground" constant the grenade lands on and the claymore stands on.
+- Marker is a filled ground disc plus a brighter rim band, drawn from
+  `AreaMath.arc_fan_points(360, r)` — the same primitive the claymore's
+  detection wedge uses. A circle that disagreed with the arc code about what a
+  radius means would be a lie in the one place the player commits points.
+- Unshaded, alpha-blended, **never additive** — must read on unlit ground at
+  night without NVGs without washing the scene out.
+- **150m max range** (`paint_max_range`, on `FireMissionSystem` — it is a
+  property of the radio/observer, not of the ordnance). Flat distance, so
+  painting into the ditch or onto a structure doesn't spend range on height.
+  **No minimum: painting your own feet is legal, and lethal, by design.**
+- **Does not pause, and deliberately does not suppress mouse-look or
+  movement** — painting is aiming, not browsing. This is why it uses a new
+  `Player.set_painting()` rather than `set_radio_menu_open()`, which
+  correctly suppresses look for a menu and would be exactly wrong here.
+- **LMB confirms, RMB and Escape cancel.** A cancel costs nothing: no points,
+  no cooldown, no noise.
+
+`Player.painting` gates firing, ADS, weapon slots and the equipment toggles.
+The full-auto path is gated **separately and explicitly** because it is
+*polled* — the painter marking its own input events handled does nothing for
+a poll. Confirming also sets a release-gated fire suppression so the
+confirming click can't double as a shot when paint mode ends.
+
+### 11.3 The three radio-menu seams
+
+The menu was declared out of scope, but two requirements could not be met
+without it. All three changes are the seams the menu was explicitly built
+with, and are surgical:
+
+1. **Invocation.** Entries gained optional `call_fn` / `available_fn`;
+   `_select()` invokes `call_fn` where the `TODO` was. Entries without them
+   behave exactly as the old placeholder shape.
+2. **Greying** now reads `EnablerManager.unavailable_reason()`, so the row and
+   the selection path share one source of truth — a greyed row cannot be
+   selected by pressing its number.
+3. **Charging and noise moved out of `_select()`** into
+   `RadioMenu.commit_transmission()`, called by the enabler once it has
+   actually committed. **This is what makes a cancelled paint genuinely
+   free** — otherwise selecting a mission and then cancelling would already
+   have keyed the mic and pulled every zombie in earshot.
+
+### 11.4 Cooldown model: independent, plus one global lockout
+
+**Per-enabler cooldowns are independent**, keyed by enabler id on
+`EnablerManager`. Deliberately not a shared pool: a shared pool means calling
+a UAV locks out fire support, which pushes the player to hoard the radio
+rather than use it.
+
+**The one genuinely global thing** is `global_radio_lockout` (10s), applied
+after *any* transmission, so three calls can't be chained back to back. "You
+are still on the handset", distinct from and much shorter than any
+per-enabler cooldown.
+
+Cooldowns start at **paint-confirm**, not menu selection — so a cancelled
+paint consumes none.
+
+| | Cost | Cooldown | Effective gap after last round |
+|---|---|---|---|
+| 120mm Mortar | 50 | 180s | ~163s |
+| Shake-and-Bake | 80 | 240s | ~223s |
+
+**One mission in flight at a time**, shared across both — enforced by an
+`available_fn` that greys the row to `IN FLIGHT`, and re-checked at confirm
+because the menu closed several seconds earlier.
+
+### 11.5 The 120mm mission
+
+Paint → confirm → **8s time of flight** → **6 rounds over 9s**. Round *times*
+are randomized within the window and sorted (the first always lands at t=0, so
+"splash in 8 seconds" is honest); round *positions* are scattered on the disc
+with a centre bias. A battery firing, not a metronome. Each impact re-seats
+onto actual ground, so scatter that walks onto a structure or into the ditch
+still detonates at the surface.
+
+**`effect_radius` (20m) is NOT `he_profile.max_radius` (14m), and this is
+deliberate.** `effect_radius` is the box rounds *land in*; `max_radius` is how
+far one round *reaches* from where it lands. So **the paint circle slightly
+understates the real danger area** — a round on the rim still reaches 14m
+outward. This is the one place the marker is not the whole truth, and
+`_validate()` deliberately does *not* assert them equal for that reason.
+
+Per round, from `mortar_he.tres`:
+
+| 0–8m | 10m | 11.5m | 12m | 13m | 14m+ |
+|---|---|---|---|---|---|
+| 400 | 178 | 69 | 44 | 11 | **0** |
+
+**Two deliberate departures from every other explosive in the project:**
+
+- **`blocked_damage_mult` 0.35, not 0.0.** Grenades and claymores treat intact
+  cover as total protection; a 120mm shell landing behind a sandbag wall
+  should not. This is the profile that partially defeats cover, and it is why
+  that field exists as a per-profile knob.
+- **`obstacle_damage_mult` 2.5.** Sandbag sections are 200 HP, so any round
+  within ~10.5m of a panel destroys it outright and a full mission reshapes a
+  wall. Calling fire on your own perimeter costs you the perimeter.
+
+**Noise 60m per round**, larger than any weapon (M249 47m) or the grenade
+(50m). Six rounds is six separate pulls — **the mission is also a lure**, and
+that is a feature the player can use deliberately.
+
+### 11.6 Friendly fire
+
+**Enabled, and it needed zero code.** `AreaDamageSystem` has no faction
+filtering to begin with — the player is in the `damageable` group like
+everything else, so the mortar and the WP hit them identically. Preventing it
+would have required *adding* code.
+
+- One round is lethal to the 100 HP player anywhere inside **~11.5m**
+  uncovered, and inside **~8m** through cover.
+- WP kills the player in **4.0s** of standing in it.
+- The 8s time of flight is the entire mitigation: enough to clear 20m at a
+  sprint if you move immediately. That gap *is* the enabler.
+
+### 11.7 Shake-and-bake (WP layer)
+
+**Reuses the entire mortar pipeline.** `mission_shake_and_bake.tres` is the
+mortar config with a nonzero `wp_radius`; that single field is what makes
+`_finish_mission()` leave a zone behind. Same `he_profile`, same time of
+flight, same round count and scatter — no second code path, no mode branch.
+
+`WhitePhosphorusZone` owns no damage code either: the burn is one
+`AreaDamageSystem.detonate()` call with a `duration > 0` profile, taking that
+system's DoT path — the branch its own docstring named white phosphorus as the
+intended first consumer of. The node exists for the two things that path does
+not do: **be visible**, and tie the visual's lifetime to the damage's.
+
+**The WP profile is built at runtime rather than authored as a `.tres`** —
+deliberately the opposite of the HE round. Every number the burn needs is
+already a tunable on the mission config, so a second resource would mean two
+places to edit and would let the visible radius drift from the damaged one.
+
+Damage shape, and why each field differs from a blast:
+
+- **`lethal_radius == max_radius`** → flat damage inside, exactly zero
+  outside. **The visible circle *is* the damage boundary.** No falloff: this
+  is a denial area with a hard edge, not an explosion.
+- **`blocked_damage_mult` 1.0** — cover does not protect you from standing in
+  a fire. There is nothing for line of sight to block; the damage is the
+  ground you are on.
+- **`damages_obstacles` false** — the HE portion already did the demolition.
+- **`noise_radius` 0** — the six HE impacts already pulled everything in
+  earshot. A zone re-emitting noise for 45s would be a permanent lure rather
+  than a denial area.
+
+**dps is the tunable; per-tick damage is derived**, because
+`AreaDamageProfile.max_damage` is an int. 25 dps at the 0.2s default tick is
+exactly 5/tick; the system's old 0.5s default would have wanted 12.5 and
+silently rounded. A retune that makes `dps * tick_interval` non-integral
+`push_warning()`s at runtime with the dps actually delivered.
+
+| | 100 HP player | Walker N1 (100) | Walker N15 (156) | Leaper N1 (60) |
+|---|---|---|---|---|
+| Time to die in the zone | 4.0s | 4.0s | 6.2s | 2.4s |
+
+**Visibility is functional, not decorative** — an invisible damage zone is a
+bug. Pulsing ground glow (same `arc_fan_points` primitive as the paint marker
+and the claymore wedge) plus two particle layers: dense low smoke for the
+footprint, and sparser bright embers that make the zone readable **from
+outside its own radius at night**, where a ground disc alone is invisible
+edge-on. Particle count scales with area.
+
+**Zombies do not avoid it.** Nothing was added to the navmesh — they walk in
+and burn, as specified.
+
+The one-mission lock releases when **rounds** complete, not when the burn
+expires; "in flight" means rounds still falling. Stacking is prevented by the
+240s cooldown regardless.
+
+### 11.8 Noted, not fixed
+
+- With `blocked_damage_mult` 1.0 the shared system still runs its 3-ray
+  exposure test per in-zone actor per tick and then lerps between 1.0 and 1.0.
+  Wasted work, but optimising it means changing shared code for one consumer.
+- C-wire, the ditch and minefields are untouched by fire missions — see 11.1.
