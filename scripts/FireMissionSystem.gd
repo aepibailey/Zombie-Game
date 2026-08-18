@@ -218,7 +218,20 @@ func _finish_mission(cfg: FireMissionConfig, centre: Vector3) -> void:
 	print("[FIREMISSION] %s complete" % cfg.id)
 	_active_mission_id = ""
 
-## Phase 3. Deliberately a no-op stub rather than absent, so the HE pipeline
-## is complete and testable on its own and the WP layer is purely additive.
-func _spawn_wp_zone(_cfg: FireMissionConfig, _centre: Vector3) -> void:
-	pass
+## Shake-and-bake's second half: the burn zone the HE mission leaves behind.
+##
+## Parented to the CURRENT SCENE, not to this system — the zone is a fixture
+## that outlives the mission that made it (the lock releases the moment rounds
+## complete, but the burn keeps going), and it must not move or free with
+## anything else.
+##
+## Every number comes from the mission config, so the visible radius and the
+## damaged radius cannot drift — see WhitePhosphorusZone's own note on why its
+## profile is built rather than authored.
+func _spawn_wp_zone(cfg: FireMissionConfig, centre: Vector3) -> void:
+	var ground := _ground_at(centre)
+	WhitePhosphorusZone.spawn(get_tree().current_scene, ground,
+		cfg.wp_radius, cfg.wp_duration, cfg.wp_damage_per_second,
+		cfg.wp_tick_interval)
+	_hud.show_message("%s — WILLIE PETE ON THE DECK. %.0fm, %ds." % [
+		cfg.display_name, cfg.wp_radius, int(round(cfg.wp_duration))])

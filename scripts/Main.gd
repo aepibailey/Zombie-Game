@@ -108,13 +108,17 @@ var _fire_missions: FireMissionSystem
 ## line in _fire_mission_list() — FireMissionSystem registers whatever it's
 ## handed, and the radio menu renders whatever is registered.
 const MISSION_MORTAR := preload("res://resources/mission_mortar.tres")
+const MISSION_SHAKE_AND_BAKE := preload("res://resources/mission_shake_and_bake.tres")
 
 ## Built as a typed local rather than a typed `const` array: FireMissionSystem
 ## .missions is Array[FireMissionConfig], and handing it an untyped literal
 ## fails the assignment at runtime.
+##
+## Order here is menu order — these become [1] and [2] under the radio.
 func _fire_mission_list() -> Array[FireMissionConfig]:
 	var list: Array[FireMissionConfig] = []
 	list.append(MISSION_MORTAR)
+	list.append(MISSION_SHAKE_AND_BAKE)
 	return list
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer

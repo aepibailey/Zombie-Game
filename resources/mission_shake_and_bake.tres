@@ -1,0 +1,46 @@
+[gd_resource type="Resource" script_class="FireMissionConfig" load_steps=3 format=3]
+
+; Shake-and-bake: the identical 120mm HE mission, plus a white phosphorus
+; burn zone left over the impact area once the last round lands.
+;
+; It REUSES THE ENTIRE MORTAR PIPELINE — same he_profile, same time of
+; flight, same round count and spread. The only difference between this and
+; mission_mortar.tres is a nonzero wp_radius, which is what makes
+; FireMissionSystem._finish_mission() leave a zone behind. There is no
+; separate code path and no "shake and bake mode" branch anywhere.
+;
+; WP_RADIUS 15m against the mission's 20m effect_radius, deliberately
+; smaller: the burn covers the heart of the impact area, not its whole
+; footprint. Rounds can and will land outside the fire they start.
+;
+; WP_DAMAGE_PER_SECOND 25 with WP_TICK_INTERVAL 0.2 quantises exactly:
+; 25 * 0.2 = 5 damage per tick, an integer, which AreaDamageProfile.max_damage
+; requires. A 0.5s tick would want 12.5/tick and silently round. If you retune
+; dps, keep dps * tick_interval whole — the zone push_warning()s at runtime if
+; it doesn't.
+;
+; 45s at 25 dps is 1125 total damage to anything that stands in it, and kills
+; the 100 HP player in 4 seconds. Zombies die over a few seconds rather than
+; instantly, which is the intended "walk in and burn" read.
+;
+; Cost 80 / cooldown 240s: both roughly 1.5x the plain mortar, for a mission
+; that denies ground for 45 seconds after it stops falling.
+
+[ext_resource type="Script" path="res://scripts/FireMissionConfig.gd" id="1_cfg"]
+[ext_resource type="Resource" path="res://resources/mortar_he.tres" id="2_he"]
+
+[resource]
+script = ExtResource("1_cfg")
+id = "shake_and_bake"
+display_name = "Shake-and-Bake"
+cost = 80
+cooldown = 240.0
+time_of_flight = 8.0
+round_count = 6
+mission_duration = 9.0
+effect_radius = 20.0
+he_profile = ExtResource("2_he")
+wp_radius = 15.0
+wp_duration = 45.0
+wp_damage_per_second = 25.0
+wp_tick_interval = 0.2
