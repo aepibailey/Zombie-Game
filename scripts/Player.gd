@@ -326,6 +326,16 @@ var _prompt_text := ""
 ## and RMB is claimed by the menu's own close action instead of toggling ADS.
 ## Owned/set by RadioMenu via set_radio_menu_open(), not written directly.
 var radio_menu_open := false
+## True while TargetPainter owns the aim. Unlike radio_menu_open this leaves
+## mouse-look and movement ALONE — painting is aiming — and only gates
+## firing, ADS and the equipment toggles. Owned/set by TargetPainter via
+## set_painting(), not written directly.
+var painting := false
+## Release-gated suppression of the NEXT trigger pull, so the LMB press that
+## confirmed a paint can't also fire the weapon on the frame paint mode ends.
+## Distinct from _ads_suppressed_until_release because they clear on
+## different buttons.
+var _fire_suppressed_until_release := false
 ## Sticky until an actual button-RELEASE event arrives, regardless of which
 ## key closed the menu. Exists so the SAME physical RMB click that closes the
 ## menu can never also register as a fresh ADS press — a state check, not a
@@ -486,7 +496,11 @@ func _physics_process(delta: float) -> void:
 		# Full-auto: keep firing while the trigger is held (rate-limited in
 		# _fire). Gated on the equipment slot too, or holding LMB to cook a
 		# throw — or to confirm a claymore — would empty a magazine as well.
-		if not equipment_equipped and _wants_auto_fire() \
+		# `painting` is checked inside _fire() too, but is repeated here
+		# because this is a POLLED path: holding LMB to confirm a paint would
+		# otherwise keep calling _fire() every frame, and relying on the
+		# painter marking its events handled does nothing for a poll.
+		if not equipment_equipped and not painting and _wants_auto_fire() \
 				and mouse_captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_fire()
 	else:
@@ -636,11 +650,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		if not (mouse_captured and control_enabled):
 			return
+		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+			# Trigger released — a paint-confirm click can stop suppressing
+			# the next real shot.
+			_fire_suppressed_until_release = false
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			if not event.pressed:
 				_ads_suppressed_until_release = false
 				return
-			if radio_menu_open or _ads_suppressed_until_release:
+			if painting or radio_menu_open or _ads_suppressed_until_release:
 				# Claimed by the radio menu — either it's still open, or this
 				# is the same click that just closed it. RMB never reaches
 				# ADS (or a grenade's underhand cook) on that frame.
@@ -762,6 +780,10 @@ func _fire() -> void:
 		return   # both hands on the ledge
 	if equipment_equipped:
 		return   # something else is in that hand — stow it (G / V, or a weapon slot)
+	if painting or _fire_suppressed_until_release:
+		# Painting a fire mission, or this is the trigger pull that just
+		# confirmed one. Either way the weapon stays cold.
+		return
 	# Firing cancels an in-progress IFAK (nothing consumed) and does not shoot
 	# on that input — the cancel IS the action.
 	if _ifak_applying:
@@ -1111,6 +1133,10 @@ func _try_equip_slot(index: int) -> void:
 	# open (it selects a transmission), so the SAME press must not also
 	# switch weapons underneath it — a single choke point here covers all
 	# five slot keys rather than gating each match-branch individually.
+	# painting: swapping weapons mid-paint would leave the painter aiming
+	# with a mission whose radius belongs to a call already in progress.
+	if painting:
+		return
 	if not control_enabled or radio_menu_open or index >= Arsenal.order.size():
 		return
 	if _cooking:
@@ -1161,7 +1187,7 @@ func _build_grenade_arc() -> void:
 
 ## G. A slot toggle, not a throw — the throw is LMB/RMB once it's in hand.
 func _toggle_grenade() -> void:
-	if not control_enabled or _mantling:
+	if not control_enabled or _mantling or painting:
 		return
 	if _cooking:
 		# The fuse is burning. Stowing can't defuse it, and silently accepting
@@ -1187,7 +1213,7 @@ func _toggle_grenade() -> void:
 
 ## V. Same slot toggle as G — see _set_equipped().
 func _toggle_claymore() -> void:
-	if not control_enabled or _mantling:
+	if not control_enabled or _mantling or painting:
 		return
 	if _cooking:
 		# Identical reasoning to _toggle_grenade(): a burning fuse cannot be
@@ -2420,6 +2446,31 @@ func set_radio_menu_open(open: bool) -> void:
 		# release-gated, not a fixed delay, so it can never leave a stale
 		# window where a LATER unrelated click gets eaten.
 		_ads_suppressed_until_release = true
+
+## Called by TargetPainter on entering/leaving paint mode.
+##
+## Deliberately does NOT suppress mouse-look, unlike set_radio_menu_open()
+## above: painting IS aiming, so the camera has to keep working. Movement is
+## untouched too — the game doesn't pause and the player stays vulnerable.
+##
+## What it does suppress is everything that would otherwise fire on the same
+## clicks the painter is claiming: weapon fire, ADS, and the equipment
+## toggles. The painter marks its own events handled as well, but that alone
+## only protects against events, not against the polled full-auto path in
+## _physics_process — hence a state flag rather than relying on input
+## consumption.
+func set_painting(on: bool) -> void:
+	painting = on
+	if on:
+		# Same rule as a weapon switch or bringing a grenade to hand: you
+		# cannot be looking down a scope while calling in a fire mission.
+		_force_unads()
+	else:
+		# Release-gated, matching the radio menu's own debounce: the LMB
+		# press that CONFIRMED a paint must not also register as a shot the
+		# instant paint mode ends.
+		_ads_suppressed_until_release = true
+		_fire_suppressed_until_release = true
 
 func _set_mouse_captured(captured: bool) -> void:
 	mouse_captured = captured

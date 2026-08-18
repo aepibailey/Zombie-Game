@@ -180,30 +180,43 @@ func _refresh() -> void:
 	for i in entries.size():
 		_rows_box.add_child(_build_row(i, entries[i]))
 
-## Duck-typed against the minimal shape documented on
-## EnablerManager.callable_enablers — reads id/display_name/cost, and treats
-## an entry as available if it's affordable. Cooldown/travel-state greying
-## has nothing to read yet (no enabler carries that data today) and will
-## need a real field once one exists; not invented here.
+## Duck-typed against the shape documented on
+## EnablerManager.callable_enablers — reads id/display_name/cost, plus the
+## optional availability hook. Greying now has something real to read: the
+## cooldown/lockout answer comes from EnablerManager.unavailable_reason(), so
+## the row and the selection path can never disagree about whether an entry
+## is callable.
 func _build_row(index: int, entry) -> Label:
 	var id: String = entry.get("id", "") if entry is Dictionary else str(entry.id)
 	var name: String = entry.get("display_name", id) if entry is Dictionary else str(entry.display_name)
 	var cost: int = entry.get("cost", 0) if entry is Dictionary else int(entry.cost)
 	var affordable: bool = PointsManager.points >= cost
+	var reason := ""
+	if entry is Dictionary:
+		reason = EnablerManager.unavailable_reason(entry)
 
 	var row := Label.new()
 	row.add_theme_font_size_override("font_size", 15)
-	row.text = "[%d] %s — %d pts" % [index + 1, name, cost]
+	var text := "[%d] %s — %d pts" % [index + 1, name, cost]
+	if reason != "":
+		text += "   (%s)" % reason
+	elif not affordable:
+		text += "   (need %d)" % (cost - PointsManager.points)
+	row.text = text
 	row.add_theme_color_override("font_color",
-		Color(0.95, 0.95, 0.9) if affordable else Color(0.55, 0.55, 0.55))
+		Color(0.95, 0.95, 0.9) if (affordable and reason == "") else Color(0.55, 0.55, 0.55))
 	return row
 
 ## Selection HANDS OFF to the enabler's own call flow — this menu builds no
-## targeting/paint logic of its own. Right now that hand-off has nothing to
-## call, since callable_enablers is empty; index is always out of range and
-## this is a silent no-op. Left fully wired (rather than commented out) so
-## the day an entry registers, wiring an "on_selected" callback into it is
-## the only change needed here.
+## targeting/paint logic of its own.
+##
+## NOTHING IS CHARGED AND NO NOISE IS MADE HERE. An enabler that paints a
+## target can be cancelled after selection, and a cancelled call must cost
+## nothing — not points, not a cooldown, not a noise event that would have
+## already pulled every zombie in earshot. Selection only opens the flow;
+## `commit_transmission()` below is what the enabler calls once it has
+## actually committed. For an enabler with no targeting step, that's
+## immediately.
 func _select(index: int) -> void:
 	var entries: Array = EnablerManager.callable_enablers
 	if index < 0 or index >= entries.size():
@@ -212,9 +225,22 @@ func _select(index: int) -> void:
 	var cost: int = entry.get("cost", 0) if entry is Dictionary else int(entry.cost)
 	if PointsManager.points < cost:
 		return
+	# Same source of truth the row's greying used, so a greyed row can't be
+	# selected by pressing its number anyway.
+	if entry is Dictionary and EnablerManager.unavailable_reason(entry) != "":
+		return
 	_close_menu()
+	var fn = entry.get("call_fn") if entry is Dictionary else null
+	if fn is Callable and (fn as Callable).is_valid():
+		(fn as Callable).call()
+
+## Called BY an enabler at the moment its call actually commits — after a
+## paint is confirmed, not when the menu row was pressed. Fires the shared
+## transmission noise. Charging points and starting cooldowns stay with the
+## enabler, which knows its own cost and cadence; the noise lives here
+## because it is identical for every transmission (see the constants).
+func commit_transmission() -> void:
 	_start_transmission_noise()
-	# TODO(future enabler pass): invoke the entry's own call flow here.
 
 ## Committing to a call makes noise; browsing never did. Pulses repeatedly
 ## rather than a single burst, so a zombie that enters the radius partway
