@@ -319,6 +319,20 @@ var _recovery_hold_time := 0.0
 var _prompt_showing := false
 var _prompt_text := ""
 
+# --- Radio menu coordination -----------------------------------------------
+## True while the radio menu (T) is open. Movement stays enabled — the radio
+## deliberately does not pause the game — but mouse-look is suppressed here
+## so the camera doesn't spin while the player reads/keys through the list,
+## and RMB is claimed by the menu's own close action instead of toggling ADS.
+## Owned/set by RadioMenu via set_radio_menu_open(), not written directly.
+var radio_menu_open := false
+## Sticky until an actual button-RELEASE event arrives, regardless of which
+## key closed the menu. Exists so the SAME physical RMB click that closes the
+## menu can never also register as a fresh ADS press — a state check, not a
+## reliance on which node's _unhandled_input happens to run first for a
+## given event (that ordering isn't something to build correctness on).
+var _ads_suppressed_until_release := false
+
 var ammo := 0                         # rounds in the current weapon's magazine
 var reserve := 0                      # mirror of AmmoManager reserve for the current weapon
 var reloading := false
@@ -615,13 +629,22 @@ func _update_laser_detection(delta: float) -> void:
 
 # --- Input ----------------------------------------------------------------
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and mouse_captured and control_enabled:
+	if event is InputEventMouseMotion and mouse_captured and control_enabled and not radio_menu_open:
 		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 		head.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
 		head.rotation.x = clampf(head.rotation.x, -1.4, 1.4)
 	elif event is InputEventMouseButton:
 		if not (mouse_captured and control_enabled):
 			return
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			if not event.pressed:
+				_ads_suppressed_until_release = false
+				return
+			if radio_menu_open or _ads_suppressed_until_release:
+				# Claimed by the radio menu — either it's still open, or this
+				# is the same click that just closed it. RMB never reaches
+				# ADS (or a grenade's underhand cook) on that frame.
+				return
 		# A grenade in hand takes both mouse buttons: LMB overhand, RMB
 		# underhand. Handled before the `pressed` filter below because a
 		# throw fires on RELEASE, which the weapon path never needs.
@@ -685,7 +708,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_try_equip_slot(4)
 			KEY_ESCAPE:
 				# When the crate shop owns the mouse, let it handle Esc instead.
-				if control_enabled:
+				# Same deferral for the radio menu — it owns Escape while open
+				# (closes with no selection) and must not also toggle mouse
+				# capture on that same press.
+				if control_enabled and not radio_menu_open:
 					_set_mouse_captured(not mouse_captured)
 
 func _toggle_ads() -> void:
@@ -1081,7 +1107,11 @@ func _on_reserve_changed(weapon_id: String, rounds: int) -> void:
 		ammo_changed.emit(ammo, reserve)
 
 func _try_equip_slot(index: int) -> void:
-	if not control_enabled or index >= Arsenal.order.size():
+	# radio_menu_open: keys 1-9 are claimed by the radio menu while it's
+	# open (it selects a transmission), so the SAME press must not also
+	# switch weapons underneath it — a single choke point here covers all
+	# five slot keys rather than gating each match-branch individually.
+	if not control_enabled or radio_menu_open or index >= Arsenal.order.size():
 		return
 	if _cooking:
 		# Same reason as _toggle_grenade(): you cannot put a burning fuse away
@@ -2377,6 +2407,19 @@ func set_control_enabled(enabled: bool) -> void:
 	if not enabled:
 		velocity.x = 0.0
 		velocity.z = 0.0
+
+## Called by RadioMenu on open/close. Deliberately distinct from
+## set_control_enabled() above — the crate/build-mode path stops movement
+## entirely, but the radio menu must not (the game keeps running while it's
+## open). This only touches mouse-look and the RMB debounce.
+func set_radio_menu_open(open: bool) -> void:
+	radio_menu_open = open
+	if not open:
+		# Set on every close, not only an RMB one — harmless when RMB wasn't
+		# the cause (nothing to suppress), and correct the one time it is:
+		# release-gated, not a fixed delay, so it can never leave a stale
+		# window where a LATER unrelated click gets eaten.
+		_ads_suppressed_until_release = true
 
 func _set_mouse_captured(captured: bool) -> void:
 	mouse_captured = captured

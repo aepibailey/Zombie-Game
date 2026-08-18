@@ -15,6 +15,23 @@ signal enabler_acquired(id: String)
 
 var owned: Dictionary = {}   # enabler id -> true
 
+## Radio-callable transmissions, in menu display order. Genuinely empty right
+## now — UAV, Supply Drop (as a CALLED drop, distinct from the automatic
+## Night 3+ crate above), Apache and the mortar/WP enablers all register here
+## once each is actually built. RadioMenu iterates this directly and renders
+## "No transmissions available" when it's empty, rather than the menu being
+## hardcoded to show nothing — the difference matters the moment the first
+## entry is added: zero menu-side changes needed.
+##
+## Deliberately a plain Dictionary, not an EnablerType resource, until a real
+## enabler defines what fields it actually needs (travel time, duration,
+## cooldown, call flow, ...). Minimum shape RadioMenu currently reads:
+##   {"id": String, "display_name": String, "cost": int}
+## Extend as needed when the first real entry is built; RadioMenu's row
+## rendering is written to duck-type optional fields rather than assume this
+## final shape is already right.
+var callable_enablers: Array = []
+
 func has(id: String) -> bool:
 	return owned.get(id, false)
 

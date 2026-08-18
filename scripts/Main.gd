@@ -100,6 +100,7 @@ var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
 var _pending_tent_zone: EngineersTentZone
 var _build_mode: BuildMode
+var _radio_menu: RadioMenu
 var _nvg_on := false
 var _nvg_overlay: CanvasLayer
 var _nvg_whiteout: ColorRect
@@ -483,6 +484,13 @@ func _build_ui() -> void:
 	if _pending_tent_zone:
 		_pending_tent_zone.build_mode = _build_mode
 		_pending_tent_zone.hud = _hud
+
+	# T-triggered, not tied to any spatial zone — unlike the crate/tent it
+	# needs no _pending_*_zone wiring, just the player and HUD refs it opens
+	# the "No radio."/list rows with.
+	_radio_menu = RadioMenu.new()
+	add_child(_radio_menu)
+	_radio_menu.setup(player, _hud)
 
 	_restore_base()
 
