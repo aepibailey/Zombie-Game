@@ -1,13 +1,20 @@
 extends CanvasLayer
 class_name RadioMenu
-## T opens a compact, NON-PAUSING transmission selector. Built entirely in
-## code, matching every other UI in this project (HUD, SupplyCrateUI).
+## T opens a compact, NON-PAUSING transmission selector; T closes it again.
+## Built entirely in code, matching every other UI in this project (HUD,
+## SupplyCrateUI).
 ##
 ## Deliberately NOT a Control-driven point-and-click UI: every requirement
-## here is keyboard/RMB-only (open on T, select with 1-9, close with Esc or
-## RMB), so there are no Buttons and no mouse-click handling — the mouse
-## stays captured the whole time, just with look-rotation suppressed (see
+## here is keyboard-only (open on T, select with 1-9, close on T again), so
+## there are no Buttons and no mouse-click handling — the mouse stays
+## captured the whole time, just with look-rotation suppressed (see
 ## Player.set_radio_menu_open()) so the camera doesn't spin while reading.
+##
+## ESCAPE AND RMB ARE DELIBERATELY NOT HANDLED HERE. Neither key is this
+## menu's business: Escape falls through to Player's own mouse-capture
+## toggle exactly as if the menu weren't open, and RMB falls through to
+## Player's own ADS toggle the same way. T alone owns entry and exit, on the
+## same physical key — like keying a handset, not clicking through a dialog.
 ##
 ## Lists whatever is in EnablerManager.callable_enablers, which is genuinely
 ## empty until the first real enabler (UAV, Supply Drop, ...) registers one.
@@ -15,6 +22,10 @@ class_name RadioMenu
 ## NOT a fake/stub entry, it's the list telling the truth about its contents.
 
 const ACTION_OPEN := "radio_menu"
+## Same physical key as ACTION_OPEN (T) — a dedicated action rather than
+## re-checking ACTION_OPEN, so open and close read as two named intents even
+## though they share a keycode. See project.godot.
+const ACTION_CLOSE := "radio_menu_exit"
 const RADIO_ITEM_ID := "radio"
 
 ## Fixed radio noise: the sound of a human voice on a handset, identical for
@@ -89,7 +100,7 @@ func _ready() -> void:
 	_hint_label = Label.new()
 	_hint_label.add_theme_font_size_override("font_size", 12)
 	_hint_label.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
-	_hint_label.text = "[Esc] / [RMB] Close"
+	_hint_label.text = "[T] Close"
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_hint_label)
 
@@ -116,9 +127,9 @@ func _close_menu() -> void:
 	_player.set_radio_menu_open(false)
 
 # --- Input -------------------------------------------------------------------
-## Entirely keyboard/RMB — no Button nodes, so no click handling anywhere
-## here. Movement (WASD) is untouched; only camera rotation is suppressed,
-## via Player.set_radio_menu_open(), not anything in this script.
+## Entirely keyboard — no Button nodes, so no click handling anywhere here.
+## Movement (WASD) is untouched; only camera rotation is suppressed, via
+## Player.set_radio_menu_open(), not anything in this script.
 func _unhandled_input(event: InputEvent) -> void:
 	if not _open:
 		# T to open — but only while the player can actually act (mirrors
@@ -130,26 +141,20 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 
-	# From here down, the menu is OPEN and owns input.
+	# From here down, the menu is OPEN and owns input. Escape and RMB are
+	# deliberately absent below — see the class docstring. Not marking them
+	# handled here is what lets them fall through to Player's own Escape
+	# (mouse capture) and RMB (ADS) handling, unchanged, as if this menu
+	# weren't open at all.
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE:
+		if event.is_action_pressed(ACTION_CLOSE):
 			_close_menu()
-			get_viewport().set_input_as_handled()
-			return
-		# T while ALREADY open does nothing — the spec's own exit list is
-		# "Escape or right mouse button", not T. Re-pressing T is simply
-		# swallowed rather than falling through to anything else.
-		if event.is_action_pressed(ACTION_OPEN):
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode >= KEY_1 and event.keycode <= KEY_9:
 			_select(event.keycode - KEY_1)
 			get_viewport().set_input_as_handled()
 			return
-	elif event is InputEventMouseButton and event.pressed \
-			and event.button_index == MOUSE_BUTTON_RIGHT:
-		_close_menu()
-		get_viewport().set_input_as_handled()
 
 func _try_open() -> void:
 	if not _player.control_enabled:

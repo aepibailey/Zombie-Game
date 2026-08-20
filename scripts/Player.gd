@@ -322,9 +322,11 @@ var _prompt_text := ""
 # --- Radio menu coordination -----------------------------------------------
 ## True while the radio menu (T) is open. Movement stays enabled — the radio
 ## deliberately does not pause the game — but mouse-look is suppressed here
-## so the camera doesn't spin while the player reads/keys through the list,
-## and RMB is claimed by the menu's own close action instead of toggling ADS.
-## Owned/set by RadioMenu via set_radio_menu_open(), not written directly.
+## so the camera doesn't spin while the player reads/keys through the list.
+## RMB and Escape are deliberately NOT gated on this: both function normally
+## (ADS, mouse-capture toggle) whether or not the menu is open — only T opens
+## or closes it. Owned/set by RadioMenu via set_radio_menu_open(), not
+## written directly.
 var radio_menu_open := false
 ## True while TargetPainter owns the aim. Unlike radio_menu_open this leaves
 ## mouse-look and movement ALONE — painting is aiming — and only gates
@@ -336,11 +338,14 @@ var painting := false
 ## Distinct from _ads_suppressed_until_release because they clear on
 ## different buttons.
 var _fire_suppressed_until_release := false
-## Sticky until an actual button-RELEASE event arrives, regardless of which
-## key closed the menu. Exists so the SAME physical RMB click that closes the
-## menu can never also register as a fresh ADS press — a state check, not a
-## reliance on which node's _unhandled_input happens to run first for a
-## given event (that ordering isn't something to build correctness on).
+## Sticky until an actual button-RELEASE event arrives. Guards the one frame
+## a paint mode ends (see set_painting()) so the LMB press that CONFIRMED it
+## can't also register as a fresh ADS press if RMB happened to be down at the
+## same instant — a state check, not a reliance on which node's
+## _unhandled_input happens to run first for a given event (that ordering
+## isn't something to build correctness on). Also set on every radio menu
+## close as the same conservative guard, though the menu closes on T now, a
+## different key from RMB, so it rarely has anything to actually catch.
 var _ads_suppressed_until_release := false
 
 var ammo := 0                         # rounds in the current weapon's magazine
@@ -658,10 +663,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			if not event.pressed:
 				_ads_suppressed_until_release = false
 				return
-			if painting or radio_menu_open or _ads_suppressed_until_release:
-				# Claimed by the radio menu — either it's still open, or this
-				# is the same click that just closed it. RMB never reaches
-				# ADS (or a grenade's underhand cook) on that frame.
+			if painting or _ads_suppressed_until_release:
+				# RMB is claimed while painting (aiming a fire mission), or
+				# for one press right after something else just released the
+				# suppression window. The radio menu no longer claims RMB at
+				# all — it closes on T only, so RMB functions as ADS
+				# identically whether or not the menu is open.
 				return
 		# A grenade in hand takes both mouse buttons: LMB overhand, RMB
 		# underhand. Handled before the `pressed` filter below because a
@@ -726,10 +733,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_try_equip_slot(4)
 			KEY_ESCAPE:
 				# When the crate shop owns the mouse, let it handle Esc instead.
-				# Same deferral for the radio menu — it owns Escape while open
-				# (closes with no selection) and must not also toggle mouse
-				# capture on that same press.
-				if control_enabled and not radio_menu_open:
+				# The radio menu no longer claims Escape at all — it closes on
+				# T only — so this fires identically whether or not the menu
+				# is open, the same "normal" behaviour Escape always has.
+				if control_enabled:
 					_set_mouse_captured(not mouse_captured)
 
 func _toggle_ads() -> void:
@@ -2441,10 +2448,11 @@ func set_control_enabled(enabled: bool) -> void:
 func set_radio_menu_open(open: bool) -> void:
 	radio_menu_open = open
 	if not open:
-		# Set on every close, not only an RMB one — harmless when RMB wasn't
-		# the cause (nothing to suppress), and correct the one time it is:
-		# release-gated, not a fixed delay, so it can never leave a stale
-		# window where a LATER unrelated click gets eaten.
+		# The menu closes on T, a different key from RMB, so this rarely has
+		# anything to catch — kept as the same conservative guard set_painting()
+		# uses below, in case RMB happens to be down at the instant T closes
+		# the menu. Release-gated, not a fixed delay, so it can never leave a
+		# stale window where a LATER unrelated click gets eaten.
 		_ads_suppressed_until_release = true
 
 ## Called by TargetPainter on entering/leaving paint mode.

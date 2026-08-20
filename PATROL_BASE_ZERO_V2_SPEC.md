@@ -1353,9 +1353,14 @@ not a stub.
   spin by accident while reading, and combat otherwise keeps working. Read
   as: the menu blocks only the inputs it explicitly claims for itself, not
   everything indiscriminately.
-- Exit is **Escape or RMB only** — `T` while already open does nothing,
-  matching the spec's own exit list rather than assuming toggle symmetry
-  with the grenade/claymore equip keys.
+- **Exit is `T`, on a dedicated `radio_menu_exit` action bound to the same
+  physical key as `radio_menu`** — pressing T again closes it, like keying a
+  handset rather than clicking through a dialog. Escape and RMB are
+  deliberately NOT claimed by the menu at all: both fall through to Player's
+  own normal handling exactly as if the menu weren't open — Escape toggles
+  mouse capture, RMB toggles ADS. Neither key is gated on `radio_menu_open`
+  anymore. (Previously Escape/RMB closed the menu and T did nothing while
+  open; this pass reversed that.)
 - **Transmission noise**: fixed **10m radius**, a single shared constant on
   `RadioMenu` — never a per-`EnablerType` field, so a mortar strike and a
   supply drop sound identical to key up. Fires only on **confirm**, never on
