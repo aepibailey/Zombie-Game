@@ -49,8 +49,10 @@ func _offscreen_contacts(cam: Camera3D) -> Array:
 	var out: Array = []
 	var max_dist: float = UAVSystem.CONFIG.uav_max_reveal_distance
 	for node in get_tree().get_nodes_in_group("zombies"):
-		var zombie := node as Zombie
-		if zombie == null or not is_instance_valid(zombie) or not zombie.is_alive():
+		if not (node is Zombie):
+			continue
+		var zombie: Zombie = node as Zombie
+		if not is_instance_valid(zombie) or not zombie.is_alive():
 			continue
 		var dist := _player.global_position.distance_to(zombie.global_position)
 		if max_dist > 0.0 and dist > max_dist:
