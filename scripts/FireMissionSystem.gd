@@ -23,10 +23,11 @@ class_name FireMissionSystem
 ## the radio/observer, not of the ordnance.
 @export var paint_max_range: float = 150.0
 
-## Rounds land at a random point within effect_radius of the painted point.
-## This biases WHERE in that circle: 1.0 = uniform over the disc, higher
-## values cluster toward the centre. Not uniform by default — a real sheaf
-## groups around the aim point rather than scattering evenly to the edge.
+## Rounds land at a random point within the scatter locus (see
+## _scatter_radius()) of the painted point. This biases WHERE in that circle:
+## 1.0 = uniform over the disc, higher values cluster toward the centre. Not
+## uniform by default — a real sheaf groups around the aim point rather than
+## scattering evenly to the edge.
 @export var impact_centre_bias: float = 1.6
 
 ## Vertical offset the blast originates at. Rounds detonate on impact, so
@@ -53,16 +54,15 @@ func setup(player: Player, hud: HUD, painter: TargetPainter, radio: RadioMenu) -
 	_validate()
 	_register()
 
-## INVARIANT: the paint circle the player aims with is drawn at
-## config.effect_radius, and rounds are scattered within that same radius. If
-## the two ever diverge the preview would be lying about where rounds can
-## land — the one thing a targeting marker must never do.
-##
-## Deliberately NOT asserting effect_radius against he_profile.max_radius:
-## those are different quantities on purpose. effect_radius is the box rounds
-## land IN; max_radius is how far one round REACHES from where it lands. A
-## mission's real danger area is the sum of the two, which is why the circle
-## understates it slightly — see the spec.
+## INVARIANT: config.effect_radius is GROUND TRUTH — the paint circle the
+## player aims with, and the true outer bound of everything a mission can
+## damage. That only holds because rounds are never scattered across the
+## whole circle: _scatter_radius() insets the landing locus by
+## he_profile.max_radius, so a round landing at the very edge of its scatter
+## locus still can't blast past effect_radius. If a mission's effect_radius
+## and he_profile.max_radius ever diverge the wrong way, the preview would be
+## lying about where damage can reach — the one thing a targeting marker must
+## never do.
 func _validate() -> void:
 	for m in missions:
 		if m == null:
@@ -70,10 +70,18 @@ func _validate() -> void:
 			continue
 		if m.he_profile == null:
 			push_error("[FIREMISSION] '%s' has no he_profile" % m.id)
+			continue
 		if m.round_count <= 0:
 			push_error("[FIREMISSION] '%s' has round_count %d" % [m.id, m.round_count])
 		if m.effect_radius <= 0.0:
 			push_error("[FIREMISSION] '%s' has effect_radius %.1f" % [m.id, m.effect_radius])
+		elif m.effect_radius < m.he_profile.max_radius:
+			# Not fatal — _scatter_radius() clamps to 0 and every round lands
+			# dead on the paint point — but it means the mission was tuned
+			# with a paint circle smaller than one round's own blast reach,
+			# which is almost certainly not what was intended.
+			push_warning("[FIREMISSION] '%s' has effect_radius %.1f smaller than he_profile.max_radius %.1f — every round will land on the paint point" % [
+				m.id, m.effect_radius, m.he_profile.max_radius])
 
 func _register() -> void:
 	for m in missions:
@@ -170,11 +178,19 @@ func _run_mission(cfg: FireMissionConfig, centre: Vector3) -> void:
 
 ## One round: pick a scattered impact point, hand it to the shared system.
 func _land_round(cfg: FireMissionConfig, centre: Vector3, index: int) -> void:
-	var impact := _scatter_point(centre, cfg.effect_radius)
+	var impact := _scatter_point(centre, _scatter_radius(cfg))
 	if _player and is_instance_valid(_player):
 		_player.add_shake(_shake_for(impact))
 	AreaDamageSystem.detonate(impact, cfg.he_profile, Vector3.ZERO,
 		"%s r%d" % [cfg.id, index])
+
+## The radius impact POINTS may land within — smaller than effect_radius by
+## the round's own blast reach, so that no round, however far out it lands,
+## can blast past the painted circle. This is what makes effect_radius ground
+## truth instead of an approximation: the preview never has to lie in either
+## direction. Clamped to 0 rather than going negative — see _validate().
+func _scatter_radius(cfg: FireMissionConfig) -> float:
+	return maxf(0.0, cfg.effect_radius - cfg.he_profile.max_radius)
 
 ## Random point on the disc around `centre`. sqrt(randf()) would be uniform
 ## over the area; raising the exponent past 0.5 pulls impacts toward the

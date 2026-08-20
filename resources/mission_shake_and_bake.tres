@@ -9,9 +9,11 @@
 ; FireMissionSystem._finish_mission() leave a zone behind. There is no
 ; separate code path and no "shake and bake mode" branch anywhere.
 ;
-; WP_RADIUS 15m against the mission's 20m effect_radius, deliberately
+; WP_RADIUS 7.5m against the mission's 10m effect_radius, deliberately
 ; smaller: the burn covers the heart of the impact area, not its whole
-; footprint. Rounds can and will land outside the fire they start.
+; footprint. Rounds can and will land outside the fire they start. Halved
+; from 15m alongside effect_radius/max_radius, keeping the same ratio to the
+; HE footprint rather than being retuned as an independent number.
 ;
 ; WP_DAMAGE_PER_SECOND 25 with WP_TICK_INTERVAL 0.2 quantises exactly:
 ; 25 * 0.2 = 5 damage per tick, an integer, which AreaDamageProfile.max_damage
@@ -38,9 +40,9 @@ cooldown = 240.0
 time_of_flight = 8.0
 round_count = 6
 mission_duration = 9.0
-effect_radius = 20.0
+effect_radius = 10.0
 he_profile = ExtResource("2_he")
-wp_radius = 15.0
+wp_radius = 7.5
 wp_duration = 45.0
 wp_damage_per_second = 25.0
 wp_tick_interval = 0.2

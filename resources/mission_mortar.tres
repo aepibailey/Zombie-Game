@@ -2,13 +2,15 @@
 
 ; 120mm mortar fire mission. Every number here is a playtest knob.
 ;
-; effect_radius (20m) is the box rounds LAND in. It is NOT the same as the HE
-; profile's max_radius (14m), which is how far one round REACHES from where
-; it lands — see mortar_he.tres. The paint circle is drawn at effect_radius,
-; so the real danger area is slightly LARGER than the circle shown: a round
-; landing on the rim still reaches 14m outward. That understatement is
-; deliberate and is the one place the marker is not the whole truth; the spec
-; records it explicitly.
+; effect_radius (10m) is the paint circle, and it is GROUND TRUTH — the true
+; outer bound of everything this mission can damage, not an approximation.
+; Rounds do NOT land anywhere in this whole radius: FireMissionSystem insets
+; the actual landing locus by the HE profile's own max_radius (7m — how far
+; one round reaches from where it lands, see mortar_he.tres), so a round
+; landing at the very edge of its scatter locus still can't blast past this
+; circle. See FireMissionSystem._scatter_radius(). Both this and max_radius
+; were halved together from the original 20m/14m pass — same six rounds,
+; same timing, same per-round damage, landing in half the area.
 ;
 ; wp_radius 0 = pure HE, no burn zone left behind. Shake-and-bake is a
 ; separate config with the same pipeline and a nonzero wp_radius.
@@ -25,7 +27,7 @@ cooldown = 180.0
 time_of_flight = 8.0
 round_count = 6
 mission_duration = 9.0
-effect_radius = 20.0
+effect_radius = 10.0
 he_profile = ExtResource("2_he")
 wp_radius = 0.0
 wp_duration = 45.0

@@ -40,11 +40,18 @@ class_name FireMissionConfig
 ## scattered randomly within this rather than evenly spaced — a battery
 ## firing, not a metronome.
 @export var mission_duration: float = 9.0
-## Rounds land at randomized points within this radius of the painted point.
-## MUST equal he_profile.max_radius — validated at runtime, because the paint
-## circle the player aims with is drawn at THIS radius and a mismatch would
-## mean the preview lied about where rounds could land.
-@export var effect_radius: float = 20.0
+## The paint circle radius, and the TRUE OUTER BOUND of everything this
+## mission can damage — ground truth, not an approximation. The player must
+## never see a circle that is larger or smaller than where a round can
+## actually reach.
+##
+## Rounds are NOT scattered across this whole radius: FireMissionSystem insets
+## the actual landing locus by he_profile.max_radius (a round's own blast
+## reach), so a round landing at the very edge of its scatter locus still
+## cannot blast past this circle. See FireMissionSystem._scatter_radius().
+## Must be >= he_profile.max_radius, or every round is forced to land dead on
+## the paint point — FireMissionSystem._validate() warns if so.
+@export var effect_radius: float = 10.0
 
 # --- Damage -----------------------------------------------------------------
 ## The HE blast each round delivers. Routed through AreaDamageSystem

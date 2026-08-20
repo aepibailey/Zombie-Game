@@ -7,20 +7,22 @@
 ; on a mortar profile would make a pillar of fire at one point instead of a
 ; barrage. duration stays 0.)
 ;
-; GEOMETRY: 8m lethal, 14m max, QUADRATIC falloff. Deliberately NOT the
-; mission's own 20m effect_radius — that is the box rounds LAND in, this is
-; how far one round REACHES. A round landing on the near edge of a 20m mission
-; circle still threatens most of it, and two rounds landing apart cover the
-; whole thing between them. Making them equal would mean every round covered
-; the entire mission area, which removes the reason to fire six of them.
+; GEOMETRY: 4m lethal, 7m max, QUADRATIC falloff — halved from the original
+; 8m/14m pass to make the beaten zone denser and more reliably lethal in a
+; smaller footprint. This is how far ONE round reaches from where it lands;
+; the mission's own effect_radius (10m, mission .tres) is the true outer
+; bound of the whole barrage — see FireMissionSystem._scatter_radius(), which
+; insets the scatter locus by this max_radius so no round, however far out it
+; lands, can blast past the painted circle.
 ;
-;     0-8m  400      10m  244      12m  122      13m  61      14m+  0
+;     0-4m  400      5m  178      6m  44      6.5m  11      7m+  0
 ;
-; MAX_DAMAGE 400. A 120mm round is not a hand grenade: this one-shots a
-; zombie at ANY night tier well inside lethal radius, and one-shots the
-; 100 HP player anywhere inside ~11.5m. Friendly fire is the entire tension
-; of this enabler and is not softened anywhere in the pipeline — the shared
-; system has no faction filtering to begin with.
+; MAX_DAMAGE 400, unchanged by the radius halving. A 120mm round is not a
+; hand grenade: this one-shots a zombie at ANY night tier well inside lethal
+; radius, and one-shots the 100 HP player anywhere inside ~5.5m (down from
+; ~11m before halving). Friendly fire is the entire tension of this enabler
+; and is not softened anywhere in the pipeline — the shared system has no
+; faction filtering to begin with.
 ;
 ; BLOCKED_DAMAGE_MULT 0.35, NOT 0.0. Every other explosive in this project
 ; treats intact cover as total protection. Artillery should not: a 120mm
@@ -43,8 +45,8 @@
 script = ExtResource("1_adp")
 id = "mortar_he"
 display_name = "120mm HE"
-lethal_radius = 8.0
-max_radius = 14.0
+lethal_radius = 4.0
+max_radius = 7.0
 max_damage = 400
 falloff = 1
 arc_degrees = 360.0

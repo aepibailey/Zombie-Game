@@ -1511,18 +1511,30 @@ with a centre bias. A battery firing, not a metronome. Each impact re-seats
 onto actual ground, so scatter that walks onto a structure or into the ditch
 still detonates at the surface.
 
-**`effect_radius` (20m) is NOT `he_profile.max_radius` (14m), and this is
-deliberate.** `effect_radius` is the box rounds *land in*; `max_radius` is how
-far one round *reaches* from where it lands. So **the paint circle slightly
-understates the real danger area** — a round on the rim still reaches 14m
-outward. This is the one place the marker is not the whole truth, and
-`_validate()` deliberately does *not* assert them equal for that reason.
+**`effect_radius` (10m) IS ground truth — the paint circle the player aims
+with, and the true outer bound of everything the mission can damage. The
+player never sees a circle larger or smaller than where a round can actually
+reach.** This holds because rounds are *not* scattered across the whole
+painted circle: `FireMissionSystem._scatter_radius()` insets the landing locus
+by `he_profile.max_radius` (7m — how far one round *reaches* from where it
+lands), so a round landing at the very edge of its scatter locus still cannot
+blast past the painted circle. Concretely: rounds land within 3m of the
+painted point (10m − 7m), and each one's own 7m blast reach makes up the rest
+— 3m + 7m = 10m, exactly the circle shown. `_validate()` warns at runtime if
+a mission is ever tuned with `effect_radius` smaller than `he_profile.
+max_radius`, since that would force every round onto the paint point.
+
+Both `effect_radius` and `he_profile.max_radius` were halved together from an
+original 20m/14m pass (along with WP's `wp_radius`, 15m → 7.5m) — same six
+rounds, same timing, same per-round damage, now landing in a quarter of the
+original area. The beaten zone reads as denser and more reliably lethal, and
+a player just outside the painted circle takes zero damage, by construction.
 
 Per round, from `mortar_he.tres`:
 
-| 0–8m | 10m | 11.5m | 12m | 13m | 14m+ |
-|---|---|---|---|---|---|
-| 400 | 178 | 69 | 44 | 11 | **0** |
+| 0–4m | 5m | 6m | 6.5m | 7m+ |
+|---|---|---|---|---|
+| 400 | 178 | 44 | 11 | **0** |
 
 **Two deliberate departures from every other explosive in the project:**
 
@@ -1531,7 +1543,7 @@ Per round, from `mortar_he.tres`:
   should not. This is the profile that partially defeats cover, and it is why
   that field exists as a per-profile knob.
 - **`obstacle_damage_mult` 2.5.** Sandbag sections are 200 HP, so any round
-  within ~10.5m of a panel destroys it outright and a full mission reshapes a
+  within ~5.7m of a panel destroys it outright and a full mission reshapes a
   wall. Calling fire on your own perimeter costs you the perimeter.
 
 **Noise 60m per round**, larger than any weapon (M249 47m) or the grenade
@@ -1545,11 +1557,12 @@ filtering to begin with — the player is in the `damageable` group like
 everything else, so the mortar and the WP hit them identically. Preventing it
 would have required *adding* code.
 
-- One round is lethal to the 100 HP player anywhere inside **~11.5m**
-  uncovered, and inside **~8m** through cover.
+- One round is lethal to the 100 HP player anywhere inside **~5.5m**
+  uncovered, and inside **~4.5m** through cover.
 - WP kills the player in **4.0s** of standing in it.
-- The 8s time of flight is the entire mitigation: enough to clear 20m at a
-  sprint if you move immediately. That gap *is* the enabler.
+- The 8s time of flight is the entire mitigation, and the halved footprint
+  makes it a more generous one than before: clearing the painted circle now
+  means covering half the ground it used to. That gap *is* the enabler.
 
 ### 11.7 Shake-and-bake (WP layer)
 
