@@ -108,9 +108,16 @@ func _register() -> void:
 func _begin_paint(cfg: FireMissionConfig) -> void:
 	if _active_mission_id != "":
 		return
+	# requires_navmesh FALSE: indirect fire may legitimately land where
+	# nothing can walk — a rooftop, the far lip of the ditch, the treeline
+	# outside the wire. That gate exists for DELIVERED payloads (a crate has
+	# to be reachable to be looted); a shell does not care. Explicit rather
+	# than inherited from the shared config so the mortar's reach can't be
+	# silently narrowed by a future change to that default.
 	_painter.begin(cfg.effect_radius, paint_max_range,
 		func(point: Vector3): _on_painted(cfg, point),
-		func(): _on_paint_cancelled(cfg))
+		func(): _on_paint_cancelled(cfg),
+		false)
 
 ## THE COMMIT POINT. Everything the player pays happens here and nowhere
 ## earlier, so cancelling a paint costs nothing at all.

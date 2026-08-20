@@ -112,6 +112,7 @@ var _supply_drop_system: SupplyDropSystem
 const MISSION_MORTAR := preload("res://resources/mission_mortar.tres")
 const MISSION_SHAKE_AND_BAKE := preload("res://resources/mission_shake_and_bake.tres")
 const SUPPLY_DROP_CONFIG := preload("res://resources/supply_drop.tres")
+const TARGET_PAINT_CONFIG := preload("res://resources/target_paint.tres")
 
 ## Built as a typed local rather than a typed `const` array: FireMissionSystem
 ## .missions is Array[FireMissionConfig], and handing it an untyped literal
@@ -519,6 +520,7 @@ func _build_ui() -> void:
 	# is a different enabler entirely. Handed to whoever needs to paint.
 	_target_painter = TargetPainter.new()
 	_target_painter.name = "TargetPainter"
+	_target_painter.config = TARGET_PAINT_CONFIG
 	add_child(_target_painter)
 	_target_painter.setup(player, player.camera)
 
@@ -542,13 +544,15 @@ func _build_ui() -> void:
 	UAVSystem.setup(_hud, _radio_menu)
 
 	# Registers itself into EnablerManager.callable_enablers, same as every
-	# other enabler. Shares the guaranteed dawn drop's own LZ (_crate_position
-	# / drop_radius, already set above) rather than a second location.
+	# other enabler. The player DESIGNATES the LZ with the shared painter;
+	# _crate_position/drop_radius are handed in only as the last-resort
+	# fallback pad, not as the normal destination.
 	_supply_drop_system = SupplyDropSystem.new()
 	_supply_drop_system.name = "SupplyDropSystem"
 	_supply_drop_system.config = SUPPLY_DROP_CONFIG
 	add_child(_supply_drop_system)
-	_supply_drop_system.setup(player, _hud, _radio_menu, _crate_position, drop_radius)
+	_supply_drop_system.setup(player, _hud, _radio_menu, _target_painter,
+		_crate_position, drop_radius)
 
 	_restore_base()
 

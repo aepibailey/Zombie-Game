@@ -1,0 +1,33 @@
+[gd_resource type="Resource" script_class="AreaDamageProfile" load_steps=2 format=3]
+
+; A ~200kg crate arriving under canopy. Only ever detonated when
+; SupplyDropConfig.crate_crush_damage_enabled is true — OFF by default.
+;
+; GEOMETRY is deliberately tiny: 1.2m lethal, 2.0m max. This is a crushing
+; weight, not an explosion — you have to be effectively under it. The 20s
+; delay plus the 8s visible, audible descent is far more warning than any
+; other hazard in the game gives, so being caught is a choice.
+;
+; DAMAGES_OBSTACLES false: a crate landing on sandbags does not demolish
+; them. NOISE_RADIUS 0 because the descent itself already emits the noise
+; that draws zombies (see SupplyCrateDescent) — a second pulse on touchdown
+; would double-count the same event.
+
+[ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
+
+[resource]
+script = ExtResource("1_adp")
+id = "crate_crush"
+display_name = "Supply Crate"
+lethal_radius = 1.2
+max_radius = 2.0
+max_damage = 250
+falloff = 0
+arc_degrees = 360.0
+blocked_damage_mult = 0.0
+damages_obstacles = false
+obstacle_damage_mult = 1.0
+duration = 0.0
+tick_interval = 0.5
+sfx_detonate = ""
+noise_radius = 0.0

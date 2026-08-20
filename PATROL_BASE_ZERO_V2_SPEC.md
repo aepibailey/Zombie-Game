@@ -1647,7 +1647,7 @@ expires; "in flight" means rounds still falling. Stacking is prevented by the
   Wasted work, but optimising it means changing shared code for one consumer.
 - C-wire, the ditch and minefields are untouched by fire missions — see 11.1.
 
-## 12. Step 5 (rebuild): UAV + Supply Drop
+## 12. Step 5 (rebuild): shared target painting, UAV, supply drop
 
 Audited before writing anything: no `EnablerType` resource exists (confirmed
 by `EnablerManager`'s own docstring), no UAV code of any kind existed, and
@@ -1728,72 +1728,122 @@ No new area-damage, noise, or pickup system was written for this phase —
 `PointsManager.spend_points()`, `EnablerManager`'s cooldown/lockout, and
 `RadioMenu.commit_transmission()` are the only substrates touched.
 
+### Shared target painting
+
+`TargetPainter` already existed (built for the mortar) and was **extended in
+place, never duplicated** — the brief's own instruction. What was added:
+
+- **Navmesh validity.** A designated point must now be on the baked navmesh
+  (`TargetPainter.point_on_navmesh()`, `NavigationServer3D.map_get_closest_point`
+  within `navmesh_tolerance` 1.5m). This is what turns a tree canopy, a
+  rooftop or the sky red — the aim ray found solid geometry, but nothing can
+  path there, so nothing can be *delivered* there. No navmesh baked yet
+  returns true rather than blocking designation outright.
+- **Per-call override, defaulting on.** `paint_requires_navmesh` is a
+  property of the ORDNANCE, not of the designation, so `begin()` takes an
+  override. **Fire missions explicitly pass `false`** — indirect fire may
+  legitimately land where nothing can walk, and the mortar's reach must not
+  be silently narrowed by a change to the shared default. A delivered crate
+  passes nothing and takes the `true` default.
+- **`target_confirmed(position)` / `target_cancelled()` signals**, alongside
+  the existing per-call callables. The callables stay the primary path
+  because they are unambiguous when several enablers can paint; the signals
+  exist for observers that want every designation regardless of who asked.
+- **`TargetPaintConfig`** (`resources/target_paint.tres`) — range, navmesh
+  rules and all four marker colours, moved off `const`s so they are actually
+  inspector-tunable (`TargetPainter` is built with `.new()`, so its own
+  exports would never reach an inspector). Marker is now green/red rather
+  than the mortar's original amber, so "valid" reads identically for every
+  consumer.
+- **`snap_to_navmesh()`**, a public static used by the supply drop's landing
+  solve.
+
+**No cost, cooldown or noise exists anywhere in the painter.** A consumer
+that wants a transmission pulse on entry, on confirm, or both, emits it
+around its own `begin()` call. That is precisely why the supply drop is a
+**two-pulse** enabler while the mortar stays a **one-pulse** enabler with no
+branch anywhere in the shared code.
+
 ### Supply Drop
 
-**`SupplyDrop.gd` — the existing pickup scene — was reworked, not replaced.**
-The audit found it already served the guaranteed free drop at dawn
-(`Main._spawn_supply_drop()`, nights 3/5/10), but as a single atomic
-collection: one E-press granted everything it could and immediately
-`queue_free()`d, silently discarding any grenade that didn't fit under the
-carry cap. That directly conflicted with the requirement that overflow stay
-lootable, so the collection model changed: `contents` is no longer a flat
-one-shot dict but three live REMAINING fields —
-`magazines_by_weapon: Dictionary` (weapon id → mags still owed, snapshotted
-at creation), `grenades_remaining: int`, `ifaks_remaining: int`. Magazines
-are always granted in full on the first visit (`AmmoManager.grant_ammo()` is
-uncapped, so there's no partial case for them) and cleared; grenades and
-IFAKs grant only what currently fits — `grant_grenades()` already reports
-the exact count taken, and `add_ifak(1)` is called once per remaining IFAK
-since it only reports success/failure for a single unit — and whatever
-doesn't fit simply stays on the fields for a later visit. The crate frees
-itself only once every field is drained to zero. `Main._spawn_supply_drop()`
-was updated to the new contents shape (still 1 mag per owned weapon, 1
-grenade, no IFAK — its own fixed contents, unrelated to `SupplyDropConfig`)
-so both consumers share one mechanism with one contract.
+**Player-designated LZ.** The call opens the shared painter; the crate goes
+where the player paints, and the fixed pad (`Main._crate_position`) is now a
+**last-resort fallback only**, never the default destination.
 
-**`SupplyDropSystem`** (Main-instantiated `Node`, same pattern as
-`FireMissionSystem`) owns the call flow only — no pickup code, no placement
-solve; both stay on `SupplyDrop.gd`. It shares the guaranteed dawn drop's own
-LZ, passed into `setup()` as `_crate_position`/`drop_radius` rather than
-looked up, so it stays decoupled from `Main`. Contents are snapshotted **at
-call time** from `Player.owned_weapons()`, not at delivery or at pickup —
-tying a drop to what you were carrying when you called it in, not to
-whatever you happen to own later. Multiple drops per night are allowed
-(no "already used" state, unlike the UAV) — only the independent 120s
-cooldown and the shared 10s global lockout gate a re-call, both from the one
-`EnablerManager.start_cooldown()` call every enabler uses.
+**Two transmissions, two noise events.** Entering designation keys the mic
+(you have told someone you want a crate), and confirming the LZ keys it
+again. Cancelling costs no points and no cooldown, but the entry pulse is
+**not** retroactively silenced — the mic was already keyed. This is the one
+deliberate asymmetry with the mortar, which stays silent until commit.
 
-**Cooldown starts at call-in, not delivery** — a deliberate difference from
-the mortar/WP fix earlier in this document. That earlier fix mattered because
-`mission_duration` is a retunable value whose length would otherwise eat into
-the nominal cooldown window; here `delay` is a single fixed constant (default
-20s), so starting the cooldown at call vs. at delivery only ever differs by
-that same constant, never a variable amount. No stronger reason existed to
-prefer one over the other, so call-in was kept as the simpler default.
+**Landing solve** (`SupplyDropSystem._resolve_landing()`), in descending
+preference: a scattered point within `landing_scatter_radius` (5m) of the
+painted point → progressively inward toward the painted point → the painted
+point itself → the pad. Every candidate is snapped to the navmesh, then
+required to have real ground under it, a surface normal within the same
+0.85 walkable threshold the pad solve uses, clearance for a crate-sized
+volume (`SupplyDrop.volume_blocked()`, promoted to a public static so both
+spawn paths ask the identical question), and at least
+`SupplyDrop.MIN_PLAYER_DISTANCE` from the player. **The crate cannot land
+inside a structure or inside the player.**
 
-**Pricing lives on `SupplyDropConfig`** (`resources/supply_drop.tres`), not
-as `@export` vars directly on `SupplyDropSystem` — same reason as
-`FireMissionConfig`: a code-instantiated node's own exports never reach an
-inspector. `pricing_mode` is `FLAT` (a fixed `cost`) or `SCALED` (`floori(
-discount_pct * contents_value)`, recomputed from the CURRENT loadout).
-`FLAT`'s default of **16** is `floori(0.7 * 23)`, where 23 is the M17-only
-bundle (2 mags @ 1pt + 1 grenade @ 6pt + 1 IFAK @ 15pt, all read from
-`Arsenal`/`StoreCatalog` at the time this was written) — owning more weapons
-only ever raises contents value, so 16 stays valid at any loadout; the
-one-weapon case is the floor, not an edge case to special-case around.
+**Descent is a tell, not decoration.** `SupplyCrateDescent` drops the crate
+under canopy from 45m over `descent_time` (8s), ease-out, slowly rotating,
+emitting a 40m `NoiseManager` pulse **every second from the crate's own
+position** — so calling a drop pulls zombies toward the LZ. That noise is the
+counterweight to being able to designate the LZ anywhere on the map.
 
-**SCALED mode's displayed cost stays live with zero menu-side changes.**
-`RadioMenu` reads `entry.get("cost", 0)` from the SAME `Dictionary` instance
-`SupplyDropSystem` registered — Dictionaries are reference types in
-GDScript, so `SupplyDropSystem._process()` rewriting `_entry["cost"]` every
-frame (SCALED mode only; FLAT never changes) is exactly what the menu reads
-whenever it happens to render, with nothing added to `RadioMenu` itself.
+**Optional crush damage**, `crate_crush_damage_enabled` **default false**.
+When enabled, touchdown routes one `AreaDamageSystem.detonate()` through an
+authored `crate_crush.tres` (1.2m lethal / 2.0m max, 250 damage, does not
+damage obstacles, silent — the descent already emitted the noise). **No new
+damage code exists for this.**
 
-**The pricing invariant is a real runtime assertion, checked on every
-call** — same spirit as `Arsenal`'s HK416-beats-M17 damage invariant:
-`assert(cost < value, ...)` plus a `push_error()` fallback so the failure is
-visible even where asserts are stripped (release exports). Verified
-numerically at 1/2/3/4 weapons owned under both pricing modes before
-shipping — FLAT's 16 stays below contents value (23/27/31/39) at every
-count, and SCALED's `floor(0.7x) < x` holds by construction for any positive
-contents value.
+**Contents** are snapshotted at CONFIRM from `Player.owned_weapons()` — the
+drop is tied to what you were carrying when you called it in, not to what you
+own when it lands or when you loot it. Partial pickup and crate persistence
+are unchanged from the earlier pass: magazines grant in full (`AmmoManager`
+is uncapped), grenades and IFAKs grant only what fits under the carry cap,
+and the remainder **stays in the crate** for a later visit. The crate frees
+itself only when every field is drained, and **does not despawn at sunrise**.
+
+#### Pricing — flat, and deliberately bad early
+
+**There is exactly one exported integer, `supply_drop_cost`, and no scaling
+logic anywhere in the codebase.** An earlier pass shipped a `FLAT`/`SCALED`
+`PricingMode` with a `discount_pct` and a per-frame cost rewrite; **all of it
+was deleted.** The crate's *value* scales with the loadout; its *price* does
+not. **That gap is the mechanic.**
+
+Derived from real store prices as `bundle(n) = Σ(ammo_cost × 2 mags) +
+6 (grenade) + 15 (IFAK)`, set to `bundle(3)` over the three cheapest-to-
+resupply weapons: `(1 + 2 + 2) × 2 + 6 + 15 =` **31**.
+
+| Weapons owned | Contents worth | Net |
+|---|---|---|
+| 1 (M17) | 23 | **−8 — a bad buy** |
+| 2 (+416) | 27 | −4, mild loss |
+| 3 (+SPAS) | 31 | break-even |
+| 4 (+SAW) | 39 | **+8 — strong buy** |
+
+Being a bad deal early is the intended early-game experience, **not a bug to
+fix** — the crate is a late-game tool the player grows into.
+
+**Two-sided runtime assertion**, in the spirit of the HK416 > M17 invariant.
+Both ends of the inversion are asserted, because if the crate is ever a good
+deal at one weapon owned the mechanic is broken just as thoroughly as if it
+were a bad deal at four. Checked against the **worst case on each side**
+rather than one arbitrary loadout — a loadout-specific check could pass on a
+lucky combination while the curve was already broken for another:
+
+```
+dearest bundle(1) = 29  <  supply_drop_cost = 31  <  cheapest bundle(4) = 37
+```
+
+Combinations are enumerated exhaustively over `Arsenal.order` (at most 10 at
+any size) by a non-recursive odometer, verified against a reference
+implementation at every size including the empty and over-size edge cases.
+`assert()` plus a `push_error()` fallback so the failure is visible in
+release exports too, run once at `setup()` — the price is a static property
+of the config, so a per-call check would re-derive the same answer every time.
+

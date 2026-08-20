@@ -1,21 +1,30 @@
-[gd_resource type="Resource" script_class="SupplyDropConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SupplyDropConfig" load_steps=3 format=3]
 
-; FLAT default: ~70% of the M17-only bundle (2 mags @ 1pt + 1 grenade @ 6pt +
-; 1 IFAK @ 15pt = 23pts; 70% of 23 is 16.1, floored to 16). Owning more
-; weapons only ever raises the contents' real value, so 16 stays strictly
-; below it at 1, 2, 3, or 4 weapons owned — see
-; SupplyDropSystem._call()'s runtime assertion, which checks this on every
-; call rather than trusting the number to stay valid as prices are retuned.
+; supply_drop_cost 31 = bundle(3) over the three cheapest-to-resupply weapons,
+; from real store prices: (m17 1 + hk416 2 + spas12 2) * 2 mags + 6 grenade
+; + 15 IFAK = 31. FLAT — it never scales with anything.
+;
+;   1 weapon owned  -> 23 pts of contents. You LOSE 8. Intended.
+;   2 weapons       -> 27. Mild loss.
+;   3 weapons       -> 31. Break-even.
+;   4 weapons       -> 37-39. Strong buy, best resupply in the game.
+;
+; The crate being a bad deal early is the mechanic, not a bug — it is a
+; late-game tool the player grows into. SupplyDropSystem asserts both ends of
+; that curve on every call: max bundle(1)=29 < 31 < min bundle(4)=37.
 
 [ext_resource type="Script" path="res://scripts/SupplyDropConfig.gd" id="1_cfg"]
+[ext_resource type="Resource" path="res://resources/crate_crush.tres" id="2_crush"]
 
 [resource]
 script = ExtResource("1_cfg")
-pricing_mode = 0
-cost = 16
-discount_pct = 0.7
-delay = 20.0
-cooldown = 120.0
+supply_drop_cost = 31
+supply_drop_delay = 20.0
+descent_time = 8.0
+supply_drop_cooldown = 120.0
+landing_scatter_radius = 5.0
+crate_crush_damage_enabled = false
+crush_profile = ExtResource("2_crush")
 mags_per_weapon = 2
 grenades_per_crate = 1
 ifaks_per_crate = 1

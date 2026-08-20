@@ -4,9 +4,15 @@ class_name TargetPainter
 ## are about to hit, LMB to confirm or RMB/Escape to cancel.
 ##
 ## GENERIC BY DESIGN — the Apache patrol box is the next consumer and this
-## must not need changing for it. Nothing here knows what a mortar is: a
-## caller hands in a radius and a callback, and gets back a world position or
-## a cancellation. `begin()` is the whole interface.
+## must not need changing for it. Nothing here knows what a mortar is, and
+## nothing here knows what a supply drop is: a caller hands in a radius and a
+## callback, and gets back a world position or a cancellation. `begin()` is
+## the whole interface.
+##
+## CONTAINS NO COST, COOLDOWN OR NOISE. A consumer that wants a transmission
+## pulse on entry, on confirm, or both, emits it itself around its own
+## begin() call — which is exactly why the supply drop can be a two-pulse
+## enabler while the mortar stays a one-pulse enabler with no branch here.
 ##
 ## NOT A MENU. The game does not pause, the player keeps full movement AND
 ## full mouse-look, and zombies keep coming. This is aiming, not browsing —
@@ -25,17 +31,18 @@ const FULL_CIRCLE_DEGREES := 360.0
 ## circle at up to 20m, where a coarse fan reads as a visible polygon.
 const CIRCLE_SEGMENTS := 48
 
-## Valid: you may confirm here. Invalid: out of range, or no ground under the
-## aim ray. Emissive/unshaded and alpha-blended, never additive — the night
-## NVG path has no glow stage, so the risk is washing out a dark scene rather
-## than blooming (same discipline as GrenadeArc and ArcWedge).
-const COLOR_VALID := Color(1.0, 0.55, 0.1, 0.22)
-const COLOR_INVALID := Color(1.0, 0.15, 0.1, 0.22)
-## The rim is drawn brighter than the fill so the radius edge — the thing the
-## player is actually judging — reads at a glance from across the base.
-const COLOR_RIM_VALID := Color(1.0, 0.7, 0.2, 0.85)
-const COLOR_RIM_INVALID := Color(1.0, 0.25, 0.2, 0.85)
-const RIM_WIDTH := 0.35
+## Emitted on confirm, carrying the designated world position. Consumers may
+## subscribe to this OR pass an on_confirm callable to begin() — the callable
+## is per-call and therefore unambiguous when several enablers can paint, so
+## it stays the primary path; the signal exists for observers that want to
+## watch every designation regardless of who asked for it.
+signal target_confirmed(position: Vector3)
+## Emitted on cancel. Same relationship to begin()'s on_cancel callable.
+signal target_cancelled()
+
+## All colours and the range/navmesh rules live on this — see
+## TargetPaintConfig for why a Resource rather than @export vars here.
+@export var config: TargetPaintConfig
 
 ## Lifted off the ground so the disc doesn't z-fight the terrain under it.
 const GROUND_OFFSET := 0.05
@@ -53,6 +60,9 @@ var _radius := 0.0
 var _on_confirm: Callable
 var _on_cancel: Callable
 var _max_range := 150.0
+## Per-call override of config.paint_requires_navmesh — a property of the
+## ORDNANCE, not the designation. See begin().
+var _requires_navmesh := true
 
 var _fill: MeshInstance3D
 var _fill_mat: StandardMaterial3D
@@ -83,19 +93,29 @@ func is_active() -> bool:
 	return _active
 
 ## Enter paint mode.
-##   radius     — the circle drawn, i.e. what the mission will actually cover
-##   max_range  — furthest the player may paint from their own position
+##   radius     — the circle drawn, i.e. what the caller will actually cover
+##   max_range  — furthest the player may paint from their own position.
+##                <= 0 uses config.max_designation_range.
 ##   on_confirm — Callable(point: Vector3), invoked once on LMB over valid ground
 ##   on_cancel  — Callable(), invoked once on RMB/Escape. Never both.
+##   requires_navmesh — per-call override of config.paint_requires_navmesh.
+##                A property of the ORDNANCE, not of the designation:
+##                indirect fire may legitimately land where nothing can walk
+##                (a rooftop, the far side of the wire), a delivered crate may
+##                not. Omit to take the config default.
 ##
 ## The caller charges nothing before this returns; on_confirm is where cost
-## and noise belong, so a cancel is genuinely free.
-func begin(radius: float, max_range: float, on_confirm: Callable, on_cancel: Callable) -> void:
+## belongs, so a cancel is genuinely free. Noise is the caller's business
+## too — see the class docstring.
+func begin(radius: float, max_range: float, on_confirm: Callable, on_cancel: Callable,
+		requires_navmesh: Variant = null) -> void:
 	if _active:
 		return
 	_active = true
 	_radius = maxf(0.5, radius)
-	_max_range = maxf(0.0, max_range)
+	_max_range = max_range if max_range > 0.0 else config.max_designation_range
+	_requires_navmesh = config.paint_requires_navmesh if requires_navmesh == null \
+		else bool(requires_navmesh)
 	_on_confirm = on_confirm
 	_on_cancel = on_cancel
 	# Only wait for a release if the button is ACTUALLY down right now. Set
@@ -119,6 +139,7 @@ func cancel() -> void:
 	_end()
 	if cb.is_valid():
 		cb.call()
+	target_cancelled.emit()
 
 func _confirm() -> void:
 	if not _active or not _valid:
@@ -128,6 +149,7 @@ func _confirm() -> void:
 	_end()
 	if cb.is_valid():
 		cb.call(p)
+	target_confirmed.emit(p)
 
 ## Common teardown. Clears state BEFORE the callback runs (see cancel() and
 ## _confirm()), so a callback that immediately starts another paint — or
@@ -143,13 +165,13 @@ func _end() -> void:
 func _build_marker() -> void:
 	_fill = MeshInstance3D.new()
 	_fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_fill_mat = _flat_mat(COLOR_VALID)
+	_fill_mat = _flat_mat(config.marker_valid_color)
 	_fill.material_override = _fill_mat
 	add_child(_fill)
 
 	_rim = MeshInstance3D.new()
 	_rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_rim_mat = _flat_mat(COLOR_RIM_VALID)
+	_rim_mat = _flat_mat(config.marker_rim_valid_color)
 	_rim.material_override = _rim_mat
 	add_child(_rim)
 
@@ -166,7 +188,7 @@ func _flat_mat(c: Color) -> StandardMaterial3D:
 
 func _rebuild_marker_geometry() -> void:
 	_fill.mesh = _disc_mesh(_radius)
-	_rim.mesh = _ring_mesh(maxf(0.1, _radius - RIM_WIDTH), _radius)
+	_rim.mesh = _ring_mesh(maxf(0.1, _radius - config.marker_rim_width), _radius)
 	_fill.position.y = GROUND_OFFSET
 	_rim.position.y = GROUND_OFFSET + 0.005   # hair above the fill, same reason
 
@@ -197,8 +219,8 @@ func _ring_mesh(inner: float, outer: float) -> ImmediateMesh:
 	return im
 
 func _apply_tint(valid: bool) -> void:
-	_fill_mat.albedo_color = COLOR_VALID if valid else COLOR_INVALID
-	_rim_mat.albedo_color = COLOR_RIM_VALID if valid else COLOR_RIM_INVALID
+	_fill_mat.albedo_color = config.marker_valid_color if valid else config.marker_invalid_color
+	_rim_mat.albedo_color = config.marker_rim_valid_color if valid else config.marker_rim_invalid_color
 
 # --- Per-frame solve ---------------------------------------------------------
 func _process(_delta: float) -> void:
@@ -244,6 +266,34 @@ func _solve() -> void:
 		_point.z - _player.global_position.z).length()
 	# No minimum. Painting your own feet is legal and lethal, by design.
 	_valid = flat <= _max_range
+	# Navmesh gate, when the ordnance asks for it. This is what turns a tree
+	# canopy, a rooftop or the far lip of the ditch red — the ray found solid
+	# geometry there, but nothing can path to it, so nothing can be delivered
+	# to it either.
+	if _valid and _requires_navmesh:
+		_valid = point_on_navmesh(get_world_3d(), _point, config.navmesh_tolerance)
+
+## Is `pos` on (or within `tolerance` of) the baked navmesh?
+##
+## STATIC and public deliberately: the supply drop's landing solve needs the
+## identical test on scattered candidate points, and "on the navmesh" must
+## mean exactly one thing project-wide. ClaymorePlacer._on_navmesh() is the
+## same test with the same tolerance and predates this — it is left alone
+## only because it is a self-contained placement rule, not part of a
+## designation flow.
+static func point_on_navmesh(world: World3D, pos: Vector3, tolerance: float) -> bool:
+	var map := world.navigation_map
+	if not map.is_valid():
+		return true   # no navmesh yet — don't block designation on it
+	return NavigationServer3D.map_get_closest_point(map, pos).distance_to(pos) <= tolerance
+
+## Nearest point ON the navmesh to `pos`. Returns `pos` unchanged when there
+## is no baked navmesh to snap to.
+static func snap_to_navmesh(world: World3D, pos: Vector3) -> Vector3:
+	var map := world.navigation_map
+	if not map.is_valid():
+		return pos
+	return NavigationServer3D.map_get_closest_point(map, pos)
 
 func _fallback_point() -> Vector3:
 	var fwd := -_cam.global_transform.basis.z

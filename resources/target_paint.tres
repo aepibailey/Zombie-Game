@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="TargetPaintConfig" load_steps=2 format=3]
+
+; Shared designation tunables. Green = valid, red = invalid, per the Step 5
+; brief — the mortar's original amber marker predates this and was replaced
+; by the shared green so that "valid" reads identically for every consumer.
+;
+; paint_requires_navmesh defaults TRUE, which is what rejects tree canopies,
+; rooftops and the sky. Fire missions override it to false per call (see
+; FireMissionSystem._begin_paint) because indirect fire may legitimately land
+; where nothing can walk; a delivered crate may not.
+
+[ext_resource type="Script" path="res://scripts/TargetPaintConfig.gd" id="1_cfg"]
+
+[resource]
+script = ExtResource("1_cfg")
+max_designation_range = 150.0
+paint_requires_navmesh = true
+navmesh_tolerance = 1.5
+marker_valid_color = Color(0.15, 1, 0.25, 0.22)
+marker_invalid_color = Color(1, 0.15, 0.1, 0.22)
+marker_rim_valid_color = Color(0.3, 1, 0.4, 0.85)
+marker_rim_invalid_color = Color(1, 0.25, 0.2, 0.85)
+marker_rim_width = 0.35

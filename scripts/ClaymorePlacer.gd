@@ -212,9 +212,13 @@ func _overlaps_obstacle(pos: Vector3) -> bool:
 	params.exclude = [_player.get_rid()]
 	return space.intersect_shape(params, 1).size() > 0
 
-## Same test and tolerance Zombie._on_navmesh() uses. A claymore emplaced
-## somewhere nothing can path to is a wasted 15 points, so it is rejected
-## rather than silently allowed.
+## A claymore emplaced somewhere nothing can path to is wasted points, so it
+## is rejected rather than silently allowed.
+##
+## Same test and tolerance as TargetPainter.point_on_navmesh(), kept separate
+## because this is a self-contained placement rule rather than part of a
+## designation flow. (The comment this replaced referred to a
+## Zombie._on_navmesh() that no longer exists.)
 func _on_navmesh(pos: Vector3) -> bool:
 	var map := get_world_3d().navigation_map
 	if not map.is_valid():

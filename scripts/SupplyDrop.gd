@@ -79,14 +79,18 @@ static func find_spawn_point(world: World3D, anchor: Vector3, radius: float,
 			continue
 		# Reject if the crate volume would intersect geometry (structures,
 		# sandbags, trees, the supply crate itself).
-		if _volume_blocked(space, ground + Vector3(0, 0.45, 0)):
+		if volume_blocked(space, ground + Vector3(0, 0.45, 0)):
 			continue
 		return ground
 
 	# Fallback: a fixed known-good offset from the anchor.
 	return anchor + Vector3(2.5, 0.0, 2.5)
 
-static func _volume_blocked(space: PhysicsDirectSpaceState3D, centre: Vector3) -> bool:
+## Would a crate-sized volume centred here intersect world geometry?
+## PUBLIC and static: SupplyDropSystem's landing solve asks the same question
+## of its own candidate points, and "is there room for a crate" must mean one
+## thing for both spawn paths.
+static func volume_blocked(space: PhysicsDirectSpaceState3D, centre: Vector3) -> bool:
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(0.9, 0.9, 0.9)
 	var params := PhysicsShapeQueryParameters3D.new()
