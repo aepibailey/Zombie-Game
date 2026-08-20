@@ -1,25 +1,39 @@
 extends Area3D
 class_name SupplyDrop
 ## A collectable resupply crate. Reusable by design: the caller supplies the
-## contents config, a spawn anchor, and a radius, so the future purchasable
-## supply-drop enabler instances this exact scene with the player as anchor and
-## different contents — no changes here. See docs/ROADMAP.md.
+## contents config, a spawn anchor, and a radius — the guaranteed dawn drop
+## and the purchasable radio-callable Supply Drop enabler both instance this
+## exact scene with different contents and different anchors. See
+## docs/ROADMAP.md.
 
 signal collected(summary: String)
+## Fired once, the moment the crate has nothing left to give and frees
+## itself. Distinct from `collected`, which can fire multiple times — once
+## per partial pickup — if the player was at a carry cap on an earlier visit.
+signal emptied()
 
 const PLACE_ATTEMPTS := 10
 const MIN_PLAYER_DISTANCE := 2.0
 
-## Contents config.
-##   `magazines` — mags granted per owned weapon.
-##   `grenades`  — hand grenades granted, subject to the carry cap.
-## Future enablers can pass a different config (e.g. specific weapons only).
-var contents: Dictionary = {"magazines": 1, "grenades": 1}
+## Live REMAINING contents — mutated in place as they're picked up, not a
+## fixed order slip. `magazines_by_weapon` maps weapon id -> magazines still
+## owed for that weapon, snapshotted from ownership at the moment the crate
+## was configured (not re-evaluated against whatever's owned at loot time —
+## "computed at call time from current loadout" is the point of a supply
+## drop being tied to what you were carrying when you called it in).
+var magazines_by_weapon: Dictionary = {}
+## Grenades and IFAKs are carry-capped, so a pickup can be PARTIAL: whatever
+## doesn't fit stays here rather than being destroyed, and is lootable on a
+## later visit once the player has room. Magazines have no cap
+## (AmmoManager.grant_ammo is uncapped) so they never have this problem —
+## granted in full the instant the crate is first opened.
+var grenades_remaining: int = 0
+var ifaks_remaining: int = 0
 
 var _player_inside := false
 var _player: Player = null
 var _hud: HUD = null
-var _collected := false
+var _emptied := false
 
 func _ready() -> void:
 	add_to_group("supply_drops")
@@ -30,10 +44,13 @@ func _ready() -> void:
 	body_exited.connect(_on_body_exited)
 	_build_visuals()
 
+## contents_config shape: {"magazines_by_weapon": {weapon_id: mags, ...},
+## "grenades": int, "ifaks": int}. Any key may be omitted (treated as empty/0).
 func setup(hud: HUD, contents_config: Dictionary = {}) -> void:
 	_hud = hud
-	if not contents_config.is_empty():
-		contents = contents_config
+	magazines_by_weapon = contents_config.get("magazines_by_weapon", {}).duplicate()
+	grenades_remaining = contents_config.get("grenades", 0)
+	ifaks_remaining = contents_config.get("ifaks", 0)
 
 # --- Placement ------------------------------------------------------------
 ## Finds a valid spot within `radius` of `anchor`, at least MIN_PLAYER_DISTANCE
@@ -136,45 +153,68 @@ func _on_body_exited(body: Node3D) -> void:
 			_hud.hide_prompt(self)
 
 func _process(_delta: float) -> void:
-	if _hud and _player_inside and not _collected:
+	if _hud and _player_inside and not _emptied:
 		_hud.show_prompt("Press E to collect resupply", self)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _collected or not _player_inside or _player == null:
+	if _emptied or not _player_inside or _player == null:
 		return
 	if event.is_action_pressed("interact"):
 		_collect()
 		get_viewport().set_input_as_handled()
 
+## Grants everything that currently fits. Magazines are uncapped and always
+## fully granted the first time this runs, then cleared. Grenades and IFAKs
+## grant only what fits under the player's carry cap right now — whatever
+## doesn't is left in `grenades_remaining`/`ifaks_remaining` for a later
+## visit, never discarded. The crate only frees itself once every field is
+## drained to zero.
 func _collect() -> void:
-	_collected = true
-	var mags: int = contents.get("magazines", 1)
 	var granted: Array = []
-	# One magazine per OWNED weapon; unowned weapons grant nothing.
-	for id in _player.owned_weapons():
-		# All ammo routes through AmmoManager — never a direct write.
-		var rounds: int = AmmoManager.grant_ammo(id, mags)
-		if rounds > 0:
-			granted.append("%s +%d" % [Arsenal.get_weapon(id).display_name, rounds])
 
-	# Grenades go through the SAME capped grant path a crate purchase uses, so
-	# the carry cap is enforced in exactly one place. grant_grenades() returns
-	# what it actually took: at 4 carried it takes 0 and the drop's grenade is
-	# LOST rather than overflowing the cap or being held for later. Reported
-	# either way, so a wasted grenade is visible and not silent.
-	var want_nades: int = contents.get("grenades", 0)
-	if want_nades > 0:
-		var took: int = _player.grant_grenades(want_nades)
+	if not magazines_by_weapon.is_empty():
+		for id in magazines_by_weapon.keys():
+			var mags: int = magazines_by_weapon[id]
+			if mags <= 0:
+				continue
+			# All ammo routes through AmmoManager — never a direct write.
+			var rounds: int = AmmoManager.grant_ammo(id, mags)
+			if rounds > 0:
+				var w = Arsenal.get_weapon(id)
+				granted.append("%s +%d" % [w.display_name if w else id, rounds])
+		magazines_by_weapon.clear()
+
+	# grant_grenades() reports exactly how many actually fit under the carry
+	# cap, so the remainder IS simply what's left over — no separate
+	# "lost"/destroyed branch needed the way the single-shot version had.
+	if grenades_remaining > 0:
+		var took: int = _player.grant_grenades(grenades_remaining)
+		grenades_remaining -= took
 		if took > 0:
 			granted.append("Grenade +%d" % took)
-		else:
-			granted.append("Grenade lost (carrying %d/%d)" % [
-				_player.grenades, _player.grenade_max_carry])
 
-	var summary := ", ".join(granted) if granted.size() > 0 else "nothing (no weapons owned)"
+	# add_ifak() only reports success/failure for ONE unit at a time (no
+	# equivalent to grant_grenades()'s returned count), so it's called once
+	# per remaining IFAK rather than all at once — the only way to learn
+	# exactly how many fit without changing that shared API.
+	var ifaks_taken := 0
+	while ifaks_remaining > 0 and _player.add_ifak(1):
+		ifaks_remaining -= 1
+		ifaks_taken += 1
+	if ifaks_taken > 0:
+		granted.append("IFAK +%d" % ifaks_taken)
+
+	var summary := ", ".join(granted) if granted.size() > 0 else "nothing to take right now"
 	print("[RESUPPLY] collected — %s" % summary)
 	if _hud:
-		_hud.hide_prompt(self)
 		_hud.show_message("RESUPPLY: %s" % summary)
 	collected.emit(summary)
-	queue_free()
+
+	if magazines_by_weapon.is_empty() and grenades_remaining <= 0 and ifaks_remaining <= 0:
+		_emptied = true
+		if _hud:
+			_hud.hide_prompt(self)
+		emptied.emit()
+		queue_free()
+	# else: contents remain — the crate stays in the world, unchanged, for a
+	# later visit once the player has carry-cap room.

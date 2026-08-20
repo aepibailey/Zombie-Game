@@ -1647,7 +1647,7 @@ expires; "in flight" means rounds still falling. Stacking is prevented by the
   Wasted work, but optimising it means changing shared code for one consumer.
 - C-wire, the ditch and minefields are untouched by fire missions — see 11.1.
 
-## 12. Step 5 (rebuild): UAV
+## 12. Step 5 (rebuild): UAV + Supply Drop
 
 Audited before writing anything: no `EnablerType` resource exists (confirmed
 by `EnablerManager`'s own docstring), no UAV code of any kind existed, and
@@ -1727,3 +1727,73 @@ identically.
 No new area-damage, noise, or pickup system was written for this phase —
 `PointsManager.spend_points()`, `EnablerManager`'s cooldown/lockout, and
 `RadioMenu.commit_transmission()` are the only substrates touched.
+
+### Supply Drop
+
+**`SupplyDrop.gd` — the existing pickup scene — was reworked, not replaced.**
+The audit found it already served the guaranteed free drop at dawn
+(`Main._spawn_supply_drop()`, nights 3/5/10), but as a single atomic
+collection: one E-press granted everything it could and immediately
+`queue_free()`d, silently discarding any grenade that didn't fit under the
+carry cap. That directly conflicted with the requirement that overflow stay
+lootable, so the collection model changed: `contents` is no longer a flat
+one-shot dict but three live REMAINING fields —
+`magazines_by_weapon: Dictionary` (weapon id → mags still owed, snapshotted
+at creation), `grenades_remaining: int`, `ifaks_remaining: int`. Magazines
+are always granted in full on the first visit (`AmmoManager.grant_ammo()` is
+uncapped, so there's no partial case for them) and cleared; grenades and
+IFAKs grant only what currently fits — `grant_grenades()` already reports
+the exact count taken, and `add_ifak(1)` is called once per remaining IFAK
+since it only reports success/failure for a single unit — and whatever
+doesn't fit simply stays on the fields for a later visit. The crate frees
+itself only once every field is drained to zero. `Main._spawn_supply_drop()`
+was updated to the new contents shape (still 1 mag per owned weapon, 1
+grenade, no IFAK — its own fixed contents, unrelated to `SupplyDropConfig`)
+so both consumers share one mechanism with one contract.
+
+**`SupplyDropSystem`** (Main-instantiated `Node`, same pattern as
+`FireMissionSystem`) owns the call flow only — no pickup code, no placement
+solve; both stay on `SupplyDrop.gd`. It shares the guaranteed dawn drop's own
+LZ, passed into `setup()` as `_crate_position`/`drop_radius` rather than
+looked up, so it stays decoupled from `Main`. Contents are snapshotted **at
+call time** from `Player.owned_weapons()`, not at delivery or at pickup —
+tying a drop to what you were carrying when you called it in, not to
+whatever you happen to own later. Multiple drops per night are allowed
+(no "already used" state, unlike the UAV) — only the independent 120s
+cooldown and the shared 10s global lockout gate a re-call, both from the one
+`EnablerManager.start_cooldown()` call every enabler uses.
+
+**Cooldown starts at call-in, not delivery** — a deliberate difference from
+the mortar/WP fix earlier in this document. That earlier fix mattered because
+`mission_duration` is a retunable value whose length would otherwise eat into
+the nominal cooldown window; here `delay` is a single fixed constant (default
+20s), so starting the cooldown at call vs. at delivery only ever differs by
+that same constant, never a variable amount. No stronger reason existed to
+prefer one over the other, so call-in was kept as the simpler default.
+
+**Pricing lives on `SupplyDropConfig`** (`resources/supply_drop.tres`), not
+as `@export` vars directly on `SupplyDropSystem` — same reason as
+`FireMissionConfig`: a code-instantiated node's own exports never reach an
+inspector. `pricing_mode` is `FLAT` (a fixed `cost`) or `SCALED` (`floori(
+discount_pct * contents_value)`, recomputed from the CURRENT loadout).
+`FLAT`'s default of **16** is `floori(0.7 * 23)`, where 23 is the M17-only
+bundle (2 mags @ 1pt + 1 grenade @ 6pt + 1 IFAK @ 15pt, all read from
+`Arsenal`/`StoreCatalog` at the time this was written) — owning more weapons
+only ever raises contents value, so 16 stays valid at any loadout; the
+one-weapon case is the floor, not an edge case to special-case around.
+
+**SCALED mode's displayed cost stays live with zero menu-side changes.**
+`RadioMenu` reads `entry.get("cost", 0)` from the SAME `Dictionary` instance
+`SupplyDropSystem` registered — Dictionaries are reference types in
+GDScript, so `SupplyDropSystem._process()` rewriting `_entry["cost"]` every
+frame (SCALED mode only; FLAT never changes) is exactly what the menu reads
+whenever it happens to render, with nothing added to `RadioMenu` itself.
+
+**The pricing invariant is a real runtime assertion, checked on every
+call** — same spirit as `Arsenal`'s HK416-beats-M17 damage invariant:
+`assert(cost < value, ...)` plus a `push_error()` fallback so the failure is
+visible even where asserts are stripped (release exports). Verified
+numerically at 1/2/3/4 weapons owned under both pricing modes before
+shipping — FLAT's 16 stays below contents value (23/27/31/39) at every
+count, and SCALED's `floor(0.7x) < x` holds by construction for any positive
+contents value.

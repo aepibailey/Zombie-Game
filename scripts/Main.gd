@@ -104,12 +104,14 @@ var _radio_menu: RadioMenu
 var _target_painter: TargetPainter
 var _fire_missions: FireMissionSystem
 var _uav_overlay: UAVOverlay
+var _supply_drop_system: SupplyDropSystem
 
 ## Radio-callable fire missions, in menu order. Adding one is a .tres plus a
 ## line in _fire_mission_list() — FireMissionSystem registers whatever it's
 ## handed, and the radio menu renders whatever is registered.
 const MISSION_MORTAR := preload("res://resources/mission_mortar.tres")
 const MISSION_SHAKE_AND_BAKE := preload("res://resources/mission_shake_and_bake.tres")
+const SUPPLY_DROP_CONFIG := preload("res://resources/supply_drop.tres")
 
 ## Built as a typed local rather than a typed `const` array: FireMissionSystem
 ## .missions is Array[FireMissionConfig], and handing it an untyped literal
@@ -539,6 +541,15 @@ func _build_ui() -> void:
 	_uav_overlay.setup(player)
 	UAVSystem.setup(_hud, _radio_menu)
 
+	# Registers itself into EnablerManager.callable_enablers, same as every
+	# other enabler. Shares the guaranteed dawn drop's own LZ (_crate_position
+	# / drop_radius, already set above) rather than a second location.
+	_supply_drop_system = SupplyDropSystem.new()
+	_supply_drop_system.name = "SupplyDropSystem"
+	_supply_drop_system.config = SUPPLY_DROP_CONFIG
+	add_child(_supply_drop_system)
+	_supply_drop_system.setup(player, _hud, _radio_menu, _crate_position, drop_radius)
+
 	_restore_base()
 
 ## Rebuild the base from GameState if a snapshot exists. Runs inside
@@ -678,14 +689,18 @@ func _begin_day() -> void:
 	else:
 		_hud.show_message("DAY — safe. Open the supply crate to spend points.")
 
-## Instances the reusable SupplyDrop scene near the crate. The future
-## purchasable enabler instances the same scene with a different anchor.
+## Instances the reusable SupplyDrop scene near the crate. The purchasable
+## radio-callable Supply Drop enabler (SupplyDropSystem) instances the same
+## scene with a different anchor and different contents.
 func _spawn_supply_drop() -> void:
 	var drop := SupplyDrop.new()
-	# Contents are passed WHOLE — setup() replaces the default dict rather than
-	# merging into it — so "grenades" has to be spelled out here even though
-	# SupplyDrop defaults to 1. Omitting it silently drops the grenade.
-	drop.setup(_hud, {"magazines": 1, "grenades": 1})
+	# One magazine per currently-owned weapon, one grenade, no IFAK — this
+	# stopgap's own fixed contents, unrelated to SupplyDropConfig (that's the
+	# purchasable enabler's tunable, not this one's).
+	var mags_by_weapon := {}
+	for id in player.owned_weapons():
+		mags_by_weapon[id] = 1
+	drop.setup(_hud, {"magazines_by_weapon": mags_by_weapon, "grenades": 1})
 	add_child(drop)
 	drop.global_position = SupplyDrop.find_spawn_point(
 		get_world_3d(), _crate_position, drop_radius, player.global_position)

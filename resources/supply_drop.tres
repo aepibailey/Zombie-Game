@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="SupplyDropConfig" load_steps=2 format=3]
+
+; FLAT default: ~70% of the M17-only bundle (2 mags @ 1pt + 1 grenade @ 6pt +
+; 1 IFAK @ 15pt = 23pts; 70% of 23 is 16.1, floored to 16). Owning more
+; weapons only ever raises the contents' real value, so 16 stays strictly
+; below it at 1, 2, 3, or 4 weapons owned — see
+; SupplyDropSystem._call()'s runtime assertion, which checks this on every
+; call rather than trusting the number to stay valid as prices are retuned.
+
+[ext_resource type="Script" path="res://scripts/SupplyDropConfig.gd" id="1_cfg"]
+
+[resource]
+script = ExtResource("1_cfg")
+pricing_mode = 0
+cost = 16
+discount_pct = 0.7
+delay = 20.0
+cooldown = 120.0
+mags_per_weapon = 2
+grenades_per_crate = 1
+ifaks_per_crate = 1
