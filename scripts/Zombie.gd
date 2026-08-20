@@ -124,6 +124,10 @@ var _repath_check := 0.0
 var _investigating_laser := false
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
+# UAV reveal state. See _build_uav_silhouette().
+var _uav_silhouette: MeshInstance3D
+var _uav_revealed := false   # what UAVSystem wants; distance cutoff can still hide it
+
 @onready var agent: NavigationAgent3D = $NavigationAgent3D
 @onready var body_mesh: MeshInstance3D = $Body
 @onready var head_hitbox: Area3D = $HeadHitbox
@@ -153,6 +157,7 @@ func _ready() -> void:
 	_apply_type_appearance()
 	_pick_wander_target()
 	_refresh_tint()
+	_build_uav_silhouette()
 
 ## Resize the capsule/head to this variant's silhouette and recolour it.
 ##
@@ -199,6 +204,68 @@ func _apply_type_appearance() -> void:
 		hm.height = t.head_radius * 2.0
 		hmesh.mesh = hm
 
+## The UAV's through-wall reveal: a simplified capsule clone, hidden by
+## default, toggled by UAVSystem — NOT a post-process pass, per the brief.
+## no_depth_test plus a high render_priority is the entire trick: the body
+## mesh keeps its normal depth-tested material for everyone without a UAV
+## up, and this sits alongside it, invisible until switched on.
+##
+## Built once at spawn time and just shown/hidden after that — cheaper than
+## rebuilding it per UAV call, and it naturally frees itself as a child when
+## the zombie dies (Zombie._die() calls queue_free() the same frame, no
+## corpse lingers — see the class docstring on `died`).
+func _build_uav_silhouette() -> void:
+	var t := zombie_type
+	var mesh := CapsuleMesh.new()
+	mesh.radius = t.body_radius
+	mesh.height = t.body_height
+
+	_uav_silhouette = MeshInstance3D.new()
+	_uav_silhouette.name = "UAVSilhouette"
+	_uav_silhouette.mesh = mesh
+	_uav_silhouette.position.y = t.body_center_y()
+	_uav_silhouette.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_uav_silhouette.visible = false
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = t.uav_silhouette_color
+	mat.no_depth_test = true
+	mat.render_priority = 100
+	_uav_silhouette.material_override = mat
+	add_child(_uav_silhouette)
+
+	UAVSystem.uav_state_changed.connect(_on_uav_state_changed)
+	# Zombies spawning mid-night while a UAV is already up are revealed on
+	# spawn, not just on the next activate/deactivate broadcast.
+	_set_uav_revealed(UAVSystem.active)
+
+func _on_uav_state_changed(is_active: bool) -> void:
+	_set_uav_revealed(is_active)
+
+func _set_uav_revealed(revealed: bool) -> void:
+	_uav_revealed = revealed
+	_update_uav_silhouette()
+
+## Re-evaluates visibility against the reveal flag AND the optional distance
+## cutoff every physics frame while revealed, so a zombie that wanders back
+## into range comes back onto the overlay without waiting for another
+## activate broadcast. Skipped entirely once _uav_revealed is false — this is
+## not a per-frame cost while no UAV is up.
+func _update_uav_silhouette() -> void:
+	if _uav_silhouette == null:
+		return
+	if not _uav_revealed:
+		_uav_silhouette.visible = false
+		return
+	var max_dist: float = UAVSystem.CONFIG.uav_max_reveal_distance
+	if max_dist <= 0.0:
+		_uav_silhouette.visible = true
+		return
+	var player := _get_player()
+	_uav_silhouette.visible = player != null \
+		and global_position.distance_to(player.global_position) <= max_dist
+
 ## Chase-entry screech. A player-facing tell only: deliberately NOT a
 ## NoiseManager event, so it never pulls other zombies in.
 func _build_screech() -> void:
@@ -232,6 +299,11 @@ func _physics_process(delta: float) -> void:
 		_hit_flash -= delta
 		if _hit_flash <= 0.0:
 			_refresh_tint()
+
+	# Only does anything while a UAV has revealed this zombie — see
+	# _update_uav_silhouette()'s own guard.
+	if _uav_revealed:
+		_update_uav_silhouette()
 
 	if _leap_cooldown > 0.0:
 		_leap_cooldown -= delta

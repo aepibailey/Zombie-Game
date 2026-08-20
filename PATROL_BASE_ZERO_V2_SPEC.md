@@ -1646,3 +1646,84 @@ expires; "in flight" means rounds still falling. Stacking is prevented by the
   exposure test per in-zone actor per tick and then lerps between 1.0 and 1.0.
   Wasted work, but optimising it means changing shared code for one consumer.
 - C-wire, the ditch and minefields are untouched by fire missions — see 11.1.
+
+## 12. Step 5 (rebuild): UAV
+
+Audited before writing anything: no `EnablerType` resource exists (confirmed
+by `EnablerManager`'s own docstring), no UAV code of any kind existed, and
+IFAK already existed in full (`Player.gd`, 40 HP over 4s, cancels on
+sprinting/firing/weapon-switch/death — not on taking damage) — so the
+originally-scoped "add IFAK" phase was skipped outright in favour of the
+existing item, per instruction.
+
+**Autoload, not a Main-instantiated node** — the one deliberate architectural
+break from `FireMissionSystem`'s pattern. Every `Zombie` needs to query and
+subscribe to UAV state without a reference threaded through the spawner
+(spawn-time reveal, and the deactivate broadcast on sunrise), which is
+exactly why `NoiseManager` is an autoload too. `UAVSystem` owns the call-in
+flow, the night-based gating, and the sunrise termination; it draws nothing
+itself.
+
+**Tunables live on `UAVConfig` (`resources/uav.tres`), not as `@export` vars
+on `UAVSystem` directly** — an autoload registered by script path has no
+`.tscn` for its own exports to be edited from, so they would never actually
+reach an inspector. `UAVSystem` preloads the resource as a `const` and reads
+it, the same reason `FireMissionConfig` exists instead of exports directly on
+`FireMissionSystem`. Silhouette colour is the one UAV-related tunable that
+does NOT live on `UAVConfig` — it's per zombie variant, so it's an export on
+`ZombieType` instead (`uav_silhouette_color`, walker default amber, leaper
+red).
+
+**Gating is night-number-based, not a timer.** `_available_reason()` blocks
+on three things in order: day, currently active, or `_used_night ==
+GameManager.night_number` (already called this same night). Comparing
+against `night_number` directly — the same pattern
+`EnablerManager.is_guaranteed_drop_night()` already used — means there's no
+separate "new night" listener to keep in sync; the block clears itself the
+moment `night_number` advances. No refund and no pro-rata exist anywhere in
+the call path — calling late in the night is worse value than calling early
+purely because nothing compensates for it.
+
+**Termination is exclusively `GameManager.phase_changed` with `phase ==
+Phase.DAY`** — there is no separate "sunrise" signal in this codebase
+(`phase_changed` fires on both transitions), so the UAV listens for the
+specific payload rather than "not night." No duration timer exists to race
+against it.
+
+**The radio call itself costs nothing beyond the shared mechanism.**
+`_call_uav()` calls `EnablerManager.start_cooldown(UAV_ID, 0.0)` —
+`seconds=0.0` deliberately skips creating a per-enabler cooldown entry (the
+night-based gate already covers that) while still triggering the global 10s
+lockout, reusing the exact function every other enabler calls rather than
+duplicating its lockout logic. The UAV itself is silent afterward; only
+`RadioMenu.commit_transmission()` at call time makes noise.
+
+**The reveal is two independent, deliberately un-post-processed pieces:**
+
+- **Through-wall silhouette**: a child `MeshInstance3D` capsule built once
+  per zombie at spawn (`Zombie._build_uav_silhouette()`), sized identically
+  to the real body capsule, `no_depth_test = true` plus `render_priority =
+  100`, hidden until told otherwise. No shader, no post-process pass. It
+  frees itself as a child the instant `Zombie._die()` runs `queue_free()` —
+  which happens synchronously, same frame, no corpse lingers — so "drops the
+  silhouette immediately" needed no extra code.
+- **Offscreen edge indicators**: a new `UAVOverlay` CanvasLayer (layer 12 —
+  above the HUD's 10, below the radio menu's 15), built entirely in code like
+  every other UI here. Each frame, while active, it walks the `"zombies"`
+  group, keeps whichever are off the visible viewport rect (an onscreen
+  contact's own silhouette already covers it), sorts by 3D distance to the
+  player, caps at `uav_offscreen_indicator_cap`, and draws a small triangle
+  per contact clamped to the screen border — coloured from the same
+  `ZombieType.uav_silhouette_color` the silhouette uses, so an indicator and
+  the silhouette it becomes never disagree about what's coming.
+
+Both zombie and overlay independently honour `uav_max_reveal_distance` (0 =
+unlimited): the zombie re-checks its own distance every physics frame while
+revealed (cheap — skipped entirely while not revealed), and the overlay
+filters candidates by the same distance before considering them for an edge
+indicator, so a capped reveal radius shrinks both halves of the picture
+identically.
+
+No new area-damage, noise, or pickup system was written for this phase —
+`PointsManager.spend_points()`, `EnablerManager`'s cooldown/lockout, and
+`RadioMenu.commit_transmission()` are the only substrates touched.

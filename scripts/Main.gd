@@ -103,6 +103,7 @@ var _build_mode: BuildMode
 var _radio_menu: RadioMenu
 var _target_painter: TargetPainter
 var _fire_missions: FireMissionSystem
+var _uav_overlay: UAVOverlay
 
 ## Radio-callable fire missions, in menu order. Adding one is a .tres plus a
 ## line in _fire_mission_list() — FireMissionSystem registers whatever it's
@@ -526,6 +527,17 @@ func _build_ui() -> void:
 	_fire_missions.missions = _fire_mission_list()
 	add_child(_fire_missions)
 	_fire_missions.setup(player, _hud, _target_painter, _radio_menu)
+
+	# UAV: an autoload, not a scene child — every Zombie subscribes to it
+	# directly (see Zombie._build_uav_silhouette()), so its state has to be
+	# reachable without a reference threaded through the spawner. Only the
+	# call-in wiring (HUD/radio refs, EnablerManager registration) happens
+	# here, same as every other enabler's setup().
+	_uav_overlay = UAVOverlay.new()
+	_uav_overlay.name = "UAVOverlay"
+	add_child(_uav_overlay)
+	_uav_overlay.setup(player)
+	UAVSystem.setup(_hud, _radio_menu)
 
 	_restore_base()
 

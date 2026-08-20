@@ -24,6 +24,7 @@ EnablerManager="*res://scripts/EnablerManager.gd"
 ObstacleCatalog="*res://scripts/ObstacleCatalog.gd"
 GameState="*res://scripts/GameState.gd"
 AreaDamageSystem="*res://scripts/AreaDamageSystem.gd"
+UAVSystem="*res://scripts/UAVSystem.gd"
 
 [input]
 

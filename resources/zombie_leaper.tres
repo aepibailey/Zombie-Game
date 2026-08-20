@@ -38,4 +38,5 @@ body_radius = 0.28
 body_height = 1.94
 head_radius = 0.12
 albedo_active = Color(0.72, 0.66, 0.3, 1)
+uav_silhouette_color = Color(0.95, 0.15, 0.1, 1)
 sfx_chase_entry = "res://assets/audio/zombie/leaper_screech.wav"

@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="UAVConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/UAVConfig.gd" id="1_cfg"]
+
+[resource]
+script = ExtResource("1_cfg")
+uav_cost = 60
+uav_max_reveal_distance = 0.0
+uav_offscreen_indicator_cap = 12

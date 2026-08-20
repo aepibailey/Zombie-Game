@@ -69,6 +69,13 @@ class_name ZombieType
 @export var head_radius: float = 0.12
 @export var albedo_active: Color = Color(0.25, 0.6, 0.25)
 
+# --- UAV reveal --------------------------------------------------------------
+## Through-wall silhouette color while a UAV is on station (see UAVSystem and
+## Zombie._build_uav_silhouette()). This IS the readability payoff of the
+## reveal — variants must read apart at a glance, not just by proximity to the
+## player. Default is the walker's amber; the leaper overrides to red.
+@export var uav_silhouette_color: Color = Color(1.0, 0.75, 0.1)
+
 # --- Audio -----------------------------------------------------------------
 ## Played once on entering Chase. Deliberately NOT routed through
 ## NoiseManager — it's a player-facing tell, not a zombie-facing alert, and

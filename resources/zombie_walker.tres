@@ -33,4 +33,5 @@ body_radius = 0.4
 body_height = 1.56
 head_radius = 0.12
 albedo_active = Color(0.25, 0.6, 0.25, 1)
+uav_silhouette_color = Color(1.0, 0.75, 0.1, 1)
 sfx_chase_entry = ""
