@@ -126,7 +126,10 @@ func _on_painted(cfg: FireMissionConfig, point: Vector3) -> void:
 		return
 
 	_active_mission_id = cfg.id
-	EnablerManager.start_cooldown(cfg.id, cfg.cooldown)
+	# Cooldown does NOT start here — see _finish_mission(). Starting it at
+	# call-in would make a longer strike silently eat into its own recharge
+	# window, so the countdown begins on last round impact instead, when the
+	# barrage is actually over.
 	# The handset noise, from the radio's own shared constant — identical for
 	# every transmission regardless of what is being called in.
 	_radio.commit_transmission()
@@ -222,11 +225,14 @@ func _shake_for(impact: Vector3) -> float:
 		return 0.0
 	return lerpf(0.9, 0.05, clampf(d / 60.0, 0.0, 1.0))
 
-## Last round has landed. Releases the one-mission lock, and — for a mission
-## configured with a WP layer — leaves the burn zone behind. Phase 3 fills
-## _spawn_wp_zone(); a wp_radius of 0 means this is a pure HE mission and
-## nothing is left over.
+## Last round has landed. Starts the mission's cooldown HERE, not at call-in
+## — see _on_painted() — so the recharge window means the same thing
+## regardless of how long the strike itself ran. Releases the one-mission
+## lock, and — for a mission configured with a WP layer — leaves the burn
+## zone behind; a wp_radius of 0 means this is a pure HE mission and nothing
+## is left over.
 func _finish_mission(cfg: FireMissionConfig, centre: Vector3) -> void:
+	EnablerManager.start_cooldown(cfg.id, cfg.cooldown)
 	if cfg.wp_radius > 0.0:
 		_spawn_wp_zone(cfg, centre)
 	else:

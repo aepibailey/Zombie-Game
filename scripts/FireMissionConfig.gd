@@ -34,11 +34,16 @@ class_name FireMissionConfig
 ## Time of flight: delay between confirming the paint and the FIRST round
 ## landing. The window the player has to break contact or reposition.
 @export var time_of_flight: float = 8.0
-## How many rounds the battery fires.
+## How many rounds the battery fires. NOT derived from mission_duration —
+## the two are independent knobs, so retune them TOGETHER. The average gap
+## between impacts is mission_duration / round_count; changing one alone
+## changes that density (a longer mission at the same round_count thins the
+## fire out, a shorter one bunches it up).
 @export var round_count: int = 6
 ## Wall-clock span the rounds land across, first to last. Impacts are
 ## scattered randomly within this rather than evenly spaced — a battery
-## firing, not a metronome.
+## firing, not a metronome. See round_count's note: scale both together to
+## keep the same beaten-zone density over a longer or shorter strike.
 @export var mission_duration: float = 9.0
 ## The paint circle radius, and the TRUE OUTER BOUND of everything this
 ## mission can damage — ground truth, not an approximation. The player must

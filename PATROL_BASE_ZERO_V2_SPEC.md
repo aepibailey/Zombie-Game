@@ -1495,13 +1495,17 @@ after *any* transmission, so three calls can't be chained back to back. "You
 are still on the handset", distinct from and much shorter than any
 per-enabler cooldown.
 
-Cooldowns start at **paint-confirm**, not menu selection — so a cancelled
-paint consumes none.
+Cooldowns start at **last round impact**, not paint-confirm or menu
+selection — see `_finish_mission()`. This means `cooldown` is the entire
+recharge window the number on the tin promises, regardless of how long the
+strike itself runs; it does not shrink as a strike is retuned longer. (A
+cancelled paint still consumes nothing — the cooldown call happens far later
+in the flow, well past the point a cancel could have occurred.)
 
-| | Cost | Cooldown | Effective gap after last round |
-|---|---|---|---|
-| 120mm Mortar | 50 | 180s | ~163s |
-| Shake-and-Bake | 80 | 240s | ~223s |
+| | Cost | Cooldown (from last impact) |
+|---|---|---|
+| 120mm Mortar | 50 | 180s |
+| Shake-and-Bake | 80 | 240s |
 
 **One mission in flight at a time**, shared across both — enforced by an
 `available_fn` that greys the row to `IN FLIGHT`, and re-checked at confirm
@@ -1509,12 +1513,19 @@ because the menu closed several seconds earlier.
 
 ### 11.5 The 120mm mission
 
-Paint → confirm → **8s time of flight** → **6 rounds over 9s**. Round *times*
-are randomized within the window and sorted (the first always lands at t=0, so
-"splash in 8 seconds" is honest); round *positions* are scattered on the disc
-with a centre bias. A battery firing, not a metronome. Each impact re-seats
-onto actual ground, so scatter that walks onto a structure or into the ditch
-still detonates at the surface.
+Paint → confirm → **8s time of flight** → **12 rounds over 18s**. Round
+*times* are randomized within the window and sorted (the first always lands
+at t=0, so "splash in 8 seconds" is honest); round *positions* are scattered
+on the disc with a centre bias. A battery firing, not a metronome. Each
+impact re-seats onto actual ground, so scatter that walks onto a structure or
+into the ditch still detonates at the surface.
+
+`round_count` and `mission_duration` were doubled together from an earlier
+6/9s pass — never independently. The average gap between impacts is
+`mission_duration / round_count`, so scaling only one would thin the beaten
+zone out (longer duration, same rounds) or bunch it up (more rounds, same
+duration); doubling both keeps that density exactly where it was and simply
+runs the barrage twice as long.
 
 **`effect_radius` (10m) IS ground truth — the paint circle the player aims
 with, and the true outer bound of everything the mission can damage. The
@@ -1530,10 +1541,11 @@ a mission is ever tuned with `effect_radius` smaller than `he_profile.
 max_radius`, since that would force every round onto the paint point.
 
 Both `effect_radius` and `he_profile.max_radius` were halved together from an
-original 20m/14m pass (along with WP's `wp_radius`, 15m → 7.5m) — same six
-rounds, same timing, same per-round damage, now landing in a quarter of the
-original area. The beaten zone reads as denser and more reliably lethal, and
-a player just outside the painted circle takes zero damage, by construction.
+original 20m/14m pass (along with WP's `wp_radius`, 15m → 7.5m) — same round
+count, same cadence, same per-round damage at that point, landing in a
+quarter of the original area. The beaten zone reads as denser and more
+reliably lethal, and a player just outside the painted circle takes zero
+damage, by construction.
 
 Per round, from `mortar_he.tres`:
 
@@ -1552,8 +1564,9 @@ Per round, from `mortar_he.tres`:
   wall. Calling fire on your own perimeter costs you the perimeter.
 
 **Noise 60m per round**, larger than any weapon (M249 47m) or the grenade
-(50m). Six rounds is six separate pulls — **the mission is also a lure**, and
-that is a feature the player can use deliberately.
+(50m). Every round is its own pull, and a full mission is now 12 of them
+over 18s — **the mission is also a lure**, and that is a feature the player
+can use deliberately.
 
 ### 11.6 Friendly fire
 
@@ -1565,9 +1578,12 @@ would have required *adding* code.
 - One round is lethal to the 100 HP player anywhere inside **~5.5m**
   uncovered, and inside **~4.5m** through cover.
 - WP kills the player in **4.0s** of standing in it.
-- The 8s time of flight is the entire mitigation, and the halved footprint
-  makes it a more generous one than before: clearing the painted circle now
-  means covering half the ground it used to. That gap *is* the enabler.
+- The 8s time of flight is the entire mitigation *before* the first round
+  lands, and the halved footprint makes it a more generous one than before:
+  clearing the painted circle now means covering half the ground it used to.
+  Once the barrage starts, it now keeps falling for 18s instead of 9s — the
+  window to be caught in it is longer, by design; the window to get clear of
+  it beforehand is unchanged.
 
 ### 11.7 Shake-and-bake (WP layer)
 

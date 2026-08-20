@@ -9,8 +9,15 @@
 ; one round reaches from where it lands, see mortar_he.tres), so a round
 ; landing at the very edge of its scatter locus still can't blast past this
 ; circle. See FireMissionSystem._scatter_radius(). Both this and max_radius
-; were halved together from the original 20m/14m pass — same six rounds,
-; same timing, same per-round damage, landing in half the area.
+; were halved together from an earlier pass (20m/14m), landing the same
+; number of rounds in a quarter of the original area.
+;
+; ROUND_COUNT (12) and MISSION_DURATION (18s) are doubled together from an
+; earlier 6/9s pass, and must stay paired: the average gap between impacts is
+; mission_duration / round_count, so scaling one without the other changes
+; the beaten zone's density. Doubling both keeps that gap — and per-round
+; damage, and the footprint above — exactly as they were; the strike simply
+; runs twice as long.
 ;
 ; wp_radius 0 = pure HE, no burn zone left behind. Shake-and-bake is a
 ; separate config with the same pipeline and a nonzero wp_radius.
@@ -25,8 +32,8 @@ display_name = "120mm Mortar"
 cost = 50
 cooldown = 180.0
 time_of_flight = 8.0
-round_count = 6
-mission_duration = 9.0
+round_count = 12
+mission_duration = 18.0
 effect_radius = 10.0
 he_profile = ExtResource("2_he")
 wp_radius = 0.0

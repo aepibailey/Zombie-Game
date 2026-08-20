@@ -36,8 +36,9 @@
 ; intended: calling fire on your own perimeter should cost you the perimeter.
 ;
 ; NOISE_RADIUS 60m per round, larger than any weapon (M249 47m) or the
-; grenade (50m). Six rounds means six pulls — the mission is also a lure, and
-; that is a feature the player can use deliberately.
+; grenade (50m). Every round is its own pull — a full mission (see
+; mission_mortar.tres for round_count) is also a lure, and that is a feature
+; the player can use deliberately.
 
 [ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
 
