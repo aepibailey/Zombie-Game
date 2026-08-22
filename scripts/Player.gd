@@ -430,6 +430,13 @@ func _ready() -> void:
 	# Faction-blind: the area-damage system hits everything in this group,
 	# including whoever threw the grenade.
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
+	# What zombies chase, attack and leap at. The sole member today.
+	#
+	# NOT joined to Damageable.GROUP_BULLET, and that omission is load-bearing:
+	# that group is what a PLAYER ROUND can damage, and the player is kept out
+	# of it so a round can never resolve its own shooter as a target. The two
+	# groups are different axes — see Damageable.gd.
+	add_to_group(Zombie.GROUP_HOSTILE_TARGET)
 	# Collide with the world (layer 1) AND player-only barriers (layer 5, used
 	# by C-wire). Zombies mask layer 1 only, so wire stops us and not them.
 	collision_mask = 1 | Obstacle.PLAYER_BARRIER_LAYER | Obstacle.SOLID_NO_NAV_LAYER

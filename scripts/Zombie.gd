@@ -8,6 +8,31 @@ const SFX_DEATH := "res://audio/zombie_death.wav"
 const FOOTSTEP_DIR := "res://assets/audio/zombie/"
 const FOOTSTEP_COUNT := 5
 
+## What a zombie chases, attacks, leaps at and paths toward. The player is the
+## sole member today; an allied fighter joins it later with no change to this
+## file.
+##
+## DELIBERATELY NOT AreaDamageSystem.GROUP_DAMAGEABLE and deliberately not
+## Damageable.GROUP_BULLET. Those are the blast axis and the bullet axis; this
+## is the AI-target axis, and merging any two of them would immediately make a
+## zombie a valid target for another zombie. See Damageable.gd's own note on
+## why the axes stay separate.
+const GROUP_HOSTILE_TARGET := "hostile_target"
+
+## LIVENESS IS EXPRESSED BY GROUP MEMBERSHIP, NOT BY is_alive().
+##
+## _acquire_target() deliberately does NOT filter on is_alive(). Player's
+## is_alive() is a ONE-FRAME DEATH LATCH (`not _died_this_frame`) rather than a
+## persistent state — take_damage() respawns synchronously at 0 HP — so
+## filtering on it would leave every chasing zombie with no target for exactly
+## one frame on player death, dropping them all to Wander and re-rolling their
+## wander targets. That is a visible behavioural change, and this refactor's
+## binding constraint is that behaviour with one group member is identical to
+## before it.
+##
+## So the contract is: a member of this group is a valid target. Anything that
+## dies permanently removes itself from the group as it dies.
+
 # --- Footstep audio (tunable per-instance in the inspector) ---------------
 ## Attenuation: inverse-distance so proximity reads sharply in the last few
 ## metres. First audible ~20m; tune by ear with unit_size / volume_db.
@@ -73,6 +98,20 @@ const REPATH_CHECK_INTERVAL := 1.0
 ## de-facto stationary prop.
 @export var min_speed_mult: float = 0.30   # never slower than 30% of base
 
+# --- Target re-evaluation --------------------------------------------------
+## How often, in seconds, this zombie reconsiders WHICH hostile target it is
+## pursuing.
+##
+## 0.0 = re-evaluate on every query, which is exactly what the pre-abstraction
+## code did (the old _get_player() ran a fresh group lookup at every call
+## site, every frame). It is the default precisely because any positive value
+## would change behaviour on day one, and this refactor must not.
+##
+## Exported now, unused-in-effect at 0.0, so the step that adds a second
+## target to the group can tune re-acquisition cadence without reopening this
+## file.
+@export var target_reevaluate_interval: float = 0.0
+
 ## Set by the spawner BEFORE add_child(); _ready() seeds `hp` from it.
 var max_hp := BASE_HP
 var hp := BASE_HP
@@ -95,7 +134,10 @@ var _attack_timer := 0.0
 var _repath_timer := 0.0
 var _target_pos: Vector3 = Vector3.ZERO      # fixed nav goal (wander pt or noise loc)
 var _last_noise_radius := 0.0                # radius of the noise being investigated
-var _last_known_player: Vector3 = Vector3.ZERO
+var _last_known_target: Vector3 = Vector3.ZERO
+## Populated only when target_reevaluate_interval > 0.0 — see _acquire_target().
+var _target_cache: Node3D = null
+var _target_timer := 0.0
 var _hit_flash := 0.0                         # brief white flash timer when shot
 var _dead := false                            # set once, in _die()
 
@@ -135,6 +177,14 @@ var _uav_revealed := false   # what UAVSystem wants; distance cutoff can still h
 func _ready() -> void:
 	add_to_group("zombies")
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
+	# What a PLAYER ROUND can damage. Registered now, read by nothing yet —
+	# _fire_ray still tests the legacy "zombies"/"zombie_heads" groups until
+	# phase 2 swaps it over, so this is additive and changes no behaviour.
+	#
+	# NOT joined to GROUP_HOSTILE_TARGET, and that omission is load-bearing:
+	# that group is what zombies HUNT, so a zombie in it would be hunted by
+	# other zombies. See Damageable.gd on why the axes stay separate.
+	add_to_group(Damageable.GROUP_BULLET)
 	# A hand-placed zombie with no type assigned still has to work.
 	if zombie_type == null:
 		zombie_type = load(DEFAULT_TYPE)
@@ -146,6 +196,11 @@ func _ready() -> void:
 	# collider itself — no hit-height guessing.
 	head_hitbox.add_to_group("zombie_heads")
 	head_hitbox.set_meta("zombie", self)
+	# Generic head registration, additive alongside the legacy pair above.
+	# Phase 2 switches _fire_ray onto these and the legacy two come out then;
+	# carrying both for one phase keeps this step provably behaviour-neutral.
+	head_hitbox.add_to_group(Damageable.GROUP_BULLET_HEAD)
+	head_hitbox.set_meta(Damageable.HEAD_META, self)
 	hp = max_hp   # spawner set max_hp for this night's scaling
 	_build_footsteps()
 	_build_screech()
@@ -262,9 +317,13 @@ func _update_uav_silhouette() -> void:
 	if max_dist <= 0.0:
 		_uav_silhouette.visible = true
 		return
-	var player := _get_player()
-	_uav_silhouette.visible = player != null \
-		and global_position.distance_to(player.global_position) <= max_dist
+	# The PLAYER specifically, not this zombie's AI target: the reveal radius
+	# is a property of the player's own UAV feed. Looked up by group rather
+	# than through _acquire_target(), which would measure to a fighter once
+	# fighters exist.
+	var viewer := get_tree().get_first_node_in_group("player") as Node3D
+	_uav_silhouette.visible = viewer != null \
+		and global_position.distance_to(viewer.global_position) <= max_dist
 
 ## Chase-entry screech. A player-facing tell only: deliberately NOT a
 ## NoiseManager event, so it never pulls other zombies in.
@@ -299,6 +358,11 @@ func _physics_process(delta: float) -> void:
 		_hit_flash -= delta
 		if _hit_flash <= 0.0:
 			_refresh_tint()
+
+	# Only meaningful when a re-evaluation cadence was configured; at the 0.0
+	# default _acquire_target() ignores the cache entirely.
+	if _target_timer > 0.0:
+		_target_timer -= delta
 
 	# Only does anything while a UAV has revealed this zombie — see
 	# _update_uav_silhouette()'s own guard.
@@ -370,7 +434,7 @@ func _do_investigate(delta: float) -> void:
 	# investigation deliberately never looks for the player: that is what makes
 	# crouch-past-undetected work, and re-adding it globally would reintroduce
 	# the old "investigate silently becomes a homing chase" bug.
-	if _investigating_laser and _can_see_player():
+	if _investigating_laser and _can_see_target():
 		_investigating_laser = false
 		_enter_chase()
 		return
@@ -384,61 +448,61 @@ func _do_investigate(delta: float) -> void:
 		_pick_wander_target()
 
 ## Only used while investigating a laser dot.
-func _can_see_player() -> bool:
-	var player: Player = _get_player()
-	if player == null:
+func _can_see_target() -> bool:
+	var target := _acquire_target()
+	if target == null:
 		return false
-	if global_position.distance_to(player.global_position) > LASER_INVESTIGATE_SIGHT:
+	if global_position.distance_to(target.global_position) > LASER_INVESTIGATE_SIGHT:
 		return false
-	return _has_los_to(player)
+	return _has_los_to(target)
 
 func _do_chase(delta: float) -> void:
-	var player: Player = _get_player()
-	if player == null:
+	var target := _acquire_target()
+	if target == null:
 		state = State.WANDER
 		_pick_wander_target()
 		return
 
 	_chase_elapsed += delta
-	var dist := global_position.distance_to(player.global_position)
-	if _has_los_to(player):
-		_last_known_player = player.global_position
+	var dist := global_position.distance_to(target.global_position)
+	if _has_los_to(target):
+		_last_known_target = target.global_position
 
 	if dist <= ATTACK_RANGE:
 		state = State.ATTACK
 		_attack_timer = 0.0
 		return
 
-	if dist > CHASE_LOSE_RANGE and not _has_los_to(player):
+	if dist > CHASE_LOSE_RANGE and not _has_los_to(target):
 		# Lost them — go poke around where we last saw them.
 		state = State.INVESTIGATE
 		_investigate_timer = INVESTIGATE_TIMEOUT
-		_target_pos = _last_known_player
+		_target_pos = _last_known_target
 		return
 
 	# Blocked by something leapable? Going OVER beats going around or through,
 	# so this is evaluated before the break-the-wall fallback. Returns false
 	# outright for non-leapers, so the walker's path here is unchanged.
-	if _try_enter_leap(player):
+	if _try_enter_leap(target):
 		return
 
 	# Walled in? Break through instead of milling against the sandbags.
 	_repath_check -= delta
 	if _repath_check <= 0.0:
 		_repath_check = REPATH_CHECK_INTERVAL
-		if not _player_reachable() and _try_enter_attack_structure():
+		if not _target_reachable() and _try_enter_attack_structure():
 			return
 
-	_move_toward(player.global_position, _current_chase_speed(), delta)
+	_move_toward(target.global_position, _current_chase_speed(), delta)
 
 func _do_attack(delta: float) -> void:
-	var player: Player = _get_player()
-	if player == null:
+	var target := _acquire_target()
+	if target == null:
 		state = State.WANDER
 		_pick_wander_target()
 		return
 
-	var dist := global_position.distance_to(player.global_position)
+	var dist := global_position.distance_to(target.global_position)
 	if dist > ATTACK_RANGE * 1.3:
 		_enter_chase()
 		return
@@ -446,13 +510,13 @@ func _do_attack(delta: float) -> void:
 	# Stop and face the target while swinging.
 	velocity.x = 0.0
 	velocity.z = 0.0
-	_face(player.global_position)
+	_face(target.global_position)
 
 	_attack_timer -= delta
 	if _attack_timer <= 0.0:
 		_attack_timer = zombie_type.melee_cooldown
-		if player.has_method("take_damage"):
-			player.take_damage(zombie_type.melee_damage, global_position)
+		if target.has_method("take_damage"):
+			target.take_damage(zombie_type.melee_damage, global_position)
 
 # --- Obstacle states -------------------------------------------------------
 ## Held in wire: immobile and permanent, but still dangerous at melee range.
@@ -460,15 +524,22 @@ func _do_attack(delta: float) -> void:
 func _do_entangled(delta: float) -> void:
 	velocity.x = 0.0
 	velocity.z = 0.0
-	var player: Player = _get_player()
-	if player == null:
+	var target := _acquire_target()
+	if target == null:
 		return
-	if global_position.distance_to(player.global_position) <= ATTACK_RANGE:
-		_face(player.global_position)
+	if global_position.distance_to(target.global_position) <= ATTACK_RANGE:
+		_face(target.global_position)
 		_attack_timer -= delta
 		if _attack_timer <= 0.0:
 			_attack_timer = zombie_type.melee_cooldown
-			player.take_damage(zombie_type.melee_damage, global_position)
+			# Guarded to match _do_attack(): a target that doesn't implement
+			# take_damage() is simply never damaged rather than crashing the
+			# state machine. The two melee sites disagreed before this
+			# refactor — only _do_attack() guarded — which was harmless while
+			# the sole target was the player but would not survive a second
+			# member of the group.
+			if target.has_method("take_damage"):
+				target.take_damage(zombie_type.melee_damage, global_position)
 
 ## Fell into a ditch pit. NavigationAgent3D is never touched here — no target
 ## is ever set and get_next_path_position() is never called, so there is no
@@ -529,7 +600,7 @@ func _do_attack_structure(delta: float) -> void:
 	_repath_check -= delta
 	if _repath_check <= 0.0:
 		_repath_check = REPATH_CHECK_INTERVAL
-		if _player_reachable():
+		if _target_reachable():
 			_structure_target = null
 			_enter_chase()
 			return
@@ -549,17 +620,19 @@ func _do_attack_structure(delta: float) -> void:
 		_structure_target.take_structure_damage(structure_damage, global_position)
 
 ## True when the nav agent can reach the player rather than stopping short.
-func _player_reachable() -> bool:
-	var player: Player = _get_player()
-	if player == null:
+func _target_reachable() -> bool:
+	var target := _acquire_target()
+	if target == null:
 		return false
-	var target := NavigationServer3D.map_get_closest_point(
-		agent.get_navigation_map(), player.global_position)
+	# `goal`, not `target`: the parameter is the entity, this is the navmesh
+	# point nearest to it. Same distinction as in _path_is_obstructed().
+	var goal := NavigationServer3D.map_get_closest_point(
+		agent.get_navigation_map(), target.global_position)
 	var path := NavigationServer3D.map_get_path(
-		agent.get_navigation_map(), global_position, target, true)
+		agent.get_navigation_map(), global_position, goal, true)
 	if path.size() == 0:
 		return false
-	return path[path.size() - 1].distance_to(target) < 2.0
+	return path[path.size() - 1].distance_to(goal) < 2.0
 
 ## Called by Chase when the path stops short of the player: find a sandbag
 ## section to break through.
@@ -619,7 +692,7 @@ func _leap_arc_time() -> float:
 ## Every one of the five gate conditions must hold. The expensive ones (path
 ## query, arc trace) are checked last so the common case — a leaper running
 ## at an unobstructed player — costs almost nothing.
-func _try_enter_leap(player: Player) -> bool:
+func _try_enter_leap(target: Node3D) -> bool:
 	var t := zombie_type
 	# 1. can this variant leap at all, 2. is it off cooldown
 	if not t.can_leap or _leap_cooldown > 0.0:
@@ -628,16 +701,16 @@ func _try_enter_leap(player: Player) -> bool:
 	# 3. Is the path actually obstructed? Never leap at an open player: the
 	#    leap is traversal, not an attack. A straight run that the navmesh
 	#    agrees with means there is nothing to leap over.
-	var straight := global_position.distance_to(player.global_position)
+	var straight := global_position.distance_to(target.global_position)
 	if straight < 2.0 or straight > t.max_horizontal_distance * 2.5:
 		return false
-	if not _path_is_obstructed(player, t.leap_path_ratio_threshold):
+	if not _path_is_obstructed(target, t.leap_path_ratio_threshold):
 		return false
 
 	# 4. Is the obstruction close enough to clear?
-	var to_player := player.global_position - global_position
-	to_player.y = 0.0
-	var dir := to_player.normalized()
+	var to_target := target.global_position - global_position
+	to_target.y = 0.0
+	var dir := to_target.normalized()
 	if not _obstruction_within(dir, t.max_horizontal_distance):
 		return false
 
@@ -651,17 +724,19 @@ func _try_enter_leap(player: Player) -> bool:
 
 ## True when the navmesh route is meaningfully longer than the straight line
 ## (it's detouring around something) or there's no route at all.
-func _path_is_obstructed(player: Player, ratio_threshold: float) -> bool:
-	var straight := global_position.distance_to(player.global_position)
+func _path_is_obstructed(target: Node3D, ratio_threshold: float) -> bool:
+	var straight := global_position.distance_to(target.global_position)
 	if straight <= 0.01:
 		return false
 	var map := agent.get_navigation_map()
-	var target := NavigationServer3D.map_get_closest_point(map, player.global_position)
-	var path := NavigationServer3D.map_get_path(map, global_position, target, true)
+	# `goal`, not `target`: the parameter is the entity, this is the navmesh
+	# point nearest to it.
+	var goal := NavigationServer3D.map_get_closest_point(map, target.global_position)
+	var path := NavigationServer3D.map_get_path(map, global_position, goal, true)
 	if path.size() < 2:
 		return true   # no route at all — definitively blocked
-	# Path stops short of the player: blocked.
-	if path[path.size() - 1].distance_to(target) > 2.0:
+	# Path stops short of the target: blocked.
+	if path[path.size() - 1].distance_to(goal) > 2.0:
 		return true
 	var walked := 0.0
 	for i in range(1, path.size()):
@@ -777,9 +852,9 @@ func _do_leap_recover(delta: float) -> void:
 	# the player instead of stranding. The cooldown is waived for exactly this
 	# case — being stuck on a roof is worse than an off-cadence leap.
 	if not _on_navmesh():
-		var player: Player = _get_player()
-		if player != null:
-			var away := player.global_position - global_position
+		var target := _acquire_target()
+		if target != null:
+			var away := target.global_position - global_position
 			away.y = 0.0
 			if away.length() > 0.5:
 				_leap_cooldown = 0.0
@@ -871,20 +946,60 @@ func _face(target: Vector3) -> void:
 # NOTE: line-of-sight is only consulted from Chase (to track/lose a target the
 # zombie already has a confirmed fix on). Wander/Investigate never look at the
 # player, so noise events are the only thing that can move an un-alerted zombie.
-func _has_los_to(player: Node3D) -> bool:
+func _has_los_to(target: Node3D) -> bool:
 	var space := get_world_3d().direct_space_state
 	var from := global_position + Vector3(0, 1.4, 0)
-	var to := player.global_position + Vector3(0, 1.2, 0)
+	var to := target.global_position + Vector3(0, 1.2, 0)
 	var q := PhysicsRayQueryParameters3D.create(from, to)
 	q.exclude = [get_rid()]
 	var hit := space.intersect_ray(q)
-	return hit and hit.collider == player
+	return hit and hit.collider == target
 
-func _get_player() -> Player:
-	var players := get_tree().get_nodes_in_group("player")
-	if players.is_empty():
-		return null
-	return players[0] as Player
+## The hostile target this zombie is currently pursuing, or null.
+##
+## THE INTERFACE A TARGET MUST SATISFY is deliberately small, and is the whole
+## contract this file depends on:
+##   - it is a Node3D (global_position is read constantly)
+##   - it IS the collider, not the owner of one (_has_los_to compares the
+##     raycast's hit.collider against it by identity)
+##   - take_damage(amount: int, source_pos) — guarded with has_method() at
+##     both melee sites, so a target without it is simply never damaged
+##     rather than crashing the state machine
+##
+## Returned as Node3D rather than a widened base class: GDScript has no
+## interfaces, and duck-typing against a documented contract is what
+## AreaDamageSystem already does for take_area_damage()/is_alive(). Every
+## internal use goes through this one boundary.
+func _acquire_target() -> Node3D:
+	# Cache only when a cadence was actually asked for. At the 0.0 default
+	# this branch never runs and every query re-scans, matching the old
+	# per-call _get_player() exactly.
+	if target_reevaluate_interval > 0.0 and _target_timer > 0.0 \
+			and _target_cache != null and is_instance_valid(_target_cache):
+		return _target_cache
+	_target_cache = _nearest_hostile_target()
+	_target_timer = target_reevaluate_interval
+	return _target_cache
+
+## Nearest member of the hostile-target group, by 3D distance.
+##
+## With exactly one member this returns that member, which is what the old
+## _get_player()'s `players[0]` did — so single-target behaviour is unchanged.
+## See GROUP_HOSTILE_TARGET's note on why there is no is_alive() filter here.
+func _nearest_hostile_target() -> Node3D:
+	var best: Node3D = null
+	var best_d := INF
+	for node in get_tree().get_nodes_in_group(GROUP_HOSTILE_TARGET):
+		if not (node is Node3D):
+			continue
+		var candidate: Node3D = node as Node3D
+		if not is_instance_valid(candidate):
+			continue
+		var d := global_position.distance_to(candidate.global_position)
+		if d < best_d:
+			best_d = d
+			best = candidate
+	return best
 
 # --- External triggers ----------------------------------------------------
 ## Noise bus callback: alerts to a location, not to the player specifically.
@@ -931,9 +1046,9 @@ func _enter_chase() -> void:
 		_chase_elapsed = 0.0
 		if _leap_screech and _leap_screech.stream:
 			_leap_screech.play()
-	var player: Player = _get_player()
-	if player:
-		_last_known_player = player.global_position
+	var target := _acquire_target()
+	if target:
+		_last_known_target = target.global_position
 
 # --- Footstep audio -------------------------------------------------------
 func _build_footsteps() -> void:
