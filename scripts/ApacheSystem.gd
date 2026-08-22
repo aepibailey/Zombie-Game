@@ -41,8 +41,20 @@ var _entry: Dictionary
 var _sortie: Apache = null
 ## The painted patrol box currently being serviced. Held HERE rather than on
 ## the aircraft, because it is what targeting reads and the aircraft must
-## never be involved in targeting. (Consumed in phase 3.)
+## never be involved in targeting.
 var _box_centre := Vector3.ZERO
+
+# --- Gunnery state ------------------------------------------------------------
+## The gun cycles ACQUIRING -> SLEWING -> FIRING -> ACQUIRING for as long as
+## the aircraft is on station and has ammunition. None of these transitions
+## consults the aircraft's position; the only thing the airframe is ever asked
+## is whether it has finished transit (a state, not a place).
+enum Gun { ACQUIRING, SLEWING, FIRING }
+
+var _gun_state: int = Gun.ACQUIRING
+var _gun_timer := 0.0
+var _target: Zombie = null
+var _rounds_left := 0
 
 func setup(player: Player, hud: HUD, radio: RadioMenu, painter: TargetPainter) -> void:
 	_player = player
@@ -155,6 +167,11 @@ func _on_painted(centre: Vector3) -> void:
 		config.transit_time_in, config.total_rounds, config.time_on_station])
 
 	_box_centre = centre
+	# Ammunition is the sortie's, not the aircraft's — the actor is a visual
+	# and holds no combat state at all.
+	_rounds_left = config.total_rounds
+	_target = null
+	_gun_state = Gun.ACQUIRING
 	# Parented to the CURRENT SCENE, not to this system: the aircraft is a
 	# world fixture for the length of its sortie and must not move or free
 	# with anything else. Same reasoning as WhitePhosphorusZone and the
@@ -173,6 +190,117 @@ func _on_station() -> void:
 ## so "cooldown" means the same thing across every fire support enabler.
 func _on_departed() -> void:
 	_sortie = null
+	_target = null
+	_gun_state = Gun.ACQUIRING
 	EnablerManager.start_cooldown(APACHE_ID, config.apache_cooldown)
 	_hud.show_message("APACHE — OFF STATION.")
 	print("[APACHE] offmap — cooldown %.0fs begins now" % config.apache_cooldown)
+
+# --- Gunnery ------------------------------------------------------------------
+## The engagement loop. Runs only while the aircraft is ON STATION — a state
+## query, NOT a position query. The airframe's location is never consulted
+## here or anywhere below it.
+func _process(delta: float) -> void:
+	if _sortie == null or not is_instance_valid(_sortie) or not _sortie.is_on_station():
+		return
+	# Winchester: leave immediately rather than orbiting out the station
+	# clock with an empty gun.
+	if _rounds_left <= 0:
+		_hud.show_message("APACHE — WINCHESTER, RTB.")
+		_sortie.depart_now("winchester")
+		return
+
+	match _gun_state:
+		Gun.ACQUIRING:
+			_tick_acquire()
+		Gun.SLEWING:
+			_tick_slew(delta)
+		Gun.FIRING:
+			_tick_firing(delta)
+
+## Re-evaluated from scratch every cycle, so the gun always services the
+## current highest-priority target rather than staying fixated on one.
+func _tick_acquire() -> void:
+	_target = _acquire_target(_box_centre, config.patrol_radius,
+		_player.global_position)
+	if _target == null:
+		return   # nothing serviceable this frame; poll again next
+	_gun_state = Gun.SLEWING
+	_gun_timer = config.slew_time
+
+func _tick_slew(delta: float) -> void:
+	# A target that dies, leaves the box, or steps into the bubble mid-slew is
+	# dropped and the cycle restarts rather than firing at where it was.
+	if not _is_serviceable(_target, _player.global_position):
+		_target = null
+		_gun_state = Gun.ACQUIRING
+		return
+	_gun_timer -= delta
+	if _gun_timer <= 0.0:
+		_fire_burst()
+		_gun_state = Gun.FIRING
+		_gun_timer = config.burst_duration
+
+func _tick_firing(delta: float) -> void:
+	_gun_timer -= delta
+	if _gun_timer <= 0.0:
+		_target = null
+		_gun_state = Gun.ACQUIRING
+
+## THE TARGETING FUNCTION. Its signature is the enforcement mechanism for the
+## standoff constraint: it receives the box, its radius, and the player's live
+## position — and NOT the aircraft or its transform. A distance check between
+## the airframe and a candidate is not expressible here, so the aircraft can
+## never be "too far" to shoot, and never has to fly anywhere to engage.
+##
+## Priority is CLOSEST TO THE PLAYER among valid targets: the gun services
+## whatever is about to reach the player first.
+func _acquire_target(box_centre: Vector3, box_radius: float,
+		player_pos: Vector3) -> Zombie:
+	var best: Zombie = null
+	var best_d := INF
+	for node in get_tree().get_nodes_in_group("zombies"):
+		if not (node is Zombie):
+			continue
+		var z: Zombie = node as Zombie
+		if not _is_serviceable(z, player_pos):
+			continue
+		var d := _flat_distance(z.global_position, player_pos)
+		if d < best_d:
+			best_d = d
+			best = z
+	return best
+
+## A zombie is serviceable when it is alive, inside the painted box, and
+## OUTSIDE the player's no-fire bubble. Zombies inside the bubble are simply
+## not engaged — no warning, no override.
+##
+## Deliberately re-checked mid-slew as well as at acquisition, so the same
+## rule governs both and they can never disagree.
+func _is_serviceable(z: Zombie, player_pos: Vector3) -> bool:
+	if z == null or not is_instance_valid(z) or not z.is_alive():
+		return false
+	if _flat_distance(z.global_position, _box_centre) > config.patrol_radius:
+		return false
+	if _flat_distance(z.global_position, player_pos) <= config.no_fire_radius:
+		return false
+	return true
+
+## Flat 2D distance. Height is deliberately ignored throughout: the box is a
+## ground area, and a zombie in the ditch is as much inside it as one on the
+## berm above.
+func _flat_distance(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+## One burst, resolved as a single area-damage event at the target's position
+## through the SHARED system. No damage numbers live here — they are all on
+## the authored profile, whose noise_radius of 0 is what keeps the burst
+## silent to the AI (asserted in _validate()).
+func _fire_burst() -> void:
+	var impact := _target.global_position
+	var fired: int = mini(config.rounds_per_burst, _rounds_left)
+	_rounds_left -= fired
+	AreaDamageSystem.detonate(impact, config.burst_profile, Vector3.ZERO,
+		"apache 30mm")
+	print("[APACHE] burst — %d rounds at (%.1f, %.1f, %.1f), %d remaining" % [
+		fired, impact.x, impact.y, impact.z, _rounds_left])

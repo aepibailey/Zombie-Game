@@ -10,10 +10,14 @@
 ; asserts this at startup against mortar_he.tres's real value rather than a
 ; copied constant, so retuning the mortar can't silently invert the pair.
 ;
-; 120 kills a night-1 leaper (60 HP) outright and takes two bursts on a
-; night-1 walker (100 HP) once falloff is accounted for. That is the intended
-; feel: the gun grinds a box down over its time on station, it does not
-; delete it in one pass.
+; The burst is resolved AT the target's own position, so the primary target
+; always takes the full 120 — falloff only ever applies to neighbours caught
+; in the splash. One burst therefore kills any single zombie outright until
+; night 11 (walker 140 HP), after which walkers take two. Attrition comes
+; from the CYCLE TIME and the ammunition count, not from surviving a hit:
+;
+;   primary target   1 burst through night 9, 2 bursts from night 11
+;   splash at 2.0m   67.5    2.5m  30    3.0m  7.5    3.5m+  0
 ;
 ; GEOMETRY 1.5m lethal / 3.5m max. Small on purpose — cluster splash is a
 ; bonus, not the main effect. A burst is aimed at one zombie; catching a
