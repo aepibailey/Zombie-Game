@@ -105,6 +105,7 @@ var _target_painter: TargetPainter
 var _fire_missions: FireMissionSystem
 var _uav_overlay: UAVOverlay
 var _supply_drop_system: SupplyDropSystem
+var _apache_system: ApacheSystem
 
 ## Radio-callable fire missions, in menu order. Adding one is a .tres plus a
 ## line in _fire_mission_list() — FireMissionSystem registers whatever it's
@@ -113,6 +114,7 @@ const MISSION_MORTAR := preload("res://resources/mission_mortar.tres")
 const MISSION_SHAKE_AND_BAKE := preload("res://resources/mission_shake_and_bake.tres")
 const SUPPLY_DROP_CONFIG := preload("res://resources/supply_drop.tres")
 const TARGET_PAINT_CONFIG := preload("res://resources/target_paint.tres")
+const APACHE_CONFIG := preload("res://resources/apache.tres")
 
 ## Built as a typed local rather than a typed `const` array: FireMissionSystem
 ## .missions is Array[FireMissionConfig], and handing it an untyped literal
@@ -553,6 +555,14 @@ func _build_ui() -> void:
 	add_child(_supply_drop_system)
 	_supply_drop_system.setup(player, _hud, _radio_menu, _target_painter,
 		_crate_position, drop_radius)
+
+	# Registers itself into EnablerManager.callable_enablers, same as every
+	# other enabler, and paints its patrol box with the same shared painter.
+	_apache_system = ApacheSystem.new()
+	_apache_system.name = "ApacheSystem"
+	_apache_system.config = APACHE_CONFIG
+	add_child(_apache_system)
+	_apache_system.setup(player, _hud, _radio_menu, _target_painter)
 
 	_restore_base()
 

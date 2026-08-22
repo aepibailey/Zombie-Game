@@ -1,0 +1,52 @@
+[gd_resource type="Resource" script_class="AreaDamageProfile" load_steps=2 format=3]
+
+; One 30mm BURST, not one round. A burst is rounds_per_burst shells walking
+; across a point over burst_duration; this profile resolves the whole burst as
+; a single area-damage event at the target's position.
+;
+; MAX_DAMAGE 120, deliberately WELL BELOW a mortar round's 400. The Apache is
+; SUSTAINED ATTRITION and the mortar is ALPHA — if per-burst damage ever
+; exceeds a mortar round, the mortar loses its role entirely. ApacheSystem
+; asserts this at startup against mortar_he.tres's real value rather than a
+; copied constant, so retuning the mortar can't silently invert the pair.
+;
+; 120 kills a night-1 leaper (60 HP) outright and takes two bursts on a
+; night-1 walker (100 HP) once falloff is accounted for. That is the intended
+; feel: the gun grinds a box down over its time on station, it does not
+; delete it in one pass.
+;
+; GEOMETRY 1.5m lethal / 3.5m max. Small on purpose — cluster splash is a
+; bonus, not the main effect. A burst is aimed at one zombie; catching a
+; second is luck.
+;
+; NOISE_RADIUS 0.0 — MANDATORY, NOT A TUNING CHOICE. The Apache emits no
+; noise events of any kind and must never attract, alert or reorient a single
+; zombie. This zero is what keeps AreaDamageSystem.detonate() from ever
+; reaching its NoiseManager.emit_noise() branch. ApacheSystem asserts it at
+; startup. Do not raise it.
+;
+; SFX_DETONATE "" — no audio work in this pass, and the same zero-noise rule
+; means the burst must not announce itself to the AI through any channel.
+;
+; DAMAGES_OBSTACLES false: 30mm servicing a target inside the wire must not
+; chew up the player's own sandbags. BLOCKED_DAMAGE_MULT 0.0: a zombie in
+; hard cover is not serviceable from a standoff optic.
+
+[ext_resource type="Script" path="res://scripts/AreaDamageProfile.gd" id="1_adp"]
+
+[resource]
+script = ExtResource("1_adp")
+id = "apache_30mm"
+display_name = "30mm Burst"
+lethal_radius = 1.5
+max_radius = 3.5
+max_damage = 120
+falloff = 1
+arc_degrees = 360.0
+blocked_damage_mult = 0.0
+damages_obstacles = false
+obstacle_damage_mult = 1.0
+duration = 0.0
+tick_interval = 0.5
+sfx_detonate = ""
+noise_radius = 0.0

@@ -1,0 +1,47 @@
+[gd_resource type="Resource" script_class="ApacheConfig" load_steps=3 format=3]
+
+; AH-64 patrol box. 90 points buys a 90-second on-station gun that services
+; every zombie inside a painted 35m circle, from standoff, with 300 rounds.
+;
+; STANDOFF_DISTANCE 250m against an ORBIT_RADIUS of 60m: the aircraft holds a
+; wide, slow orbit whose CENTRE is a quarter-kilometre off the box. It reads
+; as a distant silhouette. It never flies over the target area and — this is
+; the load-bearing part — its position never gates a shot. See ApacheSystem.
+;
+; PATROL_RADIUS 35m is a meaningful slice of an approach lane without being
+; map-wide; compare the mortar's 10m effect_radius, which is a point target by
+; contrast. The Apache denies an avenue, the mortar denies a spot.
+;
+; APACHE_COST 90 sits above the mortar's 50 and the shake-and-bake's 80.
+; APACHE_COOLDOWN 300s starts on DEPARTURE, so a full sortie plus cooldown is
+; roughly 25 + 90 + 300 = 415 seconds of real time between calls.
+;
+; PLAYTEST FLAG: with noise removed by design, this enabler has no in-fiction
+; drawback — its entire cost is points, cooldown and finite ammo. If it plays
+; as press-to-win, the levers are apache_cost, total_rounds and
+; time_on_station, in that order. Do not add a downside in code.
+
+[ext_resource type="Script" path="res://scripts/ApacheConfig.gd" id="1_cfg"]
+[ext_resource type="Resource" path="res://resources/apache_30mm.tres" id="2_burst"]
+
+[resource]
+script = ExtResource("1_cfg")
+id = "apache"
+display_name = "Apache — Patrol Box"
+apache_cost = 90
+apache_cooldown = 300.0
+patrol_radius = 35.0
+paint_max_range = 0.0
+transit_time_in = 25.0
+time_on_station = 90.0
+orbit_radius = 60.0
+orbit_altitude = 70.0
+orbit_speed = 0.25
+standoff_distance = 250.0
+slew_time = 1.2
+retask_slew_time = 2.0
+rounds_per_burst = 20
+burst_duration = 0.8
+total_rounds = 300
+burst_profile = ExtResource("2_burst")
+no_fire_radius = 12.0
