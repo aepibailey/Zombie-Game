@@ -22,7 +22,14 @@ class_name Damageable
 ##
 ## A member must implement:
 ##   take_damage(amount: int, headshot: bool, falloff_mult: float) -> int
-##   hp   (property, read for the hit-feedback signal)
+##       Applies the hit and returns the damage actually dealt.
+##   remaining_hp() -> int
+##       HP left after that hit, floored at 0. A METHOD, not a property read:
+##       Zombie calls its pool `hp` and Fighter calls its `health` (that name
+##       is the project's damageable convention and what HealthBar3D reads),
+##       and the weapon path must not know which. The value is shown on the
+##       hitmarker, so a wrong answer is visible to the player rather than
+##       silent.
 ## and MAY register a head hitbox — see GROUP_BULLET_HEAD.
 
 ## Entities a player round can damage. The round passes through or stops

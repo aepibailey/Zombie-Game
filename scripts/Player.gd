@@ -987,7 +987,18 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 			# exactly once — see Zombie.take_damage()'s docstring. This is the
 			# damageable contract, documented on Damageable.gd.
 			var dealt: int = target.take_damage(weapon.body_damage, headshot, mult)
-			var remaining: int = maxi(0, target.hp)
+			# Through the contract method, NOT a direct field read. Zombie
+			# names its pool `hp` and a Fighter names its `health`; the weapon
+			# path must not know which. Warned rather than defaulted, matching
+			# AreaDamageSystem's own handling of a group member missing its
+			# contract method — a wrong number here is displayed on the
+			# hitmarker, so failing quietly would be worse than failing loud.
+			var remaining := 0
+			if target.has_method("remaining_hp"):
+				remaining = target.remaining_hp()
+			else:
+				push_warning("[HIT] %s is in '%s' but has no remaining_hp()"
+					% [target.name, Damageable.GROUP_BULLET])
 			print("[HIT] %s — %d dmg @ %.1fm (x%.2f mult, target %d), %d HP remaining" % [
 				"HEAD" if headshot else "BODY", dealt, dist, mult, targets_damaged + 1, remaining])
 			zombie_hit.emit(headshot, dealt, remaining)

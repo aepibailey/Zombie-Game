@@ -1184,6 +1184,13 @@ func area_damage_points() -> Array:
 		global_position + Vector3(0.0, t.head_center_y(), 0.0),
 	]
 
+## Damageable.GROUP_BULLET contract: HP left after a hit, floored at 0.
+##
+## Exists so the weapon path never reads this pool's field name directly —
+## a Fighter calls the same quantity `health`. See Damageable.gd.
+func remaining_hp() -> int:
+	return maxi(0, hp)
+
 ## True until this zombie has actually died. `queue_free()` is deferred, so a
 ## corpse stays instance-valid for the rest of the frame — callers must use
 ## this rather than is_instance_valid() to decide whether it still counts.
