@@ -1,0 +1,47 @@
+[gd_resource type="Resource" script_class="FighterType" load_steps=2 format=3]
+
+; The baseline local irregular — the only fighter variant, and the one the
+; player rescues at Position Two (which does not exist yet; everything is
+; tested at Position One behind a debug spawn).
+;
+; HIT CHANCE 0.60-0.95 and DAMAGE 20-35 are wide bands ON PURPOSE. Two
+; fighters recruited in the same session must be observably different over a
+; night — that spread IS the mechanic, and it is why fighters resolve shots
+; as a probability roll while the player resolves raycasts. A fighter is
+; never as good as the player; the question is how much worse this one is.
+;
+; The 0.95 ceiling is the invariant that matters: the upgrade path raises a
+; fighter's rolled value toward this cap and never past it, so no fighter at
+; any tier can ever be a guaranteed hit.
+;
+; REACTION_DELAY 0.5-1.5s is applied on every NEW target acquisition, not
+; once per night. A slow fighter re-pays it each time the wave shifts, which
+; is what makes reaction delay matter more in a chaotic night than a quiet
+; one.
+;
+; NOISE 40m unsuppressed matches the M17's own unsuppressed radius, and 8m
+; suppressed matches the M17's suppressed radius. Deliberately the M17 and
+; not a roster average — see Fighter.suppressed_noise_radius().
+
+[ext_resource type="Script" path="res://scripts/FighterType.gd" id="1_ftype"]
+
+[resource]
+script = ExtResource("1_ftype")
+id = "irregular"
+display_name = "Irregular"
+hit_chance_min = 0.6
+hit_chance_max = 0.95
+damage_min = 20
+damage_max = 35
+reaction_delay_min = 0.5
+reaction_delay_max = 1.5
+max_health = 100
+fire_interval = 1.2
+sector_arc_degrees = 90.0
+engagement_range = 25.0
+noise_radius_unsuppressed = 40.0
+noise_radius_suppressed = 8.0
+body_radius = 0.36
+body_height = 1.7
+albedo = Color(0.25, 0.45, 0.85, 1)
+facing_marker = Color(0.45, 0.7, 1, 1)

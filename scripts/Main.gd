@@ -68,6 +68,21 @@ const KEY_DEBUG_HITBOX := KEY_F4
 const KEY_DEBUG_BLAST := KEY_F5
 const DEBUG_BLAST_PROFILE := preload("res://resources/frag_grenade.tres")
 
+# ---------------------------------------------------------------------------
+# TEMPORARY SCAFFOLDING — DELETE WHEN POSITION TWO EXISTS.
+#
+# Fighters are narratively local irregulars rescued at Position Two, and the
+# real grant happens on arrival there. Position Two does not exist yet, so
+# this spawns them at Position One instead, behind a debug key, purely so the
+# system can be built and tested. Everything in this block and in
+# _debug_spawn_fighter() is throwaway — no other code should come to depend
+# on it. See PROJECT_SPEC.md "Allied fighters".
+const KEY_DEBUG_SPAWN_FIGHTER := KEY_F6
+const FIGHTER_TYPE_IRREGULAR := preload("res://resources/fighter_irregular.tres")
+## How far in front of the player a debug fighter appears.
+const DEBUG_FIGHTER_SPAWN_DISTANCE := 4.0
+# ---------------------------------------------------------------------------
+
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
 var _sun: DirectionalLight3D
@@ -926,6 +941,38 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hud.show_message("DEBUG BLAST — %d actors, %d killed, %d structures" % [
 			r.get("actors", 0), r.get("killed", 0), r.get("structures", 0)])
 		return
+	if event.keycode == KEY_DEBUG_SPAWN_FIGHTER:
+		_debug_spawn_fighter()
+		return
+
+# ---------------------------------------------------------------------------
+# TEMPORARY SCAFFOLDING — DELETE WHEN POSITION TWO EXISTS. See the constants
+# block near the top of this file.
+#
+# Drops one freshly-recruited fighter in front of the player, facing the same
+# way the player is, and dumps its rolled statline to the console. Placement
+# rules, the 8-cap and the recruit economy are all phases of their own — this
+# deliberately enforces NONE of them, because its only job is to put a fighter
+# in the world so the entity itself can be verified.
+func _debug_spawn_fighter() -> void:
+	var f := Fighter.new()
+	f.name = "DebugFighter"
+	add_child(f)
+	f.recruit(FIGHTER_TYPE_IRREGULAR)
+
+	var fwd := -player.global_transform.basis.z
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.0001:
+		fwd = Vector3.FORWARD
+	fwd = fwd.normalized()
+	f.global_position = player.global_position + fwd * DEBUG_FIGHTER_SPAWN_DISTANCE
+	# Facing the same way the player is, so the sector points downrange rather
+	# than back at whoever just spawned it.
+	f.global_rotation.y = player.global_rotation.y
+
+	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
+	_hud.show_message("DEBUG FIGHTER — %s (%d live)" % [f.fighter_name, live])
+	print("[FIGHTER] %s" % f.stat_line())
 
 # --- Zombie bookkeeping ---------------------------------------------------
 func _prune_zombies() -> void:
