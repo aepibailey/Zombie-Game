@@ -55,6 +55,9 @@ var _gun_state: int = Gun.ACQUIRING
 var _gun_timer := 0.0
 var _target: Zombie = null
 var _rounds_left := 0
+## Sensor reacquisition after a retask. While positive the gun is silent; it
+## counts down in _process and is asserted never to exceed retask_slew_time.
+var _retask_pause := 0.0
 
 func setup(player: Player, hud: HUD, radio: RadioMenu, painter: TargetPainter) -> void:
 	_player = player
@@ -123,15 +126,37 @@ func _validate() -> void:
 # --- Availability -------------------------------------------------------------
 ## Cooldown and the global lockout are answered by EnablerManager BEFORE this
 ## is consulted; this adds only the reasons it alone knows.
+##
+## While a sortie is ON STATION this returns "" — the row is live, but by then
+## it is the RETASK row, not the call-in row (see _refresh_entry()). The only
+## state that blocks outright is the initial inbound transit: there is nothing
+## on station to retask yet.
 func _available_reason() -> String:
 	if GameManager.is_day():
 		return "NIGHT ONLY"
-	if _sortie != null:
-		# Phase 5 turns this into a retask rather than a block. Until then a
-		# sortie in progress simply occupies the slot — exactly one Apache
-		# exists at a time.
-		return "ON STATION"
+	if _sortie != null and is_instance_valid(_sortie) and not _sortie.is_on_station():
+		return "INBOUND"
 	return ""
+
+## Swaps the registered menu entry between CALL-IN and RETASK.
+##
+## Mutates the SAME Dictionary instance appended to
+## EnablerManager.callable_enablers — Dictionaries are reference types in
+## GDScript and RadioMenu re-reads the entry on every refresh, so the right
+## row appears with no menu-side change and no second registration.
+func _refresh_entry() -> void:
+	var on_station: bool = _sortie != null and is_instance_valid(_sortie) \
+		and _sortie.is_on_station()
+	if on_station:
+		_entry["display_name"] = "Apache — Retask Box"
+		# FREE. Retasking costs no points, and RadioMenu's own affordability
+		# check passes trivially at zero.
+		_entry["cost"] = 0
+		_entry["call_fn"] = _begin_retask_paint
+	else:
+		_entry["display_name"] = config.display_name
+		_entry["cost"] = config.apache_cost
+		_entry["call_fn"] = _begin_paint
 
 # --- Call flow ----------------------------------------------------------------
 ## Selection opens box designation. NOTHING is charged here — see _on_painted.
@@ -144,6 +169,10 @@ func _available_reason() -> String:
 func _begin_paint() -> void:
 	if _available_reason() != "":
 		return
+	# Defensive: while a sortie exists the registered call_fn is the retask
+	# one, so this should be unreachable — but exactly one Apache may exist.
+	if _sortie != null and is_instance_valid(_sortie):
+		return
 	_hud.show_message("APACHE — SEND YOUR PATROL BOX, OVER.")
 	_painter.begin(config.patrol_radius, config.paint_max_range,
 		_on_painted, _on_paint_cancelled)
@@ -151,6 +180,61 @@ func _begin_paint() -> void:
 ## Cancelling costs nothing: no points, no cooldown, no transmission.
 func _on_paint_cancelled() -> void:
 	_hud.show_message("APACHE — CANCELLED.")
+
+# --- Retasking ----------------------------------------------------------------
+## Retask the aircraft already on station onto a new box. Same painting flow,
+## same footprint — the substrate does not know or care that this is a retask.
+##
+## Unavailable during the initial inbound transit only; _available_reason()
+## returns "INBOUND" then and the row is greyed.
+func _begin_retask_paint() -> void:
+	if _sortie == null or not is_instance_valid(_sortie) or not _sortie.is_on_station():
+		return
+	_hud.show_message("APACHE — SEND YOUR NEW BOX, OVER.")
+	_painter.begin(config.patrol_radius, config.paint_max_range,
+		_on_retasked, _on_paint_cancelled)
+
+## The new box replaces the old one IMMEDIATELY. The aircraft does not
+## reposition and its orbit is not interrupted — only the sensor has to catch
+## up, which is what retask_slew_time represents.
+##
+## COSTS NOTHING: no points, no cooldown, no station time, and no cap on how
+## often it may be done.
+func _on_retasked(centre: Vector3) -> void:
+	if _sortie == null or not is_instance_valid(_sortie) or not _sortie.is_on_station():
+		return
+
+	# Station time must be untouched by this. Captured before and asserted
+	# after, so a future change that quietly charges station time for a
+	# retask fails loudly instead of silently shortening the sortie.
+	var station_left_before := _sortie.station_time_left()
+
+	_box_centre = centre
+	# Cosmetic orbit drift only. The gun is ALREADY servicing the new box —
+	# nothing about engagement waits on the airframe going anywhere.
+	_sortie.retask(centre)
+
+	# Drop the current target and pause the gun for exactly retask_slew_time.
+	_target = null
+	_gun_state = Gun.ACQUIRING
+	_retask_pause = config.retask_slew_time
+
+	assert(is_equal_approx(_sortie.station_time_left(), station_left_before),
+		"[APACHE] retask changed remaining station time from %.2fs to %.2fs. Retasking must never reduce station time beyond normal elapsed time." % [
+			station_left_before, _sortie.station_time_left()])
+
+	# A retask IS a transmission: it keys the mic like any other call, so it
+	# emits the standard 10m pulse and arms the shared global radio lockout,
+	# per the same rule every other enabler follows. That lockout rate-limits
+	# how often the radio can be used at all; it does not pause the gun and
+	# does not cap retasks.
+	_radio.commit_transmission()
+	EnablerManager.start_cooldown(APACHE_ID, 0.0)
+
+	_hud.show_message("APACHE — NEW BOX COPIED.")
+	print("[APACHE] retasked to (%.1f, %.1f, %.1f) — %.1fs sensor slew, %d rounds remaining, %.0fs station left" % [
+		centre.x, centre.y, centre.z, config.retask_slew_time,
+		_rounds_left, _sortie.station_time_left()])
 
 ## THE COMMIT POINT. Everything the player pays happens here and nowhere
 ## earlier, so a cancelled designation is genuinely free.
@@ -185,15 +269,19 @@ func _on_painted(centre: Vector3) -> void:
 	_rounds_left = config.total_rounds
 	_target = null
 	_gun_state = Gun.ACQUIRING
+	_retask_pause = 0.0
 	# Parented to the CURRENT SCENE, not to this system: the aircraft is a
 	# world fixture for the length of its sortie and must not move or free
 	# with anything else. Same reasoning as WhitePhosphorusZone and the
 	# supply crate.
 	_sortie = Apache.spawn(get_tree().current_scene, centre, config,
 		_on_station, _on_departed)
+	_refresh_entry()   # sortie now inbound: row greys to INBOUND
 
 # --- Sortie lifecycle ---------------------------------------------------------
 func _on_station() -> void:
+	# The call-in row becomes the retask row for the rest of the sortie.
+	_refresh_entry()
 	_hud.show_message("APACHE — ON STATION, %d ROUNDS." % config.total_rounds)
 	print("[APACHE] on station over (%.1f, %.1f, %.1f)" % [
 		_box_centre.x, _box_centre.y, _box_centre.z])
@@ -205,6 +293,8 @@ func _on_departed() -> void:
 	_sortie = null
 	_target = null
 	_gun_state = Gun.ACQUIRING
+	_retask_pause = 0.0
+	_refresh_entry()   # back to the call-in row
 	EnablerManager.start_cooldown(APACHE_ID, config.apache_cooldown)
 	_hud.show_message("APACHE — OFF STATION.")
 	print("[APACHE] offmap — cooldown %.0fs begins now" % config.apache_cooldown)
@@ -221,6 +311,16 @@ func _process(delta: float) -> void:
 	if _rounds_left <= 0:
 		_hud.show_message("APACHE — WINCHESTER, RTB.")
 		_sortie.depart_now("winchester")
+		return
+
+	# Sensor reacquisition after a retask. The gun is silent for EXACTLY
+	# retask_slew_time and not a frame longer — asserted, because this is the
+	# one place a retask could quietly become expensive.
+	if _retask_pause > 0.0:
+		assert(_retask_pause <= config.retask_slew_time + 0.001,
+			"[APACHE] retask pause is %.3fs, longer than retask_slew_time %.3fs. A retask must never suppress firing for longer than that." % [
+				_retask_pause, config.retask_slew_time])
+		_retask_pause -= delta
 		return
 
 	match _gun_state:

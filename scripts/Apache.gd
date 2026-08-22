@@ -40,6 +40,15 @@ var _orbit_centre := Vector3.ZERO
 var _bearing := 0.0
 var _orbit_angle := 0.0
 
+## Where the orbit centre is drifting TOWARD after a retask. Purely cosmetic:
+## it stops the orbit looking absurd when a box is called on the far side of
+## the map, and it CANNOT gate firing, because nothing in the targeting path
+## can see this node at all (see ApacheSystem._acquire_target()).
+var _orbit_centre_target := Vector3.ZERO
+## Metres per second the orbit centre drifts. Cosmetic only — not a tunable,
+## because no gameplay outcome depends on it.
+const ORBIT_DRIFT_SPEED := 12.0
+
 var _transit_from := Vector3.ZERO
 var _transit_elapsed := 0.0
 ## Counts ONLY while ON_STATION. Transit does not consume station time.
@@ -93,10 +102,25 @@ func _begin_transit() -> void:
 	_transit_from = _orbit_centre + Vector3(cos(_bearing), 0.0, sin(_bearing)) * OFFMAP_DISTANCE
 	_transit_from.y = _orbit_centre.y + 60.0
 
+	_orbit_centre_target = _orbit_centre
 	state = State.TRANSIT
 	_transit_elapsed = 0.0
 	global_position = _transit_from
 	_build_visuals()
+
+## A new patrol box has been designated. The aircraft DOES NOT reposition to
+## service it — it keeps its orbit and its gun reaches the new box from
+## wherever it is, because engagement never depends on where the airframe is.
+## All this does is start a slow COSMETIC drift of the orbit centre toward the
+## new standoff point, so a box called across the map doesn't leave the
+## aircraft orbiting a visibly unrelated patch of sky.
+##
+## Deliberately touches no clock: retasking costs no station time.
+func retask(new_box_centre: Vector3) -> void:
+	_box_centre = new_box_centre
+	var offset := Vector3(cos(_bearing), 0.0, sin(_bearing)) * config.standoff_distance
+	_orbit_centre_target = new_box_centre + offset
+	_orbit_centre_target.y = new_box_centre.y + config.orbit_altitude
 
 func is_on_station() -> bool:
 	return state == State.ON_STATION
@@ -152,6 +176,11 @@ func _check_in() -> void:
 
 func _tick_station(delta: float) -> void:
 	_station_elapsed += delta
+	# Cosmetic drift toward a retasked box's standoff point. Never gates
+	# anything — the gun is already servicing the new box.
+	if _orbit_centre != _orbit_centre_target:
+		_orbit_centre = _orbit_centre.move_toward(
+			_orbit_centre_target, ORBIT_DRIFT_SPEED * delta)
 	_orbit_angle += config.orbit_speed * delta
 	var prev := global_position
 	global_position = _orbit_point(_orbit_angle)
