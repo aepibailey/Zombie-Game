@@ -1,32 +1,23 @@
 extends Node
-## Ownership registry for purchasable support enablers (autoload).
+## Radio enabler call-flow support (autoload).
 ##
-## STUB — no gameplay logic. It exists so the enabler tree (Radio → UAV /
-## Apache / Supply Drop) has a home that other systems can already query, and
-## so the guaranteed-drop schedule has somewhere to live that can be switched
-## off wholesale once drops become purchasable. See docs/ROADMAP.md.
+## RESPONSIBLE FOR: per-enabler cooldowns, the shared global radio lockout,
+## and `callable_enablers` — the registry RadioMenu renders. NOT responsible
+## for ownership: whether the player HAS an item (the radio, a weapon, an
+## enabler) is answered exclusively by Player.owns_item_id(). If a future
+## enabler needs individual ownership rather than just radio-gated access, it
+## goes through that with its own item id — do not rebuild a second registry
+## here.
 
-signal enabler_acquired(id: String)
-
-## Which nights grant a free resupply drop at dawn. Owned here (not inside the
-## SupplyDrop scene) so the whole stopgap can be disabled with one edit when
-## the purchasable supply-drop enabler ships.
-@export var guaranteed_drop_nights: Array[int] = [3, 5, 10]
-
-var owned: Dictionary = {}   # enabler id -> true
-
-## Radio-callable transmissions, in menu display order. Genuinely empty right
-## now — UAV, Supply Drop (as a CALLED drop, distinct from the automatic
-## Night 3+ crate above), Apache and the mortar/WP enablers all register here
-## once each is actually built. RadioMenu iterates this directly and renders
+## Radio-callable transmissions, in menu display order. Six real entries
+## register here today: the 120mm mortar and shake-and-bake (FireMissionSystem),
+## UAV Overwatch (UAVSystem), Supply Drop (SupplyDropSystem), and the Apache
+## patrol box (ApacheSystem). RadioMenu iterates this directly and renders
 ## "No transmissions available" when it's empty, rather than the menu being
-## hardcoded to show nothing — the difference matters the moment the first
-## entry is added: zero menu-side changes needed.
+## hardcoded to show nothing.
 ##
-## Deliberately a plain Dictionary, not an EnablerType resource, until a real
-## enabler defines what fields it actually needs (travel time, duration,
-## cooldown, call flow, ...). Shape now that the first real entries exist
-## (the 120mm mortar and shake-and-bake, registered by FireMissionSystem):
+## Deliberately a plain Dictionary, not an EnablerType resource — see
+## RadioMenu._build_row() for the duck-typed read. Shape:
 ##   {
 ##     "id": String,             # cooldown key, must be unique
 ##     "display_name": String,
@@ -36,8 +27,7 @@ var owned: Dictionary = {}   # enabler id -> true
 ##                               #    greyed-out reason shown in the row
 ##   }
 ## `call_fn` and `available_fn` are optional — an entry without them is
-## treated as always-available and a no-op on select, which is what the
-## original placeholder shape did.
+## treated as always-available and a no-op on select.
 var callable_enablers: Array = []
 
 # --- Cooldowns -------------------------------------------------------------
@@ -94,19 +84,3 @@ func unavailable_reason(entry: Dictionary) -> String:
 	if fn is Callable and (fn as Callable).is_valid():
 		return str((fn as Callable).call())
 	return ""
-
-func has(id: String) -> bool:
-	return owned.get(id, false)
-
-func acquire(id: String) -> void:
-	if has(id):
-		return
-	owned[id] = true
-	enabler_acquired.emit(id)
-
-func reset() -> void:
-	owned.clear()
-
-## True when night `n` should drop a free resupply at the following dawn.
-func is_guaranteed_drop_night(n: int) -> bool:
-	return n in guaranteed_drop_nights

@@ -438,7 +438,7 @@ func _add_tree(parent: Node, pos: Vector3) -> void:
 	parent.add_child(body)
 
 func _build_crate(pos: Vector3) -> void:
-	_crate_position = pos   # anchor for guaranteed resupply drops
+	_crate_position = pos   # fallback LZ pad for SupplyDropSystem, last resort only
 	# Blockout crate: a wooden box with a lighter lid. (No parachute for v1.)
 	_add_box(_nav_region, Vector3(1.6, 1.4, 1.6), pos + Vector3(0, 0.7, 0), Color(0.5, 0.35, 0.18))
 	_add_box(_nav_region, Vector3(1.7, 0.15, 1.7), pos + Vector3(0, 1.45, 0), Color(0.62, 0.46, 0.26))
@@ -695,32 +695,7 @@ func _begin_day() -> void:
 		PointsManager.spent_this_night, PointsManager.points])
 	_update_wave_hud()
 
-	# Guaranteed resupply at the dawn following certain nights. The schedule
-	# lives on EnablerManager so this stopgap can be switched off wholesale
-	# once the purchasable supply-drop enabler exists.
-	if EnablerManager.is_guaranteed_drop_night(GameManager.night_number):
-		_spawn_supply_drop()
-	else:
-		_hud.show_message("DAY — safe. Open the supply crate to spend points.")
-
-## Instances the reusable SupplyDrop scene near the crate. The purchasable
-## radio-callable Supply Drop enabler (SupplyDropSystem) instances the same
-## scene with a different anchor and different contents.
-func _spawn_supply_drop() -> void:
-	var drop := SupplyDrop.new()
-	# One magazine per currently-owned weapon, one grenade, no IFAK — this
-	# stopgap's own fixed contents, unrelated to SupplyDropConfig (that's the
-	# purchasable enabler's tunable, not this one's).
-	var mags_by_weapon := {}
-	for id in player.owned_weapons():
-		mags_by_weapon[id] = 1
-	drop.setup(_hud, {"magazines_by_weapon": mags_by_weapon, "grenades": 1})
-	add_child(drop)
-	drop.global_position = SupplyDrop.find_spawn_point(
-		get_world_3d(), _crate_position, drop_radius, player.global_position)
-	_hud.show_message("RESUPPLY — DROPPED NEAR BASE")
-	print("[RESUPPLY] drop spawned at %s (night %d)" % [
-		drop.global_position, GameManager.night_number])
+	_hud.show_message("DAY — safe. Open the supply crate to spend points.")
 
 # --- Nightly wave: trickle spawn + all-clear -----------------------------
 func _process(delta: float) -> void:

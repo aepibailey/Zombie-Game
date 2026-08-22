@@ -26,8 +26,7 @@ signal uav_state_changed(is_active: bool)
 var active := false
 ## Night number the UAV was last called on. -1 = never called. Compared
 ## against GameManager.night_number rather than reset by a "new night"
-## listener, so there's nothing to keep in sync — the same pattern
-## EnablerManager.is_guaranteed_drop_night() uses.
+## listener, so there's nothing to keep in sync.
 var _used_night := -1
 
 var _hud: HUD

@@ -212,7 +212,10 @@ func _on_crate_landed(landing: Vector3, contents: Dictionary) -> void:
 			config.crush_profile, Vector3.ZERO, "supply crate")
 
 	var drop := SupplyDrop.new()
-	drop.setup(_hud, contents)
+	# player_designated=true: this call is only ever reached via
+	# _run_delivery() <- _on_painted(), i.e. a confirmed TargetPainter
+	# designation. See SupplyDrop's own docstring on why this is asserted.
+	drop.setup(_hud, contents, true)
 	# Parented to the CURRENT SCENE, not to this system: the crate persists
 	# until looted — through sunrise, through further drops — and must not
 	# free with anything else.

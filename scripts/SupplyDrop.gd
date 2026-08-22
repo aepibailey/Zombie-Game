@@ -1,10 +1,17 @@
 extends Area3D
 class_name SupplyDrop
 ## A collectable resupply crate. Reusable by design: the caller supplies the
-## contents config, a spawn anchor, and a radius — the guaranteed dawn drop
-## and the purchasable radio-callable Supply Drop enabler both instance this
-## exact scene with different contents and different anchors. See
-## docs/ROADMAP.md.
+## contents config and a spawn point.
+##
+## THE ONLY LEGITIMATE CALLER IS THE PLAYER-DESIGNATED SUPPLY DROP ENABLER
+## (SupplyDropSystem), which reaches this scene exclusively through a
+## confirmed TargetPainter designation. An earlier pass also had a free
+## drop that spawned automatically at dawn on certain nights, bypassing
+## designation entirely — that path was removed because two coexisting
+## drop mechanisms made the paid drop's pricing unreadable in playtest.
+## setup() now requires the caller to attest to that explicitly (see
+## `player_designated` below) so the free path can never come back by
+## accident without the assertion firing.
 
 signal collected(summary: String)
 ## Fired once, the moment the crate has nothing left to give and frees
@@ -46,7 +53,18 @@ func _ready() -> void:
 
 ## contents_config shape: {"magazines_by_weapon": {weapon_id: mags, ...},
 ## "grenades": int, "ifaks": int}. Any key may be omitted (treated as empty/0).
-func setup(hud: HUD, contents_config: Dictionary = {}) -> void:
+##
+## `player_designated` has NO DEFAULT on purpose — a caller must pass `true`
+## explicitly, and can only honestly do so after a real TargetPainter
+## confirmation handed it a point. Modelled on the two-sided supply-drop
+## pricing assertion: this is a permanent guard, not a one-time migration
+## check, so it stays in place even after every current caller is updated.
+func setup(hud: HUD, contents_config: Dictionary, player_designated: bool) -> void:
+	assert(player_designated,
+		"[SUPPLYDROP] spawned without player designation. A drop may never spawn without a valid player-designated target point — see the class docstring on why this guard exists.")
+	if not player_designated:
+		push_error("[SUPPLYDROP] refusing to configure: no player designation attested.")
+		return
 	_hud = hud
 	magazines_by_weapon = contents_config.get("magazines_by_weapon", {}).duplicate()
 	grenades_remaining = contents_config.get("grenades", 0)

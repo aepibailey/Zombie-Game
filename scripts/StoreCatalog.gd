@@ -37,7 +37,7 @@ class StoreItem:
 
 # Tab order. Categories not listed here are appended alphabetically, so a new
 # category still produces a working tab without touching this list.
-const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES", "EQUIPMENT"]
+const CATEGORY_ORDER := ["WEAPONS", "ATTACHMENTS", "SUPPLIES", "EQUIPMENT", "ENABLERS"]
 
 ## ~27% of a typical night's earnings (see PROJECT_SPEC.md "Economy").
 const IFAK_COST := 15
@@ -92,12 +92,14 @@ func rebuild() -> void:
 				w.mag_size, _fire_mode_text(w), w.starting_mags],
 		}))
 
-	# The radio lives under WEAPONS as a stopgap; it moves to an ENABLERS tab
-	# once the UAV/Apache/supply-drop enablers exist.
+	# ENABLERS has exactly one entry. That's expected: the radio is the only
+	# purchasable item that gates access to the enabler roster (mortar,
+	# shake-and-bake, UAV, Supply Drop, Apache) rather than being one itself —
+	# those are all radio-menu calls, not store purchases.
 	items.append(_mk({
-		"id": "radio", "category": "WEAPONS", "kind": "attachment",
+		"id": "radio", "category": "ENABLERS", "kind": "attachment",
 		"display_name": "Radio", "cost": 10,
-		"description": "Comms link. Prerequisite for future support enablers.",
+		"description": "Unlocks call-in fire support and resupply. Call them from the radio menu (T) in the field.",
 	}))
 
 	# --- ATTACHMENTS ---
@@ -192,6 +194,24 @@ func rebuild() -> void:
 		"display_name": "M18A1 Claymore", "cost": CLAYMORE_COST, "repeatable": true,
 		"description": "Emplaced directional mine. 60° front arc, 10m. Carry 4, recoverable any time.",
 	}))
+
+	_validate_weapons_tab()
+
+## WEAPONS must contain only actual weapons — this is what catches a
+## non-weapon item (the radio moved out in this pass, deliberately) drifting
+## back in later. "Is a weapon" means kind == "weapon" AND its weapon_id
+## resolves against Arsenal; either one failing means the item doesn't
+## belong in this tab.
+func _validate_weapons_tab() -> void:
+	for it in items:
+		if it.category != "WEAPONS":
+			continue
+		var resolves: bool = it.kind == "weapon" and Arsenal.get_weapon(it.weapon_id) != null
+		assert(resolves,
+			"[STORE] '%s' is in the WEAPONS tab but is not a weapon (kind=%s, weapon_id=%s). Only real weapons belong in WEAPONS." % [
+				it.id, it.kind, it.weapon_id])
+		if not resolves:
+			push_error("[STORE] non-weapon item '%s' found in the WEAPONS tab." % it.id)
 
 func _mk(d: Dictionary) -> StoreItem:
 	var it := StoreItem.new()
