@@ -37,8 +37,12 @@ var _painter: TargetPainter
 var _entry: Dictionary
 
 ## The live sortie, or null. Exactly one Apache exists at a time; this is the
-## authority on that, asserted on spawn. (Phase 2.)
-var _sortie = null
+## first line of defence and Apache.spawn() asserts the scene tree agrees.
+var _sortie: Apache = null
+## The painted patrol box currently being serviced. Held HERE rather than on
+## the aircraft, because it is what targeting reads and the aircraft must
+## never be involved in targeting. (Consumed in phase 3.)
+var _box_centre := Vector3.ZERO
 
 func setup(player: Player, hud: HUD, radio: RadioMenu, painter: TargetPainter) -> void:
 	_player = player
@@ -149,3 +153,26 @@ func _on_painted(centre: Vector3) -> void:
 	print("[APACHE] patrol box painted at (%.1f, %.1f, %.1f) radius %.1fm — cost %d, transit %.1fs, %d rounds, %.0fs on station" % [
 		centre.x, centre.y, centre.z, config.patrol_radius, config.apache_cost,
 		config.transit_time_in, config.total_rounds, config.time_on_station])
+
+	_box_centre = centre
+	# Parented to the CURRENT SCENE, not to this system: the aircraft is a
+	# world fixture for the length of its sortie and must not move or free
+	# with anything else. Same reasoning as WhitePhosphorusZone and the
+	# supply crate.
+	_sortie = Apache.spawn(get_tree().current_scene, centre, config,
+		_on_station, _on_departed)
+
+# --- Sortie lifecycle ---------------------------------------------------------
+func _on_station() -> void:
+	_hud.show_message("APACHE — ON STATION, %d ROUNDS." % config.total_rounds)
+	print("[APACHE] on station over (%.1f, %.1f, %.1f)" % [
+		_box_centre.x, _box_centre.y, _box_centre.z])
+
+## THE COOLDOWN EVENT. Starts strictly here — on the aircraft going offmap —
+## and not at call-in, not on winchester. Same rule the mortar and WP follow,
+## so "cooldown" means the same thing across every fire support enabler.
+func _on_departed() -> void:
+	_sortie = null
+	EnablerManager.start_cooldown(APACHE_ID, config.apache_cooldown)
+	_hud.show_message("APACHE — OFF STATION.")
+	print("[APACHE] offmap — cooldown %.0fs begins now" % config.apache_cooldown)
