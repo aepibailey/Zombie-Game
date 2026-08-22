@@ -1847,3 +1847,175 @@ implementation at every size including the empty and over-size edge cases.
 release exports too, run once at `setup()` — the price is a static property
 of the config, so a per-call check would re-derive the same answer every time.
 
+
+## 13. AH-64 Apache patrol box
+
+The last enabler in the Radio family. The player paints a patrol box at night;
+after a transit delay the aircraft checks in on station and autonomously
+engages zombies inside the box with its 30mm chain gun until winchester
+(out of ammunition) or bingo (station time expired).
+
+**No `EnablerType` resource was introduced.** The audit confirmed none exists —
+`EnablerManager` documents that as a deliberate deferral — so the Apache
+registers the same plain Dictionary contract every other enabler uses
+(`id`/`display_name`/`cost`/`call_fn`/`available_fn`). Tunables live on
+`ApacheConfig` (`resources/apache.tres`) for the usual reason: the system and
+the actor are both built with `.new()`, so exports on them would never reach
+an inspector.
+
+### 13.1 The standoff constraint, enforced by signature
+
+A real Apache services targets from kilometres out with an optical sensor and
+a stabilized gun. It does not overfly the target area. **Therefore engagement
+is never gated on aircraft position** — the airframe must never need to fly
+anywhere to shoot anything, and must never stop firing because it is "too far"
+or on the wrong side of its orbit.
+
+That is not left to discipline. `_acquire_target()` takes
+`(box_centre, box_radius, player_pos)` and nothing else: **the aircraft and its
+transform are not in scope inside it, so a distance-to-aircraft check is not
+expressible.** The patrol box is held on `ApacheSystem`, not on the actor,
+precisely so targeting never has a reason to reach for the airframe.
+
+The complete set of things the system ever asks the aircraft is
+`is_on_station()` → bool, `station_time_left()` → float, `retask()` → void,
+and `depart_now()` → void. **Not one of them returns a position.** The orbit is
+written by `Apache._process()` and read by nothing.
+
+This is why the two "no distance check" and "zero noise" invariants are
+**structural rather than runtime asserts**, and are documented as such in the
+code rather than faked with a check that always passes.
+
+### 13.2 Sortie lifecycle
+
+Paint → confirm (points deducted here, so a cancelled paint is free) →
+`transit_time_in` 25s inbound from offmap → check in → orbit and engage →
+depart. The orbit **centre** sits `standoff_distance` (250m) off the box at
+`orbit_altitude` (70m), with the aircraft circling it at `orbit_radius` (60m):
+a distant silhouette, never an overhead gunship.
+
+The station clock advances **only** while `ON_STATION`, so transit never eats
+into `time_on_station`. That is what makes the retask assertion in 13.5
+meaningful.
+
+**Departure has three causes**, all routing through the same event:
+- station time expires (bingo)
+- ammunition exhausted (winchester) — departs immediately rather than
+  orbiting out the clock with an empty gun
+- **sunrise**
+
+### 13.3 Sunrise departure — not in the brief, added deliberately
+
+A night is 120s and a full sortie is 115s (25 transit + 90 station), so
+**almost any call spans sunrise.** Zombies go dormant at dawn but stay alive
+and stay in the `zombies` group — `Zombie.set_active(false)` only changes their
+tint — so without this the aircraft would keep gunning down sleeping zombies in
+broad daylight. "Night phase only" is a locked default of this enabler, and it
+has to be true of the whole sortie rather than only of the call button.
+
+Departing (rather than merely holding fire) also keeps the cooldown rule
+honest: it still starts on the departure event, exactly as it otherwise would.
+
+### 13.4 Engagement
+
+`ACQUIRING → SLEWING → FIRING → ACQUIRING`, re-evaluated from scratch every
+cycle so the gun always services the current highest-priority target rather
+than fixating. Priority is **closest to the player** among valid targets.
+
+A target is serviceable when it is alive, inside the box, and outside the
+no-fire bubble — one function, `_is_serviceable()`, used identically at
+acquisition, mid-slew and during the post-burst tail, so the three can never
+disagree. Containment is flat 2D throughout: a zombie in the ditch is as much
+inside the box as one on the berm above.
+
+Each burst is **one** `AreaDamageSystem.detonate()` at the target's position
+with an authored profile. Because the impact lands on the target, the primary
+always takes the full 120 and falloff applies only to splash:
+
+| primary | 2.0m | 2.5m | 3.0m | 3.5m+ |
+|---|---|---|---|---|
+| 120 | 67.5 | 30 | 7.5 | **0** |
+
+That one-shots any variant through night 9; walkers take two bursts from night
+11. **Attrition comes from cycle time and ammunition, not from surviving a
+hit.**
+
+### 13.5 The no-fire bubble
+
+`no_fire_radius` (12m) around the player's **live** position — re-read at every
+enforcement point, never cached and never a static point. Enforced four times:
+
+1. **Startup geometry assert**: `no_fire_radius` must *exceed* the burst's own
+   `max_radius`. This is the real guarantee that the player cannot be damaged.
+   `AreaDamageSystem` is faction-blind by construction, so safety cannot come
+   from filtering — it comes from no legal impact point ever being close enough
+   to reach them. 12m vs 3.5m leaves 8.5m of dead space.
+2. **Acquisition** — zombies inside the bubble are never selected.
+3. **Mid-slew** — a target entering the bubble before the gun fires is dropped
+   and the cycle restarts.
+4. **At the moment of fire** — a final gate on the impact point. Reaching it
+   means a shot passed step 3 in the same frame and became illegal anyway,
+   which should be impossible, so it asserts *and* refuses: no detonation, no
+   ammunition spent.
+
+Zombies inside the bubble are simply not engaged — no warning, no override, no
+player-facing message anywhere in the path.
+
+### 13.6 Retasking
+
+While on station the radio row becomes **"Apache — Retask Box", 0 pts**, in
+place of the call-in row. Implemented by mutating the *same* Dictionary
+instance registered with `EnablerManager` — Dictionaries are reference types
+and `RadioMenu` re-reads the entry on every refresh, so the correct row appears
+with no menu-side change and no second registration. Swapped at three
+lifecycle transitions only, not per frame.
+
+**The aircraft does not reposition.** The new box replaces the old one
+immediately and the gun is servicing it before the airframe has moved at all.
+`Apache.retask()` starts a slow cosmetic drift of the orbit centre toward the
+new standoff point (12 m/s) purely so a box called across the map doesn't leave
+it orbiting unrelated sky — and that drift cannot gate firing even in
+principle, per 13.1.
+
+Firing pauses for **exactly** `retask_slew_time` (2s) and not a frame longer,
+asserted every frame the pause is active. Station time is captured before the
+retask and asserted unchanged after, so a future change that quietly charges
+station time fails loudly instead of shortening the sortie silently.
+
+Retasking is free — no points, no cooldown, no station time, no cap on count.
+It *does* emit the standard 10m transmission pulse and arm the shared 10s
+global lockout, per the rule that all transmissions do; that rate-limits radio
+use generally but does not pause the gun and does not cap retasks. Unavailable
+during the initial inbound transit only (`"INBOUND"`), when there is nothing on
+station to retask.
+
+### 13.7 Silence, and the playtest risk it creates
+
+**The Apache emits no noise events of any kind.** No Apache file references
+`NoiseManager` at all; the burst profile's `noise_radius` is 0, which is what
+keeps `AreaDamageSystem.detonate()` from ever reaching its noise branch, and
+that zero is asserted at startup. **No zombie behaviour anywhere in the game
+changes as a result of the Apache being on station.**
+
+**Flagged, deliberately not designed around:** with noise removed the Apache
+has no in-fiction drawback. Its entire cost is points, cooldown and finite
+ammunition, and it cannot be shot down or countered. If it plays as
+press-to-win, the levers are `apache_cost`, `total_rounds` and
+`time_on_station`, in that order — **not** a downside added in code.
+
+Related and unresolved: **300 rounds is only 30 seconds of continuous fire
+against a 90-second window** (15 bursts at a 2.0s cycle). On a busy night the
+aircraft winchesters at one third of its station time, so `time_on_station`
+only binds when targets are sparse. If the full 90s should be the constraint,
+`total_rounds` needs to be roughly 900.
+
+### 13.8 Cooldown and pricing
+
+`apache_cooldown` (300s) starts **strictly on the departure event** — not at
+call-in, not on winchester — the same rule the mortar and WP follow, so
+"cooldown" means one thing across every fire support enabler. Asserted by
+checking the cooldown had *not* already started when departure fires.
+
+`apache_cost` 90, above the mortar's 50 and the shake-and-bake's 80, asserted
+against the mortar's own config so retuning it cannot silently leave the Apache
+cheaper. A full cycle is roughly 25 + 90 + 300 = 415s between calls.

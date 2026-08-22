@@ -22,6 +22,9 @@ const APACHE_ID := "apache"
 ## event. Read rather than copied, so retuning the mortar can't silently
 ## invert the attrition/alpha relationship the two are built around.
 const MORTAR_PROFILE: AreaDamageProfile = preload("res://resources/mortar_he.tres")
+## The mortar MISSION, loaded only to assert the Apache is priced above it.
+## Read rather than copied for the same reason as the profile above.
+const MORTAR_MISSION: FireMissionConfig = preload("res://resources/mission_mortar.tres")
 
 @export var config: ApacheConfig
 
@@ -65,6 +68,7 @@ func setup(player: Player, hud: HUD, radio: RadioMenu, painter: TargetPainter) -
 	_radio = radio
 	_painter = painter
 	_validate()
+	GameManager.phase_changed.connect(_on_phase_changed)
 	_entry = {
 		"id": APACHE_ID,
 		"display_name": config.display_name,
@@ -122,6 +126,16 @@ func _validate() -> void:
 	if config.no_fire_radius <= config.burst_profile.max_radius:
 		push_error("[APACHE] no_fire_radius %.1f <= burst max_radius %.1f — the player is reachable by a legal shot." % [
 			config.no_fire_radius, config.burst_profile.max_radius])
+
+	# PRICED ABOVE THE MORTAR. A 90-second gun that services a whole box is
+	# worth more than one six-round sheaf; read from the mortar's own config
+	# so retuning it can't silently leave the Apache cheaper.
+	assert(config.apache_cost > MORTAR_MISSION.cost,
+		"[APACHE] apache_cost %d must exceed the mortar's %d." % [
+			config.apache_cost, MORTAR_MISSION.cost])
+	if config.apache_cost <= MORTAR_MISSION.cost:
+		push_error("[APACHE] apache_cost %d <= mortar %d." % [
+			config.apache_cost, MORTAR_MISSION.cost])
 
 # --- Availability -------------------------------------------------------------
 ## Cooldown and the global lockout are answered by EnablerManager BEFORE this
@@ -286,6 +300,23 @@ func _on_station() -> void:
 	print("[APACHE] on station over (%.1f, %.1f, %.1f)" % [
 		_box_centre.x, _box_centre.y, _box_centre.z])
 
+## NIGHT PHASE ONLY, for the whole sortie and not merely the call button.
+##
+## This matters far more than it looks: a night is 120s and a full sortie is
+## 115s (25 transit + 90 station), so almost any call spans sunrise. Zombies
+## go dormant at dawn but stay alive and stay in the "zombies" group —
+## Zombie.set_active(false) only changes their tint — so without this the
+## aircraft would keep gunning down sleeping zombies in broad daylight.
+##
+## Departing (rather than merely holding fire) also keeps the cooldown rule
+## honest: it still starts on the departure event, exactly as it would have.
+func _on_phase_changed(phase: int) -> void:
+	if phase != GameManager.Phase.DAY:
+		return
+	if _sortie != null and is_instance_valid(_sortie):
+		_hud.show_message("APACHE — SUNRISE, RTB.")
+		_sortie.depart_now("sunrise")
+
 ## THE COOLDOWN EVENT. Starts strictly here — on the aircraft going offmap —
 ## and not at call-in, not on winchester. Same rule the mortar and WP follow,
 ## so "cooldown" means the same thing across every fire support enabler.
@@ -295,6 +326,15 @@ func _on_departed() -> void:
 	_gun_state = Gun.ACQUIRING
 	_retask_pause = 0.0
 	_refresh_entry()   # back to the call-in row
+	# COOLDOWN STARTS STRICTLY AFTER DEPARTURE. Asserted by checking it had
+	# NOT already started: anything nonzero here means something armed the
+	# cooldown earlier in the sortie — at call-in or on winchester — which is
+	# exactly the mistake this ordering exists to prevent.
+	var already := EnablerManager.cooldown_left(APACHE_ID)
+	assert(already <= 0.0,
+		"[APACHE] cooldown was already running (%.1fs) before the departure event. It must start strictly on departure, not at call-in and not on winchester." % already)
+	if already > 0.0:
+		push_error("[APACHE] cooldown started before departure (%.1fs remaining)." % already)
 	EnablerManager.start_cooldown(APACHE_ID, config.apache_cooldown)
 	_hud.show_message("APACHE — OFF STATION.")
 	print("[APACHE] offmap — cooldown %.0fs begins now" % config.apache_cooldown)
