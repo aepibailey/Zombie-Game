@@ -107,6 +107,19 @@ func _validate() -> void:
 	assert(config.no_fire_radius > 0.0,
 		"[APACHE] no_fire_radius must be positive — the player must always have a bubble the gun refuses to fire into.")
 
+	# THE PLAYER CANNOT BE DAMAGED BY THIS AIRCRAFT, GUARANTEED BY GEOMETRY.
+	# The shared damage system is faction-blind by construction — it would
+	# happily hurt the player — so the safety is that no legal impact point
+	# can ever be close enough to reach them. The nearest a burst may land is
+	# no_fire_radius; it reaches max_radius. The first must exceed the second,
+	# or a legal shot could still splash the player.
+	assert(config.no_fire_radius > config.burst_profile.max_radius,
+		"[APACHE] no_fire_radius %.1f must EXCEED the burst's own max_radius %.1f. The nearest legal impact is no_fire_radius from the player; if the blast reaches further than that, a legal shot can still damage them." % [
+			config.no_fire_radius, config.burst_profile.max_radius])
+	if config.no_fire_radius <= config.burst_profile.max_radius:
+		push_error("[APACHE] no_fire_radius %.1f <= burst max_radius %.1f — the player is reachable by a legal shot." % [
+			config.no_fire_radius, config.burst_profile.max_radius])
+
 # --- Availability -------------------------------------------------------------
 ## Cooldown and the global lockout are answered by EnablerManager BEFORE this
 ## is consulted; this adds only the reasons it alone knows.
@@ -237,11 +250,24 @@ func _tick_slew(delta: float) -> void:
 		return
 	_gun_timer -= delta
 	if _gun_timer <= 0.0:
-		_fire_burst()
+		# A refused shot consumes no ammunition and costs only the cycle:
+		# straight back to acquisition.
+		if not _fire_burst():
+			_target = null
+			_gun_state = Gun.ACQUIRING
+			return
 		_gun_state = Gun.FIRING
 		_gun_timer = config.burst_duration
 
+## The burst has already resolved; this is the cycle's tail before the gun
+## reacquires. A target that dies or becomes unserviceable during it ends the
+## tail early rather than idling out the clock on something that no longer
+## needs servicing.
 func _tick_firing(delta: float) -> void:
+	if not _is_serviceable(_target, _player.global_position):
+		_target = null
+		_gun_state = Gun.ACQUIRING
+		return
 	_gun_timer -= delta
 	if _gun_timer <= 0.0:
 		_target = null
@@ -296,11 +322,34 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 ## through the SHARED system. No damage numbers live here — they are all on
 ## the authored profile, whose noise_radius of 0 is what keeps the burst
 ## silent to the AI (asserted in _validate()).
-func _fire_burst() -> void:
+##
+## Returns false if the shot was REFUSED, in which case nothing was fired and
+## no ammunition was spent.
+func _fire_burst() -> bool:
 	var impact := _target.global_position
+
+	# THE NO-FIRE GATE, APPLIED AT THE MOMENT OF FIRE against the player's
+	# LIVE position — not the position they held at acquisition, and not a
+	# static point. This is the last thing standing between the faction-blind
+	# damage system and the player.
+	#
+	# Reaching this branch means the shot passed _is_serviceable() earlier in
+	# the same frame and became illegal anyway, which should be impossible —
+	# hence assert plus push_error rather than a quiet return. The aircraft
+	# refuses the shot either way: it never fires and merely warns.
+	var to_player := _flat_distance(impact, _player.global_position)
+	assert(to_player > config.no_fire_radius,
+		"[APACHE] burst impact was %.2fm from the player, inside the %.1fm no-fire bubble. The Apache must never fire a burst whose impact point falls inside the bubble." % [
+			to_player, config.no_fire_radius])
+	if to_player <= config.no_fire_radius:
+		push_error("[APACHE] refused a burst %.2fm from the player (bubble %.1fm)." % [
+			to_player, config.no_fire_radius])
+		return false
+
 	var fired: int = mini(config.rounds_per_burst, _rounds_left)
 	_rounds_left -= fired
 	AreaDamageSystem.detonate(impact, config.burst_profile, Vector3.ZERO,
 		"apache 30mm")
 	print("[APACHE] burst — %d rounds at (%.1f, %.1f, %.1f), %d remaining" % [
 		fired, impact.x, impact.y, impact.z, _rounds_left])
+	return true
