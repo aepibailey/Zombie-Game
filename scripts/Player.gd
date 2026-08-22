@@ -906,9 +906,9 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 	var exclude: Array[RID] = [get_rid()]
 	var segment_from := from
 	var impact := to
-	# Counts zombies DAMAGED so far, not ray segments traced — a zombie's
-	# head Area3D and body sit on separate colliders, so a single zombie can
-	# be struck twice by consecutive segments. Only the first strike deals
+	# Counts ENTITIES DAMAGED so far, not ray segments traced — an entity's
+	# head Area3D and body sit on separate colliders, so one entity can be
+	# struck twice by consecutive segments. Only the first strike deals
 	# damage (see `damaged` below) and only that one spends penetration
 	# budget; the second is skipped without costing a target.
 	var targets_damaged := 0
@@ -917,8 +917,8 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 	while true:
 		var q := PhysicsRayQueryParameters3D.create(segment_from, to)
 		q.exclude = exclude
-		# World/bodies (layer 1) + zombie head hitboxes (layer 3). Areas are opted
-		# into so the head Area3D can be hit; other areas sit on other layers.
+		# World/bodies (layer 1) + head hitboxes (layer 3). Areas are opted
+		# into so a head Area3D can be hit; other areas sit on other layers.
 		q.collision_mask = HIT_MASK
 		q.collide_with_areas = true
 		var hit := space.intersect_ray(q)
@@ -927,42 +927,51 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 		impact = hit.position
 
 		# Head vs body comes from WHICH collider was hit — the head hitbox is a
-		# distinct Area3D — not from inferring a hit height.
+		# distinct Area3D — not from inferring a hit height. Resolution is
+		# GENERIC: nothing here names zombies, so a fighter joining
+		# Damageable.GROUP_BULLET later becomes shootable with no change to
+		# this function.
 		var col = hit.collider
-		var target = null
-		var headshot := false
-		var is_zombie_part := false
-		if col and col.is_in_group("zombie_heads"):
-			target = col.get_meta("zombie", null)
-			headshot = true
-			is_zombie_part = true
-		elif col and col.is_in_group("zombies"):
-			target = col
-			is_zombie_part = true
+		var resolved: Dictionary = Damageable.resolve_hit(col)
 
-		if not is_zombie_part:
+		# COVER IS NOW A GENUINE FALLTHROUGH, not the default. It used to mean
+		# "not a zombie"; it now means "not damageable". The distinction
+		# matters because HIT_MASK admits all of layer 1 — including the
+		# player, who is kept OUT of GROUP_BULLET precisely so a round can
+		# never resolve its own shooter (the muzzle-RID exclude is not the
+		# only thing standing between them).
+		if not bool(resolved["is_damageable"]):
 			# Cover, not flesh: the round stops here for every weapon.
 			break
+
+		# `entity` may be null for a damageable collider with no resolvable
+		# owner (a head hitbox missing its meta). That is deliberately NOT
+		# cover — it falls through to the is_new_target check below and stops
+		# a non-penetrating round, exactly as it did before this refactor.
+		var target = resolved["entity"]
+		var headshot: bool = bool(resolved["is_head"])
 
 		var is_new_target: bool = target != null and is_instance_valid(target) \
 				and not damaged.has(target)
 		if not is_new_target and weapon.max_penetration_targets <= 0:
-			# Non-penetrating weapon that struck a zombie collider it can't
-			# damage (already-hit, or a head hitbox with no zombie meta): the
-			# round still stops, exactly as it did before penetration existed.
+			# Non-penetrating weapon that struck a damageable collider it
+			# can't damage (already-hit, or a head hitbox with no owner meta):
+			# the round still stops, exactly as it did before penetration
+			# existed.
 			break
 		if is_new_target:
 			damaged.append(target)
 			# Damage falls off with distance from the muzzle; a penetrating
-			# round loses a further flat fraction on every zombie behind the
+			# round loses a further flat fraction on every entity behind the
 			# first (flat, not compounded — flesh resistance, not falloff).
 			var dist := from.distance_to(hit.position)
 			var mult := weapon.damage_mult_at(dist)
 			if targets_damaged > 0:
 				mult *= weapon.penetration_damage_multiplier
 			# Raw body_damage + the multiplier, NOT a pre-multiplied value:
-			# Zombie.take_damage() applies headshot first, then falloff, and
-			# rounds exactly once. See its docstring.
+			# take_damage() applies headshot first, then falloff, and rounds
+			# exactly once — see Zombie.take_damage()'s docstring. This is the
+			# damageable contract, documented on Damageable.gd.
 			var dealt: int = target.take_damage(weapon.body_damage, headshot, mult)
 			var remaining: int = maxi(0, target.hp)
 			print("[HIT] %s — %d dmg @ %.1fm (x%.2f mult, target %d), %d HP remaining" % [

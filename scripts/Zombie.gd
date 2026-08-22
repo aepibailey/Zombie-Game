@@ -177,9 +177,10 @@ var _uav_revealed := false   # what UAVSystem wants; distance cutoff can still h
 func _ready() -> void:
 	add_to_group("zombies")
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
-	# What a PLAYER ROUND can damage. Registered now, read by nothing yet —
-	# _fire_ray still tests the legacy "zombies"/"zombie_heads" groups until
-	# phase 2 swaps it over, so this is additive and changes no behaviour.
+	# What a PLAYER ROUND can damage. This is what _fire_ray resolves against;
+	# the legacy "zombies" group below is retained for the many other systems
+	# that query it (Claymore, Minefield, UAVOverlay, ApacheSystem, ...) but
+	# the weapon path no longer names it.
 	#
 	# NOT joined to GROUP_HOSTILE_TARGET, and that omission is load-bearing:
 	# that group is what zombies HUNT, so a zombie in it would be hunted by
@@ -194,11 +195,11 @@ func _ready() -> void:
 	collision_mask = 1 | Obstacle.SOLID_NO_NAV_LAYER
 	# The head Area3D is tagged so weapon rays can identify a headshot from the
 	# collider itself — no hit-height guessing.
+	# The legacy group is RETAINED, not vestigial: BuildMode's placement
+	# overlap check still tests it to ignore a zombie's head when deciding
+	# whether a spot is blocked. The legacy "zombie" META is gone — _fire_ray
+	# was its only reader and now resolves through Damageable.HEAD_META.
 	head_hitbox.add_to_group("zombie_heads")
-	head_hitbox.set_meta("zombie", self)
-	# Generic head registration, additive alongside the legacy pair above.
-	# Phase 2 switches _fire_ray onto these and the legacy two come out then;
-	# carrying both for one phase keeps this step provably behaviour-neutral.
 	head_hitbox.add_to_group(Damageable.GROUP_BULLET_HEAD)
 	head_hitbox.set_meta(Damageable.HEAD_META, self)
 	hp = max_hp   # spawner set max_hp for this night's scaling
