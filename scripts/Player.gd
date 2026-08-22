@@ -951,6 +951,20 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 		var target = resolved["entity"]
 		var headshot: bool = bool(resolved["is_head"])
 
+		# INVARIANT: hit-zone resolution never returns "head" for an entity
+		# with no registered head hitbox.
+		#
+		# It holds by construction today — a head result can only come from
+		# striking a GROUP_BULLET_HEAD collider, whose HEAD_META names its own
+		# owner. The assertion guards the future case: a damageable that
+		# registers no head (an allied fighter is specified without one) must
+		# resolve as a body hit, and anyone reintroducing height-inferred
+		# headshots would trip this immediately. assert() only — per-shot
+		# path, stripped from release builds.
+		assert(not headshot or target == null
+				or Damageable.has_head_hitbox(get_tree(), target),
+			"[HIT] resolved a HEADSHOT on an entity with no registered head hitbox. Head vs body must come from which collider was struck, never from inferring a hit height.")
+
 		var is_new_target: bool = target != null and is_instance_valid(target) \
 				and not damaged.has(target)
 		if not is_new_target and weapon.max_penetration_targets <= 0:

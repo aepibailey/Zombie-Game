@@ -62,14 +62,32 @@ static func resolve_hit(collider: Object) -> Dictionary:
 		return {"entity": null, "is_damageable": false, "is_head": false}
 	var node: Node = collider as Node
 	if node.is_in_group(GROUP_BULLET_HEAD):
+		var owner_node = node.get_meta(HEAD_META, null)
+		_assert_not_player(owner_node)
 		return {
-			"entity": node.get_meta(HEAD_META, null),
+			"entity": owner_node,
 			"is_damageable": true,
 			"is_head": true,
 		}
 	if node.is_in_group(GROUP_BULLET):
+		_assert_not_player(node)
 		return {"entity": node, "is_damageable": true, "is_head": false}
 	return {"entity": null, "is_damageable": false, "is_head": false}
+
+## INVARIANT: a player round never resolves the player as a damageable target.
+##
+## The guard is group membership — the player is deliberately not in
+## GROUP_BULLET — but the muzzle-RID exclude in _fire_ray used to be the only
+## thing between a round and its shooter, and HIT_MASK admits the player's own
+## layer. If the player is ever added to the bullet group (say by someone
+## reaching for a single "combatant" group), this fires rather than quietly
+## making the player self-shootable.
+##
+## assert() only, no push_error: this sits on the per-shot path and Godot
+## strips asserts from release builds.
+static func _assert_not_player(entity) -> void:
+	assert(entity == null or not (entity is Node) or not (entity as Node).is_in_group("player"),
+		"[DAMAGEABLE] a player round resolved the PLAYER as a damageable target. The player must never join GROUP_BULLET — that group is the bullet axis; AreaDamageSystem.GROUP_DAMAGEABLE is the blast axis and is where the player belongs.")
 
 ## True when `entity` has a head hitbox registered against it. Used by the
 ## hit-zone assertion: a "head" result must never come back for an entity that

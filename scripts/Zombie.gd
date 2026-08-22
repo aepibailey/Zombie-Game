@@ -1000,7 +1000,36 @@ func _nearest_hostile_target() -> Node3D:
 		if d < best_d:
 			best_d = d
 			best = candidate
+
+	# INVARIANT: a zombie never targets another zombie.
+	#
+	# The only way this can fail is a zombie being added to
+	# GROUP_HOSTILE_TARGET, which is exactly the mistake that becomes easy to
+	# make once fighters join two groups at once. assert() only, no
+	# push_error: this is a per-frame path and Godot strips asserts from
+	# release builds, so a failure is loud in debug and free in shipping.
+	# The message is a CONSTANT string, not interpolated: assert()'s message
+	# argument is evaluated eagerly even when the condition holds, and this
+	# runs several times per zombie per frame. Formatting a name in here would
+	# cost an allocation per call in exactly the debug builds being playtested.
+	assert(best == null or not best.is_in_group("zombies"),
+		"[ZOMBIE] acquired another zombie as a hostile target. Zombies must never target zombies — GROUP_HOSTILE_TARGET is the AI-target axis, and nothing that hunts the player belongs in it.")
+
+	# INVARIANT: the hostile-target group is never empty while the player is
+	# alive. An empty result is only legitimate before the player is in the
+	# tree, or on the one frame their death latch is set.
+	assert(best != null or _no_live_player(),
+		"[ZOMBIE] no hostile target found while a live player exists. The player must be registered in GROUP_HOSTILE_TARGET at _ready().")
 	return best
+
+## True when there is genuinely nothing for a zombie to hunt — no player in
+## the tree at all, or one inside its single-frame death latch. Split out so
+## the assertion above reads as the invariant rather than the bookkeeping.
+func _no_live_player() -> bool:
+	var p := get_tree().get_first_node_in_group("player")
+	if p == null:
+		return true
+	return p.has_method("is_alive") and not p.is_alive()
 
 # --- External triggers ----------------------------------------------------
 ## Noise bus callback: alerts to a location, not to the player specifically.
