@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="FighterEconomyConfig" load_steps=2 format=3]
+
+; Recruit costs unchanged from the original build: 20/35/55/80 for the 5th
+; through 8th fighter. Upgrade tiers repriced 15/20/30 (sum 65) per Step 7 —
+; the earlier 10/20/35 pass shipped an assertion that compared the wrong
+; quantities (see FighterEconomyConfig.validate()'s own note).
+;
+; 65 < 80: deepening a fighter you already have is always cheaper than the
+; most expensive body you could add instead, at every roster size — not just
+; the 8th. That inversion (cheap to deepen, pricier to add bodies once you
+; already have several) is the actual design intent.
+
+[ext_resource type="Script" path="res://scripts/FighterEconomyConfig.gd" id="1_cfg"]
+
+[resource]
+script = ExtResource("1_cfg")
+; recruit_costs deliberately left unset — it takes the script's own default
+; (20/35/55/80, unchanged from the original build), and hand-writing a typed
+; Array[int] literal here has no precedent elsewhere in this project's
+; resources to confirm against. Still a real exported field: open this file
+; in the editor and it shows in the inspector with that default populated,
+; editable and re-saveable normally.
+upgrade_tier1_cost = 15
+upgrade_tier2_cost = 20
+upgrade_tier3_cost = 30
+suppressor_cost = 25

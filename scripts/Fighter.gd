@@ -23,14 +23,30 @@ class_name Fighter
 
 const GROUP := "fighters"
 
+## Emitted just before this fighter frees itself — the roster menu's cue to
+## move it from the live list to the memorial and stop reading its stats.
+## Matches Zombie's own `died` signal in spirit.
+signal died
+
 @export var fighter_type: FighterType
 
 # --- Rolled at recruitment, permanent --------------------------------------
 ## Fraction, not percent. Never reaches 1.0 — see FighterType.hit_chance_max.
+## CURRENT effective value — what engagement (a later phase) actually reads.
+## Upgrades move this toward the type's band ceiling; see upgrade().
 var hit_chance := 0.0
 var damage := 0
 var reaction_delay := 0.0
 var fighter_name := ""
+
+## The AS-ROLLED values, captured once at recruitment and never touched
+## again. upgrade() interpolates FROM these TOWARD the type's band ceiling,
+## rather than repeatedly nudging the current value — so three tiers produce
+## the same result regardless of the order effects a naive "move X% closer
+## each time" would introduce, and tier 3 always lands EXACTLY at the type's
+## max, never asymptotically approaching but missing it.
+var _base_hit_chance := 0.0
+var _base_damage := 0
 
 # --- Live state ------------------------------------------------------------
 ## Named `health`/`max_health` deliberately: that is the convention every
@@ -75,6 +91,8 @@ func recruit(type: FighterType, rng_seed: int = -1) -> void:
 
 	hit_chance = rng.randf_range(type.hit_chance_min, type.hit_chance_max)
 	damage = rng.randi_range(type.damage_min, type.damage_max)
+	_base_hit_chance = hit_chance
+	_base_damage = damage
 	reaction_delay = rng.randf_range(type.reaction_delay_min, type.reaction_delay_max)
 	fighter_name = _roll_name(rng, type)
 
@@ -91,6 +109,17 @@ func _roll_name(rng: RandomNumberGenerator, type: FighterType) -> String:
 
 func _ready() -> void:
 	add_to_group(GROUP)
+	# What blasts (grenades, claymores, the mortar, WP, the Apache) can
+	# damage. Joining this group is the ENTIRE integration — AreaDamageSystem
+	# queries the group and duck-types take_area_damage()/is_alive() rather
+	# than special-casing anything, so no change to that system was needed.
+	#
+	# NOT joined to Damageable.GROUP_BULLET or Zombie.GROUP_HOSTILE_TARGET —
+	# player bullets hitting fighters and zombies targeting fighters are both
+	# later phases, out of scope for this pass ("no new spatial or AI
+	# logic"). Both groups exist and are ready for a fighter to join with no
+	# further refactor when that phase happens.
+	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
 	# A hand-placed fighter with no type assigned still has to work, matching
 	# Zombie's own fallback.
 	if fighter_type == null:
@@ -109,6 +138,39 @@ func _ready() -> void:
 func is_alive() -> bool:
 	return not _dead
 
+# --- Damage ------------------------------------------------------------------
+## AreaDamageSystem's uniform blast entry point — the SAME contract Zombie
+## and Player implement. Faction-blind by construction: a grenade at a
+## fighter's feet kills it exactly as it would the player.
+func take_area_damage(amount: int, _origin: Vector3) -> void:
+	if _dead:
+		return
+	health = maxi(0, health - amount)
+	if health <= 0:
+		_die()
+
+## Feet/centre/head sample points for a blast's line-of-sight test, same
+## shape as Player.area_damage_points() and Zombie.area_damage_points().
+func area_damage_points() -> Array:
+	var t := fighter_type
+	return [
+		global_position + Vector3(0.0, 0.2, 0.0),
+		global_position + Vector3(0.0, t.body_center_y(), 0.0),
+		global_position + Vector3(0.0, t.total_height(), 0.0),
+	]
+
+## PERMANENT. No revival, no recovery of spent points — and that needs no
+## code of its own: nothing anywhere refunds an upgrade or suppressor
+## purchase, so freeing this node is what forfeiture IS. There is no balance
+## to roll back.
+func _die() -> void:
+	if _dead:
+		return
+	_dead = true
+	print("[FIGHTER] %s KIA — %s" % [fighter_name, stat_line()])
+	died.emit()
+	queue_free()
+
 ## The noise radius a shot from this fighter emits right now.
 ##
 ## SUPPRESSED BINDS TO THE M17 SPECIFICALLY, not to an average across the
@@ -121,6 +183,38 @@ func is_alive() -> bool:
 func noise_radius() -> float:
 	return fighter_type.noise_radius_suppressed if suppressed \
 		else fighter_type.noise_radius_unsuppressed
+
+## Applies the next upgrade tier. Purely a stat mutation — the roster menu
+## owns charging points for it; this never touches PointsManager itself, the
+## same separation FireMissionSystem keeps between "can I afford this" and
+## "what does this actually change."
+##
+## Interpolates from the AS-ROLLED base toward the type's band ceiling, so
+## tier 3 lands exactly at hit_chance_max/damage_max — never past it, which
+## is the whole mechanism behind "a fighter's effective hit chance can never
+## reach 100% at any tier": hit_chance_max itself is always < 1.0.
+func upgrade() -> bool:
+	if upgrade_tier >= 3:
+		return false
+	upgrade_tier += 1
+	var t: float = float(upgrade_tier) / 3.0
+	hit_chance = lerpf(_base_hit_chance, fighter_type.hit_chance_max, t)
+	damage = int(round(lerpf(float(_base_damage), float(fighter_type.damage_max), t)))
+	assert(hit_chance < 1.0,
+		"[FIGHTER] upgrade produced a hit chance >= 100% — FighterType.hit_chance_max must stay below 1.0.")
+	print("[FIGHTER] %s upgraded to T%d — hit %.0f%%, dmg %d" % [
+		fighter_name, upgrade_tier, hit_chance * 100.0, damage])
+	return true
+
+## One-time. The roster menu checks `not suppressed` before charging points —
+## this only refuses a redundant call defensively.
+func apply_suppressor() -> bool:
+	if suppressed:
+		return false
+	suppressed = true
+	print("[FIGHTER] %s suppressed — noise %.0fm -> %.0fm" % [
+		fighter_name, fighter_type.noise_radius_unsuppressed, fighter_type.noise_radius_suppressed])
+	return true
 
 ## Half-angle of the firing sector, which is what an arc test actually wants.
 func sector_half_angle_rad() -> float:

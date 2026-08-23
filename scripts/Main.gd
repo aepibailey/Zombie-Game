@@ -121,6 +121,7 @@ var _fire_missions: FireMissionSystem
 var _uav_overlay: UAVOverlay
 var _supply_drop_system: SupplyDropSystem
 var _apache_system: ApacheSystem
+var _roster_menu: RosterMenu
 
 ## Radio-callable fire missions, in menu order. Adding one is a .tres plus a
 ## line in _fire_mission_list() — FireMissionSystem registers whatever it's
@@ -130,6 +131,7 @@ const MISSION_SHAKE_AND_BAKE := preload("res://resources/mission_shake_and_bake.
 const SUPPLY_DROP_CONFIG := preload("res://resources/supply_drop.tres")
 const TARGET_PAINT_CONFIG := preload("res://resources/target_paint.tres")
 const APACHE_CONFIG := preload("res://resources/apache.tres")
+const FIGHTER_ECONOMY_CONFIG := preload("res://resources/fighter_economy.tres")
 
 ## Built as a typed local rather than a typed `const` array: FireMissionSystem
 ## .missions is Array[FireMissionConfig], and handing it an untyped literal
@@ -579,6 +581,14 @@ func _build_ui() -> void:
 	add_child(_apache_system)
 	_apache_system.setup(player, _hud, _radio_menu, _target_painter)
 
+	# Day-only, F to open. Recruiting calls back into _spawn_fighter() —
+	# the same placement the debug F6 key uses — so this menu never makes a
+	# spatial decision of its own.
+	_roster_menu = RosterMenu.new()
+	_roster_menu.name = "RosterMenu"
+	add_child(_roster_menu)
+	_roster_menu.setup(player, _hud, FIGHTER_ECONOMY_CONFIG, _spawn_fighter)
+
 	_restore_base()
 
 ## Rebuild the base from GameState if a snapshot exists. Runs inside
@@ -955,8 +965,19 @@ func _unhandled_input(event: InputEvent) -> void:
 # deliberately enforces NONE of them, because its only job is to put a fighter
 # in the world so the entity itself can be verified.
 func _debug_spawn_fighter() -> void:
+	var f := _spawn_fighter()
+	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
+	_hud.show_message("DEBUG FIGHTER — %s (%d live)" % [f.fighter_name, live])
+
+## THE ONE place a Fighter is spawned into the world. Both the debug F6 key
+## above and RosterMenu's recruit purchase (wired via a Callable in
+## _ready()) call this — recruiting reuses the exact same spawn-in-front-of-
+## the-player placement, not a second spatial decision. Placement UI (a real
+## ghost preview the player aims) is a later phase; this is deliberately the
+## simplest thing that puts a fighter somewhere reasonable.
+func _spawn_fighter() -> Fighter:
 	var f := Fighter.new()
-	f.name = "DebugFighter"
+	f.name = "Fighter"
 	add_child(f)
 	f.recruit(FIGHTER_TYPE_IRREGULAR)
 
@@ -969,9 +990,7 @@ func _debug_spawn_fighter() -> void:
 	# Facing the same way the player is, so the sector points downrange rather
 	# than back at whoever just spawned it.
 	f.global_rotation.y = player.global_rotation.y
-
-	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
-	_hud.show_message("DEBUG FIGHTER — %s (%d live)" % [f.fighter_name, live])
+	return f
 	print("[FIGHTER] %s" % f.stat_line())
 
 # --- Zombie bookkeeping ---------------------------------------------------
