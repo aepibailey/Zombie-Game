@@ -287,8 +287,10 @@ func open() -> void:
 	if active or _player == null:
 		return
 	active = true
-	# The day clock stops: planning shouldn't burn daylight.
-	GameManager.set_paused(true)
+	# The day clock stops: planning shouldn't burn daylight. Refcounted, so
+	# this coexists correctly with any other menu (the roster menu) also
+	# holding the clock at the same time.
+	GameManager.request_clock_halt("build_mode")
 	_cam.size = default_zoom
 	_cam.position = Vector3(0, camera_height, 0)
 	_cam.current = true
@@ -313,7 +315,7 @@ func close() -> void:
 	_close_repair_panel()
 	for m in get_tree().get_nodes_in_group("minefields"):
 		m.set_readout_forced(false)
-	GameManager.set_paused(false)
+	GameManager.release_clock_halt("build_mode")
 	_cam.current = false
 	if _player:
 		_player.camera.current = true
