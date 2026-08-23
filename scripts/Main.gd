@@ -83,6 +83,21 @@ const FIGHTER_TYPE_IRREGULAR := preload("res://resources/fighter_irregular.tres"
 const DEBUG_FIGHTER_SPAWN_DISTANCE := 4.0
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# TEMPORARY SCAFFOLDING — DELETE ONCE POSITION TWO SHIPS REAL CONCEALMENT.
+#
+# Step 8A (cover & concealment) has exactly one real cover candidate today
+# (sandbags — SOLID). Nothing in ObstacleCatalog is CONCEALMENT: no trees, no
+# foliage, no brush exist anywhere in this project yet (confirmed by audit).
+# This spawns one throwaway CONCEALMENT test box so the mechanic — and the
+# TEST GATE 1 "brush blocks sight but not rounds" check — can be verified at
+# all before Position Two adds real foliage. Not in ObstacleCatalog, not
+# buildable, not persisted, not art. See _debug_spawn_cover_test().
+const KEY_DEBUG_SPAWN_COVER_TEST := KEY_F7
+const DEBUG_COVER_TEST_SPAWN_DISTANCE := 4.0
+const DEBUG_COVER_TEST_SIZE := Vector3(1.5, 1.8, 1.5)
+# ---------------------------------------------------------------------------
+
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
 var _sun: DirectionalLight3D
@@ -954,6 +969,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.keycode == KEY_DEBUG_SPAWN_FIGHTER:
 		_debug_spawn_fighter()
 		return
+	if event.keycode == KEY_DEBUG_SPAWN_COVER_TEST:
+		_debug_spawn_cover_test()
+		return
 
 # ---------------------------------------------------------------------------
 # TEMPORARY SCAFFOLDING — DELETE WHEN POSITION TWO EXISTS. See the constants
@@ -992,6 +1010,51 @@ func _spawn_fighter() -> Fighter:
 	f.global_rotation.y = player.global_rotation.y
 	return f
 	print("[FIGHTER] %s" % f.stat_line())
+
+## See the KEY_DEBUG_SPAWN_COVER_TEST block above. A bare StaticBody3D + box
+## mesh + CoverSurface, CONCEALMENT type — collision_layer starts at 0 (not
+## even world-solid layer 1), so nothing about it blocks movement or rounds
+## by itself; CoverSurface.attach_to() ORs in ONLY the concealment bit. Real
+## foliage (Position Two) would look different but must wire up identically.
+func _debug_spawn_cover_test() -> void:
+	var fwd := -player.global_transform.basis.z
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.0001:
+		fwd = Vector3.FORWARD
+	fwd = fwd.normalized()
+
+	var body := StaticBody3D.new()
+	body.name = "DebugConcealmentTest"
+	body.collision_layer = 0
+	body.collision_mask = 0
+	body.global_position = player.global_position + fwd * DEBUG_COVER_TEST_SPAWN_DISTANCE
+	body.global_position.y += DEBUG_COVER_TEST_SIZE.y * 0.5
+
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = DEBUG_COVER_TEST_SIZE
+	col.shape = shape
+	body.add_child(col)
+
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = DEBUG_COVER_TEST_SIZE
+	mesh.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.65, 0.25, 0.55)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mesh.material_override = mat
+	body.add_child(mesh)
+
+	add_child(body)
+
+	var cover := CoverSurface.new()
+	cover.cover_type = CoverSurface.Type.CONCEALMENT
+	cover.blocks_navigation = false
+	body.add_child(cover)
+	cover.attach_to(body)
+
+	_hud.show_message("DEBUG CONCEALMENT TEST spawned (F7) — layer bit only, no LOS gating until Phase 2.")
 
 # --- Zombie bookkeeping ---------------------------------------------------
 func _prune_zombies() -> void:

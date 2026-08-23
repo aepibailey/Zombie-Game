@@ -43,6 +43,17 @@ const SOLID_SURFACE_MASK := 1 | SOLID_NO_NAV_LAYER
 ## occluded by a wall between the player and the thing they're aiming at.
 const INTERACT_LAYER := 64
 
+## Collision layer 8 (Step 8A). Cover: blocks projectiles AND line of sight —
+## sandbags, walls, vehicle hulks, large rocks. See CoverSurface.gd. Carried
+## ALONGSIDE an object's own solid layer (sandbags stay on layer 1 too, for
+## the movement/projectile collision that already worked before this layer
+## existed) — this bit is what the shared LOS helper (Phase 2) tests against.
+const COVER_SOLID_LAYER := 128
+## Collision layer 9 (Step 8A). Concealment: blocks line of sight ONLY —
+## rounds and bodies pass through. Foliage, brush, smoke, tarps, tall grass.
+## Must NEVER appear in a projectile collision mask (Phase 2 asserts this).
+const CONCEALMENT_LAYER := 256
+
 var type_id: String = ""
 var obstacle_type                # ObstacleCatalog.ObstacleType
 

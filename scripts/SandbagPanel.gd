@@ -57,6 +57,13 @@ var _shape: CollisionShape3D
 var _mat: StandardMaterial3D
 var _sfx: AudioStreamPlayer3D
 var _sfx_cooldown := 0.0
+## Cover retrofit (Step 8A): SOLID, blocking both rounds and LOS. Wraps the
+## SAME _solid body above — the panel keeps owning its own HP/destroy/repair,
+## this only tracks the panel's cover/concealment layer membership. Not given
+## a `world` reference: SandbagWall's own `changed` -> BuildMode ->
+## request_navmesh_rebake() pipeline already fires on every destroy/repair,
+## so a second rebake request here would be redundant.
+var _cover: CoverSurface
 
 ## `size` is THIS PANEL's own box (wall_size / 5 along X), `local_x` is its
 ## centre offset along the wall's length, `color` is the wall type's colour.
@@ -93,6 +100,10 @@ func _build_solid() -> void:
 	_shape.position.y = _size.y * 0.5
 	_solid.add_child(_shape)
 	add_child(_solid)
+	_cover = CoverSurface.new()
+	_cover.cover_type = CoverSurface.Type.SOLID
+	add_child(_cover)
+	_cover.attach_to(_solid)
 
 func _build_audio() -> void:
 	_sfx = AudioStreamPlayer3D.new()
@@ -168,6 +179,8 @@ func repair() -> void:
 	destroyed = false
 	if _shape:
 		_shape.set_deferred("disabled", false)
+	if _cover:
+		_cover.restore()
 	_refresh_visual_state()
 	changed.emit()
 
@@ -216,6 +229,13 @@ func _destroy() -> void:
 	# (a zombie's melee hit, an area-damage raycast pass).
 	if _shape:
 		_shape.set_deferred("disabled", true)
+	# Deferred, and queued AFTER the shape-disable above: notify_destroyed()'s
+	# own assertion reads _shape.disabled, which set_deferred() above hasn't
+	# actually applied yet at this point in the same callback — queuing both
+	# as deferred calls (in this order) means the assertion sees the real
+	# post-teardown state instead of a stale one.
+	if _cover:
+		_cover.call_deferred("notify_destroyed")
 	_refresh_visual_state()
 	changed.emit()
 
