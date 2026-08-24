@@ -1010,8 +1010,15 @@ func _debug_spawn_fighter() -> void:
 func _spawn_fighter() -> Fighter:
 	var f := Fighter.new()
 	f.name = "Fighter"
-	add_child(f)
+	# recruit() BEFORE add_child() — same convention _spawn_zombie() already
+	# uses (set config, then add_child, because _ready() consumes it
+	# synchronously). Calling recruit() after add_child() used to trip
+	# Fighter's own "recruit() called twice" assertion on every single
+	# recruit: add_child() runs _ready() synchronously, whose fallback saw an
+	# unrolled fighter and rolled it itself, so this call was already the
+	# SECOND roll by the time it ran.
 	f.recruit(FIGHTER_TYPE_IRREGULAR)
+	add_child(f)
 
 	var fwd := -player.global_transform.basis.z
 	fwd.y = 0.0

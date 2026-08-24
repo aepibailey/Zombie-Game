@@ -28,16 +28,36 @@ const GROUP := "fighters"
 ## Matches Zombie's own `died` signal in spirit.
 signal died
 
-@export var fighter_type: FighterType
+## True once recruit() has completed its roll. Backs every setter below: the
+## actual invariant this file promises is not merely "recruit() resists a
+## second call" — it's that NOTHING can mutate a fighter's rolled identity
+## once that identity is decided. recruit()'s own top-of-function assert
+## (unchanged, below) catches direct re-entry with a message naming the call;
+## these setters catch every OTHER way the same promise could be broken — a
+## stray field write from anywhere else in the codebase, now or later.
+var _rolled := false
+
+@export var fighter_type: FighterType:
+	set(value):
+		_assert_not_rolled("fighter_type")
+		fighter_type = value
 
 # --- Rolled at recruitment, permanent --------------------------------------
 ## Fraction, not percent. Never reaches 1.0 — see FighterType.hit_chance_max.
 ## CURRENT effective value — what engagement (a later phase) actually reads.
-## Upgrades move this toward the type's band ceiling; see upgrade().
+## Upgrades move this toward the type's band ceiling; see upgrade(). NOT
+## guarded by _rolled: upgrade() is a sanctioned post-roll write to this one.
 var hit_chance := 0.0
+## NOT guarded by _rolled — see hit_chance above; upgrade() writes this too.
 var damage := 0
-var reaction_delay := 0.0
-var fighter_name := ""
+var reaction_delay := 0.0:
+	set(value):
+		_assert_not_rolled("reaction_delay")
+		reaction_delay = value
+var fighter_name := "":
+	set(value):
+		_assert_not_rolled("fighter_name")
+		fighter_name = value
 
 ## The AS-ROLLED values, captured once at recruitment and never touched
 ## again. upgrade() interpolates FROM these TOWARD the type's band ceiling,
@@ -45,14 +65,25 @@ var fighter_name := ""
 ## the same result regardless of the order effects a naive "move X% closer
 ## each time" would introduce, and tier 3 always lands EXACTLY at the type's
 ## max, never asymptotically approaching but missing it.
-var _base_hit_chance := 0.0
-var _base_damage := 0
+var _base_hit_chance := 0.0:
+	set(value):
+		_assert_not_rolled("_base_hit_chance")
+		_base_hit_chance = value
+var _base_damage := 0:
+	set(value):
+		_assert_not_rolled("_base_damage")
+		_base_damage = value
 
 # --- Live state ------------------------------------------------------------
 ## Named `health`/`max_health` deliberately: that is the convention every
 ## damageable in this project follows (SandbagPanel, Player, Zombie), and it
 ## is what HealthBar3D.attach_to() reads by default. Phase 5 attaches it.
-var max_health := 100
+## max_health is part of the permanent rolled profile (never rewritten after
+## recruit()); health is live state and legitimately changes on every hit.
+var max_health := 100:
+	set(value):
+		_assert_not_rolled("max_health")
+		max_health = value
 var health := 100
 
 ## Purchased per fighter from the roster menu, lost permanently on death.
@@ -81,8 +112,18 @@ var _scan_timer := 0.0
 var _last_acquired_id := 0
 
 ## Rolls this fighter's permanent statline and gives it a name. Called ONCE,
-## by whatever recruits it. Calling it twice would re-roll a fighter the
-## player has already been shown, so it refuses.
+## by whatever recruits it — BEFORE that caller adds this node to the tree,
+## matching Main._spawn_zombie()'s own established convention of setting a
+## spawned actor's config before add_child() rather than after, since
+## _ready() consumes it synchronously. Calling it twice would re-roll a
+## fighter the player has already been shown, so it refuses.
+##
+## _ready()'s own fallback (a hand-placed fighter nobody explicitly recruited)
+## is the ONE other legitimate caller, and it only fires when hit_chance is
+## still 0.0 — i.e. exactly when nothing has rolled this fighter yet. Any
+## caller that follows the add-then-recruit order this file used to use would
+## hit BOTH: _ready() rolling it first, then the caller's own call finding it
+## already rolled. That was the actual bug this guard caught.
 ##
 ## `rng_seed` is optional and exists only so a test can reproduce a specific
 ## fighter; recruitment in play leaves it at -1 and uses the global RNG.
@@ -110,6 +151,23 @@ func recruit(type: FighterType, rng_seed: int = -1) -> void:
 	print("[FIGHTER] recruited %s — hit %.0f%%, dmg %d, reaction %.2fs, HP %d" % [
 		fighter_name, hit_chance * 100.0, damage, reaction_delay, max_health])
 
+	# LAST. Every permanent field above must already be written before this
+	# flips — it's what lets their own setters accept THIS function's writes
+	# while rejecting every other one, including a second call to this same
+	# function (which the assert at the top already stops first).
+	_rolled = true
+
+## Shared guard behind every "permanent" field's setter above. assert() (dev
+## builds) plus push_error() (release exports, where asserts are stripped) —
+## this is a correctness invariant, not a hot-path check (a fighter's
+## permanent fields are written a handful of times ever, at recruit()), so
+## the redundancy costs nothing and keeps a violation visible either way.
+func _assert_not_rolled(field_name: String) -> void:
+	assert(not _rolled,
+		"[FIGHTER] %s written after the initial roll — a fighter's rolled stats are permanent and must never change post-recruitment." % field_name)
+	if _rolled:
+		push_error("[FIGHTER] %s written after the initial roll." % field_name)
+
 func _roll_name(rng: RandomNumberGenerator, type: FighterType) -> String:
 	if type.names.is_empty():
 		return "Fighter"
@@ -128,8 +186,11 @@ func _ready() -> void:
 	# logic"). Both groups exist and are ready for a fighter to join with no
 	# further refactor when that phase happens.
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
-	# A hand-placed fighter with no type assigned still has to work, matching
-	# Zombie's own fallback.
+	# FALLBACK ONLY. The normal path recruits BEFORE add_child(), so by the
+	# time _ready() runs, hit_chance is already non-zero and this is a no-op —
+	# see recruit()'s docstring. This exists only for a hand-placed fighter
+	# nobody explicitly recruited (matching Zombie's own fallback), and it is
+	# the ONE case where hit_chance can still be 0.0 here.
 	if fighter_type == null:
 		fighter_type = load("res://resources/fighter_irregular.tres")
 	if hit_chance == 0.0:
