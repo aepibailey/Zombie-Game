@@ -114,7 +114,22 @@ static func _rids_of(nodes: Array) -> Array[RID]:
 ## the assert up — these must be visible in a release export too, since a mask
 ## regression here is silent in play (brush that stops bullets just reads as
 ## "the gun missed").
-static func assert_masks_sane() -> void:
+##
+## THE MASKS ARE PASSED IN, NOT READ FROM THEIR OWNERS, AND THAT IS LOAD-
+## BEARING. This file must depend on nothing but Obstacle. Player calls
+## clear_to_point() and Zombie calls between(), so if this function reached
+## back for Player.HIT_MASK it would close a Player -> LineOfSight -> Player
+## cycle; Godot resolves a cyclic class_name graph by failing on whatever
+## symbol it reaches first, which surfaces as an unrelated "Identifier not
+## declared" error somewhere else entirely. Main sits at the top of the
+## dependency graph and already knows every one of these, so it supplies them.
+##
+##   projectile_masks  {"Owner.CONST_NAME": mask_int, ...} — every mask in the
+##                     project that a round, grenade or thrown object is
+##                     traced against.
+##   crouch_eye_y / stand_eye_y  the player's two eye heights.
+static func assert_masks_sane(projectile_masks: Dictionary,
+		crouch_eye_y: float, stand_eye_y: float) -> void:
 	# INVARIANT: concealment never stops a round.
 	var projectile_clean: bool = (PROJECTILE_MASK & Obstacle.CONCEALMENT_LAYER) == 0
 	assert(projectile_clean,
@@ -123,16 +138,10 @@ static func assert_masks_sane() -> void:
 		push_error("[LOS] CONCEALMENT_LAYER is in PROJECTILE_MASK — concealment is wrongly stopping rounds.")
 
 	# The other projectile-carrying masks in the project must be equally clean.
-	# Named individually rather than scanned, so adding a new one is a
-	# deliberate act that shows up in this list.
-	var others := {
-		"Player.HIT_MASK": Player.HIT_MASK,
-		"Grenade.COLLISION_MASK": Grenade.COLLISION_MASK,
-		"AreaDamageSystem.COVER_MASK": AreaDamageSystem.COVER_MASK,
-		"Obstacle.SOLID_SURFACE_MASK": Obstacle.SOLID_SURFACE_MASK,
-	}
-	for mask_name in others:
-		var m: int = others[mask_name]
+	# Supplied by the caller and named there individually rather than scanned,
+	# so adding a new one is a deliberate act that shows up in that list.
+	for mask_name in projectile_masks:
+		var m: int = projectile_masks[mask_name]
 		var clean: bool = (m & Obstacle.CONCEALMENT_LAYER) == 0
 		assert(clean,
 			"[LOS] a projectile/physical mask includes CONCEALMENT_LAYER. Concealment must never stop a round, a grenade, or a thrown object.")
@@ -150,7 +159,7 @@ static func assert_masks_sane() -> void:
 
 	# INVARIANT: crouching is worth doing. Asserted here rather than in Player
 	# so every eye-height invariant sits in one place.
-	var crouch_lower: bool = Player.CROUCH_HEAD_Y < Player.STAND_HEAD_Y
+	var crouch_lower: bool = crouch_eye_y < stand_eye_y
 	assert(crouch_lower,
 		"[LOS] the player's crouched eye height is not below the standing one. Crouching behind cover is the core defensive verb; if these are equal or inverted it does nothing.")
 	if not crouch_lower:

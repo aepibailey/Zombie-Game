@@ -183,7 +183,17 @@ func _ready() -> void:
 	# Before anything can raycast: the cover/concealment mask invariants and
 	# the crouch eye-height invariant. Startup, so a regression shows up on
 	# launch rather than as "the gun sometimes misses through a bush".
-	LineOfSight.assert_masks_sane()
+	#
+	# The masks are gathered HERE and passed in rather than read inside
+	# LineOfSight, so that file stays a leaf depending only on Obstacle — see
+	# the note on assert_masks_sane(). Main already depends on all of these.
+	# Add any new projectile-traced mask to this list.
+	LineOfSight.assert_masks_sane({
+		"Player.HIT_MASK": Player.HIT_MASK,
+		"Grenade.COLLISION_MASK": Grenade.COLLISION_MASK,
+		"AreaDamageSystem.COVER_MASK": AreaDamageSystem.COVER_MASK,
+		"Obstacle.SOLID_SURFACE_MASK": Obstacle.SOLID_SURFACE_MASK,
+	}, Player.CROUCH_HEAD_Y, Player.STAND_HEAD_Y)
 	_build_lighting()
 	_build_world()
 	_build_ui()
