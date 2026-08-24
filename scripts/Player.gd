@@ -127,9 +127,20 @@ const LASER_OFF_REARM_TIME := 3.0
 @export var dot_halo_alpha: float = 0.55
 
 # --- Weapon tuning (per-weapon stats live in WeaponData / Arsenal) --------
-## Weapon rays hit the world (layer 1) and zombie head hitboxes (layer 3).
-## Other Area3Ds (e.g. the supply crate trigger) live on layer 2 and are ignored.
-const HIT_MASK := 1 | 4
+## Weapon rays hit the world (layer 1), zombie head hitboxes (layer 3) and
+## cover (layer 8). Other Area3Ds (e.g. the supply crate trigger) live on
+## layer 2 and are ignored.
+##
+## COVER_SOLID_LAYER is here so that cover stops a round even if the cover
+## object does not ALSO happen to sit on world-solid layer 1. Sandbags do sit
+## on layer 1, so this changes nothing for them today — it is what makes a
+## future cover object (a hulk, a rock) correct by construction rather than by
+## remembering to give it two layers.
+##
+## CONCEALMENT_LAYER is deliberately, permanently absent: rounds pass through
+## brush. LineOfSight.assert_masks_sane() checks this mask at startup for
+## exactly that bit.
+const HIT_MASK := 1 | 4 | Obstacle.COVER_SOLID_LAYER
 const STARTING_WEAPON := "m17"
 const MAX_HP := 100
 
@@ -618,7 +629,6 @@ func _update_laser_detection(delta: float) -> void:
 	_laser_detect_timer = LASER_DETECT_INTERVAL
 
 	var dot_pos := _laser_dot.global_position
-	var space := get_world_3d().direct_space_state
 	for node in get_tree().get_nodes_in_group("zombies"):
 		var z = node
 		if not is_instance_valid(z) or not z.is_alive():
@@ -635,19 +645,19 @@ func _update_laser_detection(delta: float) -> void:
 			if prev.distance_to(dot_pos) < LASER_REARM_DISTANCE:
 				continue
 
-		# Line of sight from the ZOMBIE to the dot. The dot sits on a surface,
-		# so the ray is expected to hit at the dot — anything closer is an
-		# occluder in between.
-		var from: Vector3 = z.global_position + Vector3(0, 1.4, 0)
-		var q := PhysicsRayQueryParameters3D.create(from, dot_pos)
-		q.collision_mask = 1
-		q.exclude = [z.get_rid()]
-		var hit := space.intersect_ray(q)
-		var visible_dot := true
-		if hit:
-			var hp: Vector3 = hit.position
-			visible_dot = hp.distance_to(dot_pos) < 0.5
-		if not visible_dot:
+		# Line of sight from the ZOMBIE's EYE to the dot, through the one
+		# shared implementation. The dot sits on a surface, so the ray is
+		# expected to terminate at the dot — anything landing meaningfully
+		# short is a real occluder in between, which is what the tolerance
+		# argument expresses.
+		#
+		# This used to cast its own ray from `z.global_position + 1.4` against
+		# mask 1 only. Two consequences, both now fixed by routing through
+		# LineOfSight: the origin was the zombie's shins rather than its eye
+		# (so cover between the two was frequently not on the ray at all), and
+		# the mask saw neither the concealment layer nor ditch walls — a
+		# zombie in a pit, or behind brush, could still spot the dot.
+		if not LineOfSight.clear_to_point(z, dot_pos, LineOfSight.SURFACE_POINT_TOLERANCE):
 			continue
 
 		_laser_marks[id] = dot_pos
@@ -2088,6 +2098,20 @@ func take_area_damage(amount: int, origin: Vector3) -> void:
 ## same-frame consumer (the blast loop is synchronous) has sampled it.
 func is_alive() -> bool:
 	return not _died_this_frame
+
+## THE point sight enters and leaves this player — LineOfSight's contract (see
+## LineOfSight.eye_point()). This is the camera's own position, not a body
+## origin plus an offset: `head` is what the crouch lerp in _physics_process
+## actually moves, so a crouching player's eye point drops for real, and a
+## zombie raycasting at it genuinely loses the shot line over waist-high
+## sandbags. Pitch-stable: Camera3D sits at Head's local origin, so looking up
+## or down never moves the eye.
+##
+## Deliberately reads the LIVE lerped height rather than the crouch target, so
+## the transition is honest in both directions — you are not instantly safe the
+## frame you press crouch, and not instantly exposed the frame you release it.
+func eye_position() -> Vector3:
+	return head.global_position
 
 ## Line-of-sight sample points for a blast: feet / chest / head. Uses the live
 ## head height so crouching behind sandbags genuinely reduces exposure.

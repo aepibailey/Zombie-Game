@@ -64,6 +64,24 @@ class_name FighterType
 ## Facing wedge marker colour, so a fighter's sector is identifiable on sight.
 @export var facing_marker: Color = Color(0.45, 0.7, 1.0)
 
+## Height of this fighter's eye above its own feet, for line of sight.
+##
+## D4 — ONE FIXED HEIGHT, NO CROUCH. A fighter never ducks, never peeks and
+## never adjusts its stance to see over something. A fighter emplaced behind
+## full cover genuinely cannot see or shoot over it, and that is a consequence
+## the PLAYER is meant to reason about at placement time (which is what the
+## sector-of-fire preview exists to show). Do not add a crouched variant of
+## this number, and do not make it stance-dependent.
+##
+## Slightly below body_height: the eye sits in the head, not on the crown.
+@export var eye_height: float = 1.58
+
+## How often acquire_target() is re-run for the visibility readout. NOT the
+## firing cadence (that is fire_interval, and the engagement loop is a later
+## phase) — this only paces how quickly a fighter notices its shot line has
+## opened or closed.
+@export var acquire_scan_interval: float = 0.25
+
 # --- Derived ---------------------------------------------------------------
 ## Capsule centre height, matching ZombieType's own convention so world-space
 ## UI (health bars, markers) can size against either without special-casing.

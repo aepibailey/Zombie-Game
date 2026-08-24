@@ -180,6 +180,10 @@ var _all_clear_shown := false   # prompt fires once per all-clear event
 
 func _ready() -> void:
 	randomize()
+	# Before anything can raycast: the cover/concealment mask invariants and
+	# the crouch eye-height invariant. Startup, so a regression shows up on
+	# launch rather than as "the gun sometimes misses through a bush".
+	LineOfSight.assert_masks_sane()
 	_build_lighting()
 	_build_world()
 	_build_ui()

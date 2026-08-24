@@ -947,14 +947,23 @@ func _face(target: Vector3) -> void:
 # NOTE: line-of-sight is only consulted from Chase (to track/lose a target the
 # zombie already has a confirmed fix on). Wander/Investigate never look at the
 # player, so noise events are the only thing that can move an un-alerted zombie.
+##
+## Delegates to the ONE shared implementation (LineOfSight.between). This
+## function used to cast its own ray from `global_position + 1.4` to
+## `target.global_position + 1.2` — two hardcoded offsets off two body
+## origins, blind to both this variant's actual height and whether the target
+## was crouching. Cover could not work against it: the ray left this zombie's
+## shins and arrived at the player's shins, so a waist-high sandbag wall was
+## never between the two endpoints at all.
 func _has_los_to(target: Node3D) -> bool:
-	var space := get_world_3d().direct_space_state
-	var from := global_position + Vector3(0, 1.4, 0)
-	var to := target.global_position + Vector3(0, 1.2, 0)
-	var q := PhysicsRayQueryParameters3D.create(from, to)
-	q.exclude = [get_rid()]
-	var hit := space.intersect_ray(q)
-	return hit and hit.collider == target
+	return LineOfSight.between(self, target)
+
+## THE point sight leaves this zombie — LineOfSight's contract. Derived from
+## the variant's own geometry (ZombieType.head_center_y()), so a short shambler
+## and a tall leaper genuinely see over different things instead of sharing one
+## magic number.
+func eye_position() -> Vector3:
+	return global_position + Vector3(0.0, zombie_type.head_center_y(), 0.0)
 
 ## The hostile target this zombie is currently pursuing, or null.
 ##

@@ -72,6 +72,14 @@ var _dead := false
 var _body_mesh: MeshInstance3D
 var _facing_marker: MeshInstance3D
 
+## Acquisition readout state. OBSERVABILITY ONLY — this pair exists so that
+## "a fighter behind cover acquires nothing" is something you can watch happen
+## in the console, rather than an untestable claim about a query nobody calls.
+## The actual engagement loop (rolling to hit, cadence, noise, damage) is a
+## later phase and none of it belongs here.
+var _scan_timer := 0.0
+var _last_acquired_id := 0
+
 ## Rolls this fighter's permanent statline and gives it a name. Called ONCE,
 ## by whatever recruits it. Calling it twice would re-roll a fighter the
 ## player has already been shown, so it refuses.
@@ -132,11 +140,82 @@ func _ready() -> void:
 	collision_mask = 1
 	_build_body()
 
+## Acquisition readout — see _scan_timer. Logs only on a CHANGE (acquired,
+## lost, or switched target), so walking a zombie in and out from behind a
+## sandbag wall prints two lines rather than flooding the console.
+func _process(delta: float) -> void:
+	if _dead:
+		return
+	_scan_timer -= delta
+	if _scan_timer > 0.0:
+		return
+	_scan_timer = fighter_type.acquire_scan_interval
+	var target := acquire_target()
+	var id: int = target.get_instance_id() if target != null else 0
+	if id == _last_acquired_id:
+		return
+	_last_acquired_id = id
+	if target == null:
+		print("[FIGHTER] %s — no target (out of arc, out of range, or no line of sight)" % fighter_name)
+	else:
+		print("[FIGHTER] %s — acquired %s at %.1fm" % [
+			fighter_name, target.name, global_position.distance_to(target.global_position)])
+
 # --- Queries ---------------------------------------------------------------
 ## True until this fighter has actually died. Matches Zombie.is_alive() and
 ## the optional liveness convention AreaDamageSystem checks for.
 func is_alive() -> bool:
 	return not _dead
+
+## THE point sight leaves this fighter — LineOfSight's contract. Fixed, never
+## crouch-adjusted; see FighterType.eye_height for why that is deliberate.
+func eye_position() -> Vector3:
+	return global_position + Vector3(0.0, fighter_type.eye_height, 0.0)
+
+## The zombie this fighter would engage right now, or null.
+##
+## THREE GATES, ALL REQUIRED: inside engagement_range, inside the assigned
+## sector of fire, and visible. The third is the Step 8A addition and it is
+## not negotiable — a fighter behind full cover, or looking into a wall,
+## acquires nothing, exactly as D4 describes. It is also why this query lives
+## here rather than being inlined into a firing loop: the placement preview
+## (phase 4) shows the player WHY an emplacement is blind, and it must be
+## asking the same question the fighter itself asks.
+##
+## Nearest-first among candidates that pass all three.
+##
+## OWNS NO FIRING. Rolling to hit, cadence, reaction delay and noise are the
+## engagement phase's, not this one's. This answers "what can I see" only.
+func acquire_target() -> Node3D:
+	if _dead:
+		return null
+	var best: Node3D = null
+	var best_dist := INF
+	var half_angle := sector_half_angle_rad()
+	var fwd := facing()
+	for node in get_tree().get_nodes_in_group("zombies"):
+		var z := node as Node3D
+		if z == null or not is_instance_valid(z):
+			continue
+		if z.has_method("is_alive") and not z.is_alive():
+			continue
+		var to_target := z.global_position - global_position
+		var dist := to_target.length()
+		if dist > fighter_type.engagement_range or dist < 0.001:
+			continue
+		if dist >= best_dist:
+			continue
+		# Ground sector: pitch never widens or narrows a fighter's arc.
+		var flat := Vector3(to_target.x, 0.0, to_target.z)
+		if flat.length_squared() < 0.000001:
+			continue
+		if fwd.angle_to(flat.normalized()) > half_angle:
+			continue
+		if not LineOfSight.between(self, z):
+			continue
+		best = z
+		best_dist = dist
+	return best
 
 # --- Damage ------------------------------------------------------------------
 ## AreaDamageSystem's uniform blast entry point — the SAME contract Zombie
