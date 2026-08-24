@@ -1,4 +1,5 @@
 extends CharacterBody3D
+class_name Zombie
 ## Walker zombie: enum state machine (Wander / Investigate / Chase / Attack)
 ## driven by the noise bus and line-of-sight. See PROJECT_SPEC.md "Zombie AI".
 
