@@ -59,13 +59,13 @@ const KEY_FINISH_NIGHT := KEY_N
 const ACTION_NVG_TOGGLE := "nvg_toggle"
 
 # Debug: show distance to every zombie within footstep-audible range.
-const KEY_DEBUG_AUDIO := KEY_F3
+const KEY_DEBUG_AUDIO := KEY_J
 # Debug: translucent head/body hitbox volumes on every zombie.
-const KEY_DEBUG_HITBOX := KEY_F4
+const KEY_DEBUG_HITBOX := KEY_K
 ## Debug: detonate a test blast at the player's feet, to exercise the shared
 ## area-damage system without needing a thrown grenade. Safe to remove once
 ## grenades are in the player's hands.
-const KEY_DEBUG_BLAST := KEY_F5
+const KEY_DEBUG_BLAST := KEY_L
 const DEBUG_BLAST_PROFILE := preload("res://resources/frag_grenade.tres")
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ const DEBUG_BLAST_PROFILE := preload("res://resources/frag_grenade.tres")
 # system can be built and tested. Everything in this block and in
 # _debug_spawn_fighter() is throwaway — no other code should come to depend
 # on it. See PROJECT_SPEC.md "Allied fighters".
-const KEY_DEBUG_SPAWN_FIGHTER := KEY_F6
+const KEY_DEBUG_SPAWN_FIGHTER := KEY_M
 const FIGHTER_TYPE_IRREGULAR := preload("res://resources/fighter_irregular.tres")
 ## How far in front of the player a debug fighter appears.
 const DEBUG_FIGHTER_SPAWN_DISTANCE := 4.0
@@ -93,7 +93,7 @@ const DEBUG_FIGHTER_SPAWN_DISTANCE := 4.0
 # TEST GATE 1 "brush blocks sight but not rounds" check — can be verified at
 # all before Position Two adds real foliage. Not in ObstacleCatalog, not
 # buildable, not persisted, not art. See _debug_spawn_cover_test().
-const KEY_DEBUG_SPAWN_COVER_TEST := KEY_F7
+const KEY_DEBUG_SPAWN_COVER_TEST := KEY_O
 const DEBUG_COVER_TEST_SPAWN_DISTANCE := 4.0
 const DEBUG_COVER_TEST_SIZE := Vector3(1.5, 1.8, 1.5)
 # ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ func _build_ui() -> void:
 	_apache_system.setup(player, _hud, _radio_menu, _target_painter)
 
 	# Day-only, F to open. Recruiting calls back into _spawn_fighter() —
-	# the same placement the debug F6 key uses — so this menu never makes a
+	# the same placement the debug M key uses — so this menu never makes a
 	# spatial decision of its own.
 	_roster_menu = RosterMenu.new()
 	_roster_menu.name = "RosterMenu"
@@ -1001,7 +1001,7 @@ func _debug_spawn_fighter() -> void:
 	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
 	_hud.show_message("DEBUG FIGHTER — %s (%d live)" % [f.fighter_name, live])
 
-## THE ONE place a Fighter is spawned into the world. Both the debug F6 key
+## THE ONE place a Fighter is spawned into the world. Both the debug M key
 ## above and RosterMenu's recruit purchase (wired via a Callable in
 ## _ready()) call this — recruiting reuses the exact same spawn-in-front-of-
 ## the-player placement, not a second spatial decision. Placement UI (a real
@@ -1075,7 +1075,7 @@ func _debug_spawn_cover_test() -> void:
 	body.add_child(cover)
 	cover.attach_to(body)
 
-	_hud.show_message("DEBUG CONCEALMENT TEST spawned (F7) — layer bit only, no LOS gating until Phase 2.")
+	_hud.show_message("DEBUG CONCEALMENT TEST spawned (O) — layer bit only, no LOS gating until Phase 2.")
 
 # --- Zombie bookkeeping ---------------------------------------------------
 func _prune_zombies() -> void:

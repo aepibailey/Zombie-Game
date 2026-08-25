@@ -37,8 +37,11 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 | `T` | Open the radio menu (requires the Radio; movement stays on, look is frozen while it's open) |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
-| `F3` | Debug: list audible zombies + their distance |
-| `F4` | Debug: show zombie head/body hitbox volumes |
+| `J` | Debug: list audible zombies + their distance |
+| `K` | Debug: show zombie head/body hitbox volumes |
+| `L` | Debug: detonate a test blast at the player |
+| `M` | Debug: spawn a recruited fighter in front of the player |
+| `O` | Debug: spawn a concealment (CoverSurface) test box |
 
 In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.
 

@@ -12,7 +12,7 @@ class_name RosterMenu
 ##
 ## OWNS NO PLACEMENT OR COMBAT CODE. Recruiting spawns a fighter via a
 ## Callable supplied by Main (the same spawn-in-front-of-player logic the
-## debug F6 key already uses) — this menu does not reason about world space
+## debug M key already uses) — this menu does not reason about world space
 ## itself. Damage and death are Fighter's own (via the shared
 ## AreaDamageSystem); this menu only reads the result.
 

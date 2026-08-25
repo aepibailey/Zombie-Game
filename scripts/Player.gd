@@ -413,7 +413,7 @@ var _laser_beam: MeshInstance3D
 var _laser_beam_mesh: CylinderMesh
 var _laser_beam_mat: StandardMaterial3D
 var _laser_fade_mat: StandardMaterial3D
-# Laser debug telemetry (shown in the F3 overlay).
+# Laser debug telemetry (shown in the J overlay).
 var _laser_dbg := "laser: idle"
 # Laser-dot detection state.
 var _laser_detect_timer := 0.0

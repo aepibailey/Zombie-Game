@@ -8,7 +8,7 @@ class_name FighterEconomyConfig
 ## SupplyDropConfig/ApacheConfig use.
 
 ## Hard cap on live fighters. The 5th through 8th cost points; the first four
-## are free (currently reachable only via Main's debug F6 spawn, standing in
+## are free (currently reachable only via Main's debug M spawn, standing in
 ## for the Position Two rescue grant — see Main.gd's scaffolding note).
 const FIGHTER_CAP := 8
 

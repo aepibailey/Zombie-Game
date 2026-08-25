@@ -1232,8 +1232,9 @@ func _build_hitbox_debug() -> void:
 	_hitbox_debug = Node3D.new()
 	add_child(_hitbox_debug)
 
-	# Driven by the variant, not hardcoded — otherwise F4 would draw walker
-	# volumes around a leaper and misreport exactly what it exists to verify.
+	# Driven by the variant, not hardcoded — otherwise the K debug overlay
+	# would draw walker volumes around a leaper and misreport exactly what
+	# it exists to verify.
 	var t := zombie_type
 	var body_vis := MeshInstance3D.new()
 	var bm := CapsuleMesh.new()
