@@ -35,6 +35,8 @@ var _rows_box: VBoxContainer
 ## memorial screen. {name, hit_chance, damage, upgrade_tier, kills} snapshots,
 ## taken in _on_fighter_died() before the node frees.
 var _memorial: Array = []
+## Last state the rows were built against — see _process()/_state_signature().
+var _last_signature := ""
 
 func setup(player: Player, hud: HUD, econ: FighterEconomyConfig,
 		spawn_fighter_fn: Callable) -> void:
@@ -97,9 +99,32 @@ func _ready() -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(hint)
 
+## Rebuilds ONLY when something actually changed.
+##
+## This used to call _refresh() unconditionally every frame, which made the
+## menu's buttons impossible to click: _refresh() queue_free()s every row and
+## builds new ones, and a Button only emits `pressed` when the press AND the
+## release land on the SAME instance. Rebuilding every frame meant the button
+## you pressed no longer existed a frame later, so the click never completed.
+## Nothing looked broken — the menu drew correctly and simply ignored you.
 func _process(_delta: float) -> void:
-	if _open:
-		_refresh()   # live stats — points balance and any mid-view change
+	if not _open:
+		return
+	var sig := _state_signature()
+	if sig == _last_signature:
+		return
+	_refresh()
+
+## Everything the rows actually display, as one comparable string. Points are
+## in it because they drive each button's `disabled` state; stat_line() covers
+## tier, suppressor, health and the lifetime counters.
+func _state_signature() -> String:
+	var parts: PackedStringArray = [
+		str(PointsManager.points), str(_memorial.size())]
+	for node in _live_fighters():
+		var f := node as Fighter
+		parts.append("%d:%s" % [f.get_instance_id(), f.stat_line()])
+	return "|".join(parts)
 
 func is_open() -> bool:
 	return _open
@@ -167,7 +192,13 @@ func _on_fighter_died(f: Fighter) -> void:
 # --- Rows ------------------------------------------------------------------
 func _refresh() -> void:
 	_points_label.text = "Points: %d" % PointsManager.points
+	_last_signature = _state_signature()
+	# remove_child BEFORE queue_free: queue_free is deferred to end of frame,
+	# so a second _refresh() in the same frame (a purchase handler calling it
+	# directly right after _process did) would otherwise re-read the old rows
+	# and add a duplicate set alongside them.
 	for c in _rows_box.get_children():
+		_rows_box.remove_child(c)
 		c.queue_free()
 
 	var fighters := _live_fighters()

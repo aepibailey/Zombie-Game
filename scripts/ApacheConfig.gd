@@ -73,6 +73,32 @@ class_name ApacheConfig
 ## reading the mortar's real profile rather than a copied number.
 @export var burst_profile: AreaDamageProfile
 
+# --- Tracers (COSMETIC ONLY — never gate a shot) -------------------------------
+## Tracer streaks drawn from the airframe's gun to the burst's impact point.
+##
+## THESE ARE DRAWN AFTER THE BURST HAS ALREADY RESOLVED, and read the
+## aircraft's position ONLY to know where to start the line. Nothing here
+## feeds back into targeting: no tracer can fail, be blocked, or miss, and
+## the aircraft's position still cannot gate a shot. If a future change makes
+## a tracer's outcome affect damage, that breaks the Apache's core rule — see
+## ApacheSystem's own note on _acquire_target's signature.
+@export var tracer_enabled: bool = true
+## Seconds for a tracer to travel muzzle-to-impact. Purely a look: the rounds
+## have already landed. Short enough to read as fast, long enough to see.
+@export var tracer_travel_time: float = 0.30
+## How many streaks per burst. Not rounds_per_burst — tracer belting is
+## typically every few rounds, and 20 lines would read as a solid beam.
+@export var tracer_count: int = 5
+## Stagger between streaks, as a fraction of tracer_travel_time.
+@export var tracer_stagger: float = 0.10
+## Length of each streak in metres.
+@export var tracer_length: float = 14.0
+@export var tracer_color: Color = Color(1.0, 0.72, 0.28)
+## Ground flash at the impact point as each streak lands.
+@export var tracer_impact_flash: bool = true
+@export var tracer_impact_color: Color = Color(1.0, 0.85, 0.45)
+@export var tracer_impact_radius: float = 1.6
+
 # --- Safety -------------------------------------------------------------------
 ## No-fire bubble around the PLAYER'S LIVE POSITION, re-read every cycle.
 ## The aircraft refuses any burst whose impact point falls inside it, and

@@ -14,7 +14,13 @@
 ;
 ; APACHE_COST 90 sits above the mortar's 50 and the shake-and-bake's 80.
 ; APACHE_COOLDOWN 300s starts on DEPARTURE, so a full sortie plus cooldown is
-; roughly 25 + 90 + 300 = 415 seconds of real time between calls.
+; roughly 10 + 90 + 300 = 400 seconds of real time between calls.
+;
+; TRANSIT_TIME_IN 10s, down from 25s after playtest: 25 seconds of nothing
+; happening between the call and the first burst read as the enabler being
+; broken rather than as the aircraft being far away. The wait is now short
+; enough to stay legible as transit and long enough that the call is still a
+; commitment made before you need it.
 ;
 ; PLAYTEST FLAG: with noise removed by design, this enabler has no in-fiction
 ; drawback — its entire cost is points, cooldown and finite ammo. If it plays
@@ -32,7 +38,7 @@ apache_cost = 90
 apache_cooldown = 300.0
 patrol_radius = 35.0
 paint_max_range = 0.0
-transit_time_in = 25.0
+transit_time_in = 10.0
 time_on_station = 90.0
 orbit_radius = 60.0
 orbit_altitude = 70.0
@@ -44,4 +50,13 @@ rounds_per_burst = 20
 burst_duration = 0.8
 total_rounds = 300
 burst_profile = ExtResource("2_burst")
+tracer_enabled = true
+tracer_travel_time = 0.3
+tracer_count = 5
+tracer_stagger = 0.1
+tracer_length = 14.0
+tracer_color = Color(1, 0.72, 0.28, 1)
+tracer_impact_flash = true
+tracer_impact_color = Color(1, 0.85, 0.45, 1)
+tracer_impact_radius = 1.6
 no_fire_radius = 12.0

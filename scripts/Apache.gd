@@ -125,6 +125,17 @@ func retask(new_box_centre: Vector3) -> void:
 func is_on_station() -> bool:
 	return state == State.ON_STATION
 
+## Where a tracer should be drawn FROM: roughly the chin turret, under and
+## forward of the fuselage. The hull mesh is 7m long on local Z, so this sits
+## just ahead of its nose and slightly below the centreline.
+##
+## COSMETIC ACCESSOR. Its only caller is ApacheSystem._fire_burst(), AFTER
+## that burst has already resolved — see ApacheTracer's own note. Nothing
+## that decides whether or what to shoot may ever call this: the aircraft's
+## position is deliberately not expressible in a targeting decision.
+func gun_muzzle() -> Vector3:
+	return global_transform * Vector3(0.0, -0.7, -3.6)
+
 ## Seconds of station time left. Reads the clock that only advances while
 ## ON_STATION, so transit never eats into it.
 func station_time_left() -> float:

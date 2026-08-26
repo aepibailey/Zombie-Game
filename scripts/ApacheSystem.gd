@@ -501,6 +501,18 @@ func _fire_burst() -> bool:
 	_rounds_left -= fired
 	AreaDamageSystem.detonate(impact, config.burst_profile, Vector3.ZERO,
 		"apache 30mm")
+
+	# TRACERS LAST, AFTER THE BURST HAS ALREADY RESOLVED. This is the only
+	# place in the entire system that reads the airframe's position, and it
+	# reads it purely to know where to draw a line FROM — the shot is already
+	# decided and applied by the line above, so no cosmetic here can gate,
+	# block or miss it. That ordering is the whole reason drawing from the
+	# aircraft is safe; see _acquire_target()'s note on why the aircraft's
+	# position must never reach a targeting decision.
+	if is_instance_valid(_sortie):
+		ApacheTracer.spawn(get_tree().current_scene, _sortie.gun_muzzle(),
+			impact, config)
+
 	print("[APACHE] burst — %d rounds at (%.1f, %.1f, %.1f), %d remaining" % [
 		fired, impact.x, impact.y, impact.z, _rounds_left])
 	return true
