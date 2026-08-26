@@ -1,6 +1,6 @@
 # Roadmap
 
-**Last reconciled: 2026-08-22.** This document describes SHIPPED STATE —
+**Last reconciled: 2026-08-26.** This document describes SHIPPED STATE —
 what actually exists in the codebase, verified against source, not what a
 spec once proposed. `PATROL_BASE_ZERO_V2_SPEC.md` describes design intent and
 may run ahead of the code; when the two disagree, this file follows the code.
@@ -64,11 +64,50 @@ Note the Supply Drop's free/guaranteed dawn-drop stopgap (nights 3/5/10) was
 arrives. Two coexisting drop paths made the paid drop's pricing unreadable in
 playtest.
 
+**Fighter system** (`Fighter`/`FighterType`) — stationary, permanently-statted
+allied irregulars the player places by hand. Stats (hit chance, damage,
+reaction delay) are rolled once at recruitment from `FighterType`'s bands and
+never re-roll; a fighter that shoots (not yet built — see Planned) resolves a
+hit-chance roll, never a raycast, so it never aims as well as the player.
+Recruited and managed through the **roster menu** (`RosterMenu`, `F` to open,
+Day-only, halts the clock via `GameManager`'s shared refcounted
+`request_clock_halt`/`release_clock_halt`): recruit (`FighterEconomyConfig`,
+cap 8, first 4 free — a stand-in for the Position Two rescue grant until that
+map exists — 5th through 8th cost 20/35/55/80), upgrade in 3 tiers
+(15/20/30 pts, interpolates from the as-rolled stats toward the type's band
+ceiling, never past it), and a permanent suppressor (25 pts). Killable by any
+blast (`AreaDamageSystem.GROUP_DAMAGEABLE`) exactly like the player. Cover-
+gated target acquisition exists (range + sector arc + line of sight, see
+below) but is observability-only — no firing loop yet, and fighters are not
+yet a target for player rounds or zombie AI (see Planned).
+
+**Cover & concealment** (`CoverSurface`, `LineOfSight`) — Phases 1-2 of a
+4-phase build. Two physics layers, `cover_solid` (stops rounds and blocks
+sight — sandbags today) and `concealment` (blocks sight only, rounds pass
+through — no in-game object uses this yet). `CoverSurface` is a reusable
+component, not a replacement for an object's own health/destruction; sandbags
+carry one alongside their existing per-section HP. Exactly one line-of-sight
+implementation (`LineOfSight.gd`) is now consumed by zombie chase LOS, the
+laser-dot reveal, and fighter target acquisition — all cast eye-to-eye
+(`eye_position()` per entity: the player's live crouch-lerped camera, a
+zombie's per-variant head height, a fighter's fixed `FighterType.eye_height`),
+replacing a body-origin-based check that ignored player crouch entirely.
+Area-damage occlusion and the placement/debug preview (Phases 3-4) are not
+yet built — see Planned.
+
 ## Planned
 
-- **Fighter system** (a second, faster aircraft enabler distinct from the
-  Apache) — not started.
-- **Position Two map** — not started.
+- **Cover & concealment, Phases 3-4** — area-damage occlusion needs to be
+  reconciled against `AreaDamageSystem`'s existing graduated multi-point
+  exposure multiplier (not yet decided: binary block vs. keep it graduated);
+  then the fighter-placement sector-of-fire preview and a debug cover/
+  concealment volume tint mode (for building Position Two against).
+- **Fighter combat** — the actual firing loop (cadence, the hit-chance roll,
+  noise), fighters as a target for player rounds (`Damageable.GROUP_BULLET`)
+  and for zombie AI (`Zombie.GROUP_HOSTILE_TARGET`). The entity, economy and
+  cover-gated acquisition above are done; nothing shoots yet.
+- **Position Two map** — not started. Also what the fighter system's
+  first-4-free recruiting currently stands in for.
 - **Transit night** — not started.
 - **Second and third zombie variants** beyond walker/leaper — not started.
 - **Art / audio pass** — every visual in the project is blockout-primitive;
