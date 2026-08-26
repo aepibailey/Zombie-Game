@@ -64,11 +64,8 @@ static func between(observer: Node3D, target: Node3D) -> bool:
 	if not is_instance_valid(observer) or not is_instance_valid(target):
 		return false
 	var space := observer.get_world_3d().direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(eye_point(observer), eye_point(target))
-	q.collision_mask = LOS_MASK
-	q.collide_with_areas = false
-	q.exclude = _rids_of([observer, target])
-	return space.intersect_ray(q).is_empty()
+	return trace(space, eye_point(observer), eye_point(target),
+		_rids_of([observer, target]))["clear"]
 
 ## Eye-to-arbitrary-point, where the point is a position in space rather than
 ## an entity (a laser dot on a wall, a fan ray's endpoint in the placement
@@ -79,16 +76,12 @@ static func clear_to_point(observer: Node3D, to: Vector3,
 	if observer == null or not is_instance_valid(observer):
 		return false
 	var space := observer.get_world_3d().direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(eye_point(observer), to)
-	q.collision_mask = LOS_MASK
-	q.collide_with_areas = false
-	q.exclude = _rids_of([observer])
-	var hit := space.intersect_ray(q)
-	if hit.is_empty():
+	var r := trace(space, eye_point(observer), to, _rids_of([observer]))
+	if r["clear"]:
 		return true
 	if tolerance <= 0.0:
 		return false
-	var at: Vector3 = hit.position
+	var at: Vector3 = r["position"]
 	return at.distance_to(to) < tolerance
 
 ## Point-to-point, for a caller that already holds both ends (the fighter
@@ -96,11 +89,32 @@ static func clear_to_point(observer: Node3D, to: Vector3,
 ## the world yet). `exclude` is passed straight through.
 static func clear_between_points(space: PhysicsDirectSpaceState3D,
 		from: Vector3, to: Vector3, exclude: Array[RID] = []) -> bool:
+	return trace(space, from, to, exclude)["clear"]
+
+## THE sight raycast. Every other function in this file bottoms out here, and
+## so does every caller that needs more than a yes/no — there is exactly one
+## place in the project where a sight ray is actually cast, and this is it.
+##
+## Returns {"clear": bool, "distance": float, "position": Vector3}:
+##   clear     — nothing between the two points
+##   distance  — to the first blocker, or the full length when clear
+##   position  — where it was blocked, or `to` when clear
+##
+## The sector preview needs the distance (to draw how far the shot line
+## actually reaches) and would otherwise either trace twice for one answer or
+## keep its own copy of the query — the second of which would be a parallel
+## LOS implementation, the exact thing this file exists to prevent.
+static func trace(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3,
+		exclude: Array[RID] = []) -> Dictionary:
 	var q := PhysicsRayQueryParameters3D.create(from, to)
 	q.collision_mask = LOS_MASK
 	q.collide_with_areas = false
 	q.exclude = exclude
-	return space.intersect_ray(q).is_empty()
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return {"clear": true, "distance": from.distance_to(to), "position": to}
+	var at: Vector3 = hit.position
+	return {"clear": false, "distance": from.distance_to(at), "position": at}
 
 static func _rids_of(nodes: Array) -> Array[RID]:
 	var out: Array[RID] = []

@@ -98,6 +98,18 @@ const DEBUG_COVER_TEST_SPAWN_DISTANCE := 4.0
 const DEBUG_COVER_TEST_SIZE := Vector3(1.5, 1.8, 1.5)
 # ---------------------------------------------------------------------------
 
+## Step 8A phase 4. Tints every cover_solid / concealment volume in the world
+## so the layers are legible while authoring geometry — explicitly for
+## building Position Two in step 8B. See CoverDebugDraw.gd.
+const KEY_DEBUG_COVER_DRAW := KEY_P
+## Step 8A phase 4. Shows every live fighter's sector-of-fire wedge, carved by
+## whatever cover actually intrudes on it. Player-facing in intent — it
+## belongs to a fighter PLACEMENT mode, which does not exist yet (fighters
+## spawn in front of the player); on a toggle until it does. See
+## SectorPreview.gd.
+const KEY_DEBUG_SECTOR_PREVIEW := KEY_U
+const COVER_PREVIEW_CONFIG := preload("res://resources/cover_preview.tres")
+
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
 
 var _sun: DirectionalLight3D
@@ -163,6 +175,9 @@ var _nvg_overlay: CanvasLayer
 var _nvg_whiteout: ColorRect
 var _gain_limit := 0.0          # 0 = normal, 1 = full daylight whiteout
 var _hitbox_debug_on := false
+## Step 8A phase 4 visualizations.
+var _cover_debug: CoverDebugDraw
+var _sector_previews_on := false
 
 const NVG_GAIN_RAMP := 0.5      # seconds to ramp into/out of the whiteout
 
@@ -618,6 +633,14 @@ func _build_ui() -> void:
 	add_child(_roster_menu)
 	_roster_menu.setup(player, _hud, FIGHTER_ECONOMY_CONFIG, _spawn_fighter)
 
+	# Step 8A phase 4 debug overlay (P). Built here rather than lazily on
+	# first toggle so it is in the tree with everything else and its own
+	# _process is running when the key is hit.
+	_cover_debug = CoverDebugDraw.new()
+	_cover_debug.name = "CoverDebugDraw"
+	_cover_debug.setup(COVER_PREVIEW_CONFIG)
+	add_child(_cover_debug)
+
 	_restore_base()
 
 ## Rebuild the base from GameState if a snapshot exists. Runs inside
@@ -986,6 +1009,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.keycode == KEY_DEBUG_SPAWN_COVER_TEST:
 		_debug_spawn_cover_test()
 		return
+	if event.keycode == KEY_DEBUG_COVER_DRAW:
+		var on := _cover_debug.toggle()
+		_hud.show_message("Cover/concealment overlay " + ("ON" if on else "OFF"))
+		return
+	if event.keycode == KEY_DEBUG_SECTOR_PREVIEW:
+		_toggle_sector_previews()
+		return
 
 # ---------------------------------------------------------------------------
 # TEMPORARY SCAFFOLDING — DELETE WHEN POSITION TWO EXISTS. See the constants
@@ -1029,8 +1059,36 @@ func _spawn_fighter() -> Fighter:
 	# Facing the same way the player is, so the sector points downrange rather
 	# than back at whoever just spawned it.
 	f.global_rotation.y = player.global_rotation.y
-	return f
+
+	# Sector-of-fire preview, one per fighter, hidden until toggled. Attached
+	# here rather than inside Fighter so the entity keeps owning no
+	# visualization — the same separation RosterMenu keeps from placement.
+	var preview := SectorPreview.new()
+	preview.name = "SectorPreview"
+	preview.setup(f, COVER_PREVIEW_CONFIG)
+	f.add_child(preview)
+	preview.set_shown(_sector_previews_on)
+
 	print("[FIGHTER] %s" % f.stat_line())
+	return f
+
+## Shows or hides every live fighter's sector-of-fire wedge at once.
+##
+## The state is remembered on _sector_previews_on so a fighter recruited
+## while the previews are up comes in already showing one, rather than the
+## display silently going inconsistent the moment the roster changes.
+func _toggle_sector_previews() -> void:
+	_sector_previews_on = not _sector_previews_on
+	var n := 0
+	for node in get_tree().get_nodes_in_group(Fighter.GROUP):
+		var p := node.get_node_or_null("SectorPreview") as SectorPreview
+		if p:
+			p.set_shown(_sector_previews_on)
+			n += 1
+	if n == 0 and _sector_previews_on:
+		_hud.show_message("Sector previews ON — no fighters to show (M spawns one).")
+		return
+	_hud.show_message("Sector-of-fire previews " + ("ON (%d)" % n if _sector_previews_on else "OFF"))
 
 ## See the KEY_DEBUG_SPAWN_COVER_TEST block above. A bare StaticBody3D + box
 ## mesh + CoverSurface, CONCEALMENT type — collision_layer starts at 0 (not

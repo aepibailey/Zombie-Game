@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="CoverPreviewConfig" load_steps=2 format=3]
+
+; Step 8A visualization tunables — the fighter sector-of-fire preview and the
+; cover/concealment debug tint.
+;
+; No range or arc here on purpose: the preview reads FighterType's own
+; engagement_range and sector_arc_degrees, so it cannot draw a wedge the
+; fighter does not actually engage.
+;
+; ground_offset matches TargetPainter's GROUND_OFFSET so a sector preview and
+; a paint marker on the same patch of ground do not z-fight.
+;
+; clear vs occluded are different HUES, not different alphas: under the NVG
+; green tint, relative brightness survives but colour separation by intensity
+; alone does not.
+
+[ext_resource type="Script" path="res://scripts/CoverPreviewConfig.gd" id="1_cfg"]
+
+[resource]
+script = ExtResource("1_cfg")
+sector_ray_count = 24
+ground_offset = 0.04
+clear_color = Color(0.15, 1, 0.25, 0.2)
+occluded_color = Color(1, 0.35, 0.1, 0.28)
+draw_rays = true
+ray_color = Color(1, 1, 1, 0.35)
+debug_cover_color = Color(0.2, 0.55, 1, 0.35)
+debug_concealment_color = Color(0.35, 1, 0.4, 0.3)
