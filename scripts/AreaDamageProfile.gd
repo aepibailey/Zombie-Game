@@ -38,9 +38,35 @@ enum FalloffMode { LINEAR, QUADRATIC, CURVE }
 @export_range(1.0, 360.0) var arc_degrees: float = 360.0
 
 # --- Cover -----------------------------------------------------------------
+## Master switch (Step 8A). true = run the exposure test below at all; false
+## = every target is treated as fully exposed regardless of what's between it
+## and the origin. Default true for every profile — WP included; see the
+## note on blocked_damage_mult for why turning WP's occlusion off was never
+## actually necessary.
+@export var occlusion_enabled: bool = true
+
 ## Fraction of damage that still lands on a target with NO line of sight.
-## 0.0 = intact cover is total protection. Raise it for something that should
-## partially defeat cover (a heavy mortar shell, say).
+## 0.0 = intact cover is total protection — this is what makes "grenades
+## don't kill through sandbags" true today: every combat profile
+## (frag/claymore/apache_30mm/crate_crush) ships at 0.0. Raise it for
+## something that should partially defeat cover (mortar_he ships at 0.35 — a
+## 120mm HE round's overpressure isn't fully stopped by a sandbag wall).
+##
+## EXPOSURE ITSELF STAYS GRADUATED, NOT BINARY, ON PURPOSE: AreaDamageSystem
+## samples several points per target (feet/centre/head, or
+## area_damage_points() where a target implements it) rather than one, so a
+## zombie with only its head over a sandbag wall takes partial damage instead
+## of an all-or-nothing verdict keyed off whichever single point got picked.
+## D5's "per-target, blast origin to candidate" is satisfied by this sampling
+## being per-target; collapsing it to a single center-mass ray would be a
+## strictly worse model for the exact "does not kill through it" behaviour
+## D5 asks for, since a target half-exposed over low cover would read as
+## fully hidden the instant its center point specifically was blocked.
+##
+## WP sets this to 1.0 at runtime (WhitePhosphorusZone._ready()) — the burn
+## zone's tick damage is not meant to be stopped by cover at all, so its
+## occlusion_enabled stays true (matching every other profile) but is
+## already a no-op: lerpf(1.0, 1.0, exposure) is 1.0 regardless of exposure.
 @export_range(0.0, 1.0) var blocked_damage_mult: float = 0.0
 
 # --- Obstacles -------------------------------------------------------------

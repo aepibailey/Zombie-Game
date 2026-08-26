@@ -29,10 +29,13 @@ const GROUP_DAMAGEABLE := "damageable"
 ## indestructible by design — see PROJECT_SPEC.md "The obstacles").
 const GROUP_STRUCTURES := "sandbags"
 
-## LOS mask: world geometry + sandbags (layer 1) and the ditch pit shell
-## (layer 6). Deliberately EXCLUDES the C-wire player-barrier layer (5) —
-## wire is strands, not cover, and must not stop fragmentation.
-const COVER_MASK := 1 | Obstacle.SOLID_NO_NAV_LAYER
+## LOS mask: world geometry + sandbags (layer 1), the ditch pit shell
+## (layer 6), and cover (layer 8 — Step 8A's CoverSurface-SOLID objects, in
+## case one is ever built that doesn't ALSO sit on layer 1 the way sandbags
+## do). Deliberately EXCLUDES CONCEALMENT_LAYER (D5 — concealment blocks
+## sight, never a blast) and the C-wire player-barrier layer (5) — wire is
+## strands, not cover, and must not stop fragmentation.
+const COVER_MASK := 1 | Obstacle.SOLID_NO_NAV_LAYER | Obstacle.COVER_SOLID_LAYER
 
 ## Fallback body sample points (metres above origin) for a damageable that
 ## doesn't implement area_damage_points(). Roughly feet / centre / head of a
@@ -105,7 +108,9 @@ func _apply_once(origin: Vector3, profile: AreaDamageProfile,
 		var base := profile.damage_at(dist)
 		if base <= 0.0:
 			continue
-		var exposure := _exposure(space, origin, actor, actor_rids)
+		var exposure := 1.0
+		if profile.occlusion_enabled:
+			exposure = _exposure(space, origin, actor, actor_rids)
 		var mult: float = lerpf(profile.blocked_damage_mult, 1.0, exposure)
 		var dmg: int = int(round(base * mult))
 		if dmg <= 0:
