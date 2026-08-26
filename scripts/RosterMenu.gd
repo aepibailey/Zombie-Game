@@ -274,7 +274,13 @@ func _upgrade_cost(current_tier: int) -> int:
 		_: return economy.upgrade_tier3_cost
 
 # --- Purchases ---------------------------------------------------------------
-func _on_upgrade_pressed(f: Fighter, cost: int) -> void:
+## `f` IS DELIBERATELY UNTYPED — same reason as ApacheSystem._is_serviceable().
+## These are bound into a Button's `pressed` signal, so the reference is held
+## across frames; if that fighter is freed before the button is rebuilt (one
+## _refresh() cycle), a typed parameter would reject the freed object at the
+## call boundary and crash, making the is_instance_valid() guard below
+## unreachable for exactly the case it exists to catch.
+func _on_upgrade_pressed(f, cost: int) -> void:
 	if not is_instance_valid(f) or not f.is_alive():
 		return
 	if not PointsManager.spend_points(cost):
@@ -282,7 +288,7 @@ func _on_upgrade_pressed(f: Fighter, cost: int) -> void:
 	f.upgrade()
 	_refresh()
 
-func _on_suppress_pressed(f: Fighter) -> void:
+func _on_suppress_pressed(f) -> void:
 	if not is_instance_valid(f) or not f.is_alive():
 		return
 	if not PointsManager.spend_points(economy.suppressor_cost):

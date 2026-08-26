@@ -443,7 +443,18 @@ func _acquire_target(box_centre: Vector3, box_radius: float,
 ##
 ## Deliberately re-checked mid-slew as well as at acquisition, so the same
 ## rule governs both and they can never disagree.
-func _is_serviceable(z: Zombie, player_pos: Vector3) -> bool:
+##
+## `z` IS DELIBERATELY UNTYPED, AND MUST STAY THAT WAY. It was `z: Zombie`,
+## which crashed the game the first time a target died mid-engagement:
+## _target is a stored reference held across frames, and the moment its
+## zombie is freed, passing it to a statically-typed parameter throws
+## "the Object-derived class of argument 1 (previously freed) is not a
+## subclass of the expected argument class" — GDScript rejects the argument
+## at the CALL BOUNDARY, before the function body runs. That made the
+## is_instance_valid() guard on the very next line unreachable for the exact
+## case it was written to catch. Typing this parameter is not a safety
+## improvement here; it is what disables the safety check.
+func _is_serviceable(z, player_pos: Vector3) -> bool:
 	if z == null or not is_instance_valid(z) or not z.is_alive():
 		return false
 	if _flat_distance(z.global_position, _box_centre) > config.patrol_radius:
