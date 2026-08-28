@@ -1,6 +1,6 @@
 # Roadmap
 
-**Last reconciled: 2026-08-26.** This document describes SHIPPED STATE —
+**Last reconciled: 2026-08-28.** This document describes SHIPPED STATE —
 what actually exists in the codebase, verified against source, not what a
 spec once proposed. `PATROL_BASE_ZERO_V2_SPEC.md` describes design intent and
 may run ahead of the code; when the two disagree, this file follows the code.
@@ -81,27 +81,40 @@ gated target acquisition exists (range + sector arc + line of sight, see
 below) but is observability-only — no firing loop yet, and fighters are not
 yet a target for player rounds or zombie AI (see Planned).
 
-**Cover & concealment** (`CoverSurface`, `LineOfSight`) — Phases 1-2 of a
-4-phase build. Two physics layers, `cover_solid` (stops rounds and blocks
-sight — sandbags today) and `concealment` (blocks sight only, rounds pass
-through — no in-game object uses this yet). `CoverSurface` is a reusable
-component, not a replacement for an object's own health/destruction; sandbags
-carry one alongside their existing per-section HP. Exactly one line-of-sight
-implementation (`LineOfSight.gd`) is now consumed by zombie chase LOS, the
-laser-dot reveal, and fighter target acquisition — all cast eye-to-eye
-(`eye_position()` per entity: the player's live crouch-lerped camera, a
-zombie's per-variant head height, a fighter's fixed `FighterType.eye_height`),
-replacing a body-origin-based check that ignored player crouch entirely.
-Area-damage occlusion and the placement/debug preview (Phases 3-4) are not
-yet built — see Planned.
+**Cover & concealment** (`CoverSurface`, `LineOfSight`) — all four phases
+shipped. Two physics layers, `cover_solid` (stops rounds and blocks sight —
+sandbags today) and `concealment` (blocks sight only, rounds pass through —
+no shippable object uses this yet; a debug spawn key stands in). `CoverSurface`
+is a reusable component, not a replacement for an object's own
+health/destruction; sandbags carry one alongside their existing per-section HP,
+and it clears its layer bit on destruction so cover, projectile blocking and
+nav all drop together.
+
+`LineOfSight.gd` holds the project's ONLY sight raycast. Zombie chase LOS, the
+laser-dot reveal, fighter target acquisition and the placement preview all
+bottom out in its `trace()`, and `LOS_MASK` is referenced nowhere outside that
+file. Every ray casts eye-to-eye via a per-entity `eye_position()` — the
+player's live crouch-lerped camera, a zombie's per-variant head height, a
+fighter's fixed `FighterType.eye_height` — replacing a body-origin check that
+ignored player crouch entirely.
+
+Area damage is occluded by cover but never by concealment
+(`AreaDamageProfile.occlusion_enabled`, default on; `COVER_MASK` carries
+`cover_solid` and deliberately not `concealment`). Exposure stays graduated
+and multi-point rather than a binary center-mass test — every combat profile
+already ships `blocked_damage_mult = 0.0`, so full occlusion already means
+zero damage, and sampling several points models "half exposed over low cover"
+correctly.
+
+Two visualizations: `SectorPreview` (U) draws a fighter's sector of fire as a
+ground wedge carved back wherever cover cuts the shot line — which is what
+makes a fighter's fixed eye height a fair constraint rather than a hidden one
+— and `CoverDebugDraw` (P) tints cover and concealment volumes distinctly for
+authoring Position Two. Both read tunables off `CoverPreviewConfig`, and both
+derive range and arc from `FighterType` rather than copies that could drift.
 
 ## Planned
 
-- **Cover & concealment, Phases 3-4** — area-damage occlusion needs to be
-  reconciled against `AreaDamageSystem`'s existing graduated multi-point
-  exposure multiplier (not yet decided: binary block vs. keep it graduated);
-  then the fighter-placement sector-of-fire preview and a debug cover/
-  concealment volume tint mode (for building Position Two against).
 - **Fighter combat** — the actual firing loop (cadence, the hit-chance roll,
   noise), fighters as a target for player rounds (`Damageable.GROUP_BULLET`)
   and for zombie AI (`Zombie.GROUP_HOSTILE_TARGET`). The entity, economy and

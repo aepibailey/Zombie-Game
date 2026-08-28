@@ -1890,8 +1890,10 @@ code rather than faked with a check that always passes.
 ### 13.2 Sortie lifecycle
 
 Paint → confirm (points deducted here, so a cancelled paint is free) →
-`transit_time_in` 25s inbound from offmap → check in → orbit and engage →
-depart. The orbit **centre** sits `standoff_distance` (250m) off the box at
+`transit_time_in` 10s inbound from offmap → check in → orbit and engage →
+depart. Transit was 25s originally and was cut to 10s after playtest: the
+longer wait read as the enabler being broken rather than as the aircraft
+being far away. The orbit **centre** sits `standoff_distance` (250m) off the box at
 `orbit_altitude` (70m), with the aircraft circling it at `orbit_radius` (60m):
 a distant silhouette, never an overhead gunship.
 
