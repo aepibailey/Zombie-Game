@@ -102,6 +102,7 @@ var kills := 0
 var _dead := false
 var _body_mesh: MeshInstance3D
 var _facing_marker: MeshInstance3D
+var _health_bar: HealthBar3D
 
 ## Engagement state. `_engage_target` is what this fighter is currently
 ## shooting at; it is re-derived from acquire_target() every
@@ -214,6 +215,29 @@ func _ready() -> void:
 	collision_layer = 1
 	collision_mask = 1
 	_build_body()
+	_build_health_bar()
+
+## A fighter is the first thing in this project a HealthBar3D is actually
+## attached to. It is the right consumer for it: a fighter is a SINGLE object
+## with one health pool (unlike a sandbag wall, which was split into five
+## sections and would have floated five bars), it is permanently lost when it
+## dies, and it now takes damage from three separate sources — blasts, the
+## player's own rounds, and zombie melee — so "which of my people are hurt" is
+## a real question with no other answer in the world. The roster menu knows,
+## but that requires stopping to open it.
+##
+## No new drawing code: the component already polls `health`/`max_health` by
+## name, which is exactly what this class calls them (see the note on those
+## fields — they were named for this convention before anything read them).
+func _build_health_bar() -> void:
+	var t := fighter_type
+	var d: float = t.body_radius * 2.0
+	_health_bar = HealthBar3D.new()
+	_health_bar.name = "HealthBar"
+	# attach_to() parents itself to the owner, so this is not add_child()ed
+	# here. Bounds are the capsule's own footprint and full height, so the bar
+	# sits clear of the head rather than at a guessed offset.
+	_health_bar.attach_to(self, Vector3(d, t.total_height(), d))
 
 ## THE ENGAGEMENT LOOP: acquire, hesitate, then fire on cadence.
 ##
@@ -228,6 +252,13 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if _dead:
 		return
+	# Bars hold by day (the player is walking the base deciding who to spend
+	# points on) and fade by night (a firefight should not be a wall of
+	# floating gauges). Set here rather than off a phase signal because it is
+	# one assignment and self-corrects — a fighter recruited mid-phase gets
+	# the right behaviour on its first frame with no connection to manage.
+	if _health_bar:
+		_health_bar.persist_while_damaged = GameManager.is_day()
 	_scan_timer -= delta
 	if _scan_timer <= 0.0:
 		_scan_timer = fighter_type.acquire_scan_interval

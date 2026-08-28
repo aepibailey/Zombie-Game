@@ -29,6 +29,17 @@ const MARGIN_ABOVE := 0.35       # clearance above the object's own top
 ## Set false to hide the numeric readout once this stops being a playtest aid.
 @export var show_numeric: bool = true
 
+## When true the bar stays up for as long as the owner is damaged, instead of
+## fading out a few seconds after the last hit.
+##
+## The fade exists to keep combat uncluttered — you want to see what is being
+## hurt right now, not a field of permanent bars. But that same fade makes a
+## damaged-and-idle object invisible, which is wrong when the player is
+## walking around ASSESSING rather than fighting. Fighter drives this off the
+## day/night phase for exactly that reason: persistent by day (deciding who
+## needs points spent on them), fading by night (watching a firefight).
+@export var persist_while_damaged: bool = false
+
 var _owner: Node3D
 var _health_prop: String
 var _max_prop: String
@@ -131,6 +142,14 @@ func _physics_process(delta: float) -> void:
 	_update_fill(frac)
 	if show_numeric and _label:
 		_label.text = "%d/%d" % [int(round(current)), int(round(max_value))]
+
+	# Expressed as "keep re-arming the timer" rather than as a separate branch,
+	# so switching this off mid-life (night falling on a fighter damaged during
+	# the day) hands the normal path a FULL visible window rather than a stale
+	# expired one that would snap the bar out instantly.
+	if persist_while_damaged:
+		_visible_timer = VISIBLE_DURATION
+		_fade_elapsed = 0.0
 
 	var alpha := 1.0
 	if _visible_timer > 0.0:
