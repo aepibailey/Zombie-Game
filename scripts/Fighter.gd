@@ -103,13 +103,15 @@ var _dead := false
 var _body_mesh: MeshInstance3D
 var _facing_marker: MeshInstance3D
 
-## Acquisition readout state. OBSERVABILITY ONLY — this pair exists so that
-## "a fighter behind cover acquires nothing" is something you can watch happen
-## in the console, rather than an untestable claim about a query nobody calls.
-## The actual engagement loop (rolling to hit, cadence, noise, damage) is a
-## later phase and none of it belongs here.
+## Engagement state. `_engage_target` is what this fighter is currently
+## shooting at; it is re-derived from acquire_target() every
+## acquire_scan_interval, so a target that dies, leaves the arc or steps
+## behind cover is dropped on the next scan.
 var _scan_timer := 0.0
 var _last_acquired_id := 0
+var _engage_target: Node3D = null
+var _reaction_timer := 0.0
+var _fire_timer := 0.0
 
 ## Rolls this fighter's permanent statline and gives it a name. Called ONCE,
 ## by whatever recruits it — BEFORE that caller adds this node to the tree,
@@ -186,6 +188,18 @@ func _ready() -> void:
 	# logic"). Both groups exist and are ready for a fighter to join with no
 	# further refactor when that phase happens.
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
+	# A fighter is now a member of ALL THREE damage axes — the only entity in
+	# the project that is. Each has its own verb precisely so that being in
+	# all three cannot produce a silently-miscalled overload; see
+	# Zombie._acquire_target()'s note.
+	#
+	# GROUP_BULLET: the player's own rounds can hit their own fighter. That is
+	# deliberate and consistent with the faction-blind blast rule — it makes
+	# firing lanes something the player has to think about rather than a
+	# freebie. GROUP_HOSTILE_TARGET: zombies hunt fighters, so an emplacement
+	# genuinely draws pressure off the player instead of being scenery.
+	add_to_group(Damageable.GROUP_BULLET)
+	add_to_group(Zombie.GROUP_HOSTILE_TARGET)
 	# FALLBACK ONLY. The normal path recruits BEFORE add_child(), so by the
 	# time _ready() runs, hit_chance is already non-zero and this is a no-op —
 	# see recruit()'s docstring. This exists only for a hand-placed fighter
@@ -201,26 +215,88 @@ func _ready() -> void:
 	collision_mask = 1
 	_build_body()
 
-## Acquisition readout — see _scan_timer. Logs only on a CHANGE (acquired,
-## lost, or switched target), so walking a zombie in and out from behind a
-## sandbag wall prints two lines rather than flooding the console.
+## THE ENGAGEMENT LOOP: acquire, hesitate, then fire on cadence.
+##
+## NIGHT ONLY, and gated HERE rather than inside acquire_target(). That
+## separation is deliberate: acquire_target() stays a pure "what can this
+## fighter see right now" query, which is what the Day-time placement preview
+## (SectorPreview) asks it, and what the player needs answered while deciding
+## where to emplace someone. Gating acquisition itself would blank the preview
+## exactly when it is useful. Zombies are dormant by day (Zombie.active), so a
+## fighter that engaged then would be plinking at sleepers and making noise
+## for nothing — the same reason the Apache departs at sunrise.
 func _process(delta: float) -> void:
 	if _dead:
 		return
 	_scan_timer -= delta
-	if _scan_timer > 0.0:
+	if _scan_timer <= 0.0:
+		_scan_timer = fighter_type.acquire_scan_interval
+		_retarget(acquire_target())
+	if _engage_target == null or GameManager.is_day():
 		return
-	_scan_timer = fighter_type.acquire_scan_interval
-	var target := acquire_target()
+	# Target died between scans. Drop it now rather than shooting a corpse for
+	# up to acquire_scan_interval.
+	if not is_instance_valid(_engage_target) or not _engage_target.is_alive():
+		_retarget(null)
+		return
+
+	# REACTION DELAY IS PER TARGET, not per shot. It models this individual
+	# noticing something and getting on it; once they are on it, cadence takes
+	# over. A slow fighter is slow to open up on each NEW contact, not slow
+	# between rounds at one it is already engaging.
+	if _reaction_timer > 0.0:
+		_reaction_timer -= delta
+		return
+	_fire_timer -= delta
+	if _fire_timer <= 0.0:
+		_fire_timer = fighter_type.fire_interval
+		_shoot(_engage_target)
+
+## Switches to `target`, resetting the reaction clock only when it is actually
+## a different contact — otherwise a fighter tracking one zombie across scans
+## would re-hesitate every scan and never fire.
+func _retarget(target: Node3D) -> void:
 	var id: int = target.get_instance_id() if target != null else 0
 	if id == _last_acquired_id:
+		_engage_target = target
 		return
 	_last_acquired_id = id
+	_engage_target = target
 	if target == null:
-		print("[FIGHTER] %s — no target (out of arc, out of range, or no line of sight)" % fighter_name)
-	else:
-		print("[FIGHTER] %s — acquired %s at %.1fm" % [
-			fighter_name, target.name, global_position.distance_to(target.global_position)])
+		return
+	_reaction_timer = reaction_delay
+	_fire_timer = 0.0   # first shot lands the moment the reaction clock expires
+
+## One round. THE COMPETENCE GAP LIVES HERE.
+##
+## This resolves a HIT-CHANCE ROLL and never a raycast. The player raycasts;
+## a fighter does not. Collapsing these two paths into shared "shooting" code
+## would erase the reason to care who you recruit — see this file's header.
+## Line of sight was already settled by acquire_target(); this is about
+## whether they can actually hit what they can see.
+##
+## NEVER A HEADSHOT. The head/body distinction belongs to the player's
+## hit-zone raycast; a fighter's roll has no geometry to ask about, so it
+## passes false explicitly rather than letting a truthy value slip in — the
+## same trap take_area_damage() exists to avoid.
+func _shoot(target: Node3D) -> void:
+	shots_fired += 1
+	# Noise fires on EVERY round, hit or miss. This is what a suppressor buys:
+	# an unsuppressed fighter is a beacon that pulls the horde onto the
+	# position it is defending.
+	NoiseManager.emit_noise(global_position, noise_radius())
+
+	if randf() >= hit_chance:
+		return
+	hits_landed += 1
+	if not target.has_method("take_damage"):
+		return
+	target.take_damage(damage, false)
+	# Credit only if THIS round is what put it down.
+	if target.has_method("is_alive") and not target.is_alive():
+		kills += 1
+		print("[FIGHTER] %s killed %s (%d/%d shots, %d kills)" % [
+			fighter_name, target.name, hits_landed, shots_fired, kills])
 
 # --- Queries ---------------------------------------------------------------
 ## True until this fighter has actually died. Matches Zombie.is_alive() and
@@ -283,6 +359,40 @@ func acquire_target() -> Node3D:
 ## and Player implement. Faction-blind by construction: a grenade at a
 ## fighter's feet kills it exactly as it would the player.
 func take_area_damage(amount: int, _origin: Vector3) -> void:
+	_apply_damage(amount)
+
+## Damageable.GROUP_BULLET contract: a player round hit this fighter.
+## Returns the damage actually dealt, which is what the hitmarker reads.
+##
+## HEADSHOTS ARE NOT HONOURED and the parameter is ignored on purpose. A
+## fighter registers no head hitbox (nothing puts one in GROUP_BULLET_HEAD
+## for it), so `headshot` can only ever arrive false — Damageable's own
+## hit-zone assertion checks exactly that. Taking the argument keeps the
+## signature uniform with Zombie's; acting on it would imply a hit zone that
+## does not exist.
+func take_damage(amount: int, _headshot: bool, falloff_mult: float = 1.0) -> int:
+	if _dead:
+		return 0
+	var dmg: int = maxi(1, int(round(float(amount) * falloff_mult)))
+	_apply_damage(dmg)
+	return dmg
+
+## Damageable.GROUP_BULLET contract: HP left after that hit, floored at 0.
+## A METHOD, not a field read — this fighter calls its pool `health` while a
+## Zombie calls its `hp`, and the weapon path must not know which.
+func remaining_hp() -> int:
+	return maxi(0, health)
+
+## Zombie.GROUP_HOSTILE_TARGET contract: a zombie reached this fighter and
+## hit it. `source_pos` is unused — a fighter has no directional damage
+## indicator to drive, unlike the player — but the parameter stays so the one
+## melee verb means the same thing for every member of the group.
+func take_melee_damage(amount: int, _source_pos: Vector3) -> void:
+	_apply_damage(amount)
+
+## THE one place health actually falls. All three damage axes funnel here, so
+## death is decided once rather than in three places that could drift.
+func _apply_damage(amount: int) -> void:
 	if _dead:
 		return
 	health = maxi(0, health - amount)

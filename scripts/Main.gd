@@ -209,6 +209,12 @@ func _ready() -> void:
 		"AreaDamageSystem.COVER_MASK": AreaDamageSystem.COVER_MASK,
 		"Obstacle.SOLID_SURFACE_MASK": Obstacle.SOLID_SURFACE_MASK,
 	}, Player.CROUCH_HEAD_Y, Player.STAND_HEAD_Y)
+	# The fighter variant's own invariants, including the deliberate binding
+	# between a fighter's noise radii and the M17's. Passed in from Arsenal's
+	# real weapon data rather than read inside FighterType, so retuning the
+	# M17 trips this instead of silently desyncing the two.
+	var _m17 := Arsenal.get_weapon("m17")
+	FIGHTER_TYPE_IRREGULAR.validate(_m17.noise_unsuppressed, _m17.noise_suppressed)
 	_build_lighting()
 	_build_world()
 	_build_ui()

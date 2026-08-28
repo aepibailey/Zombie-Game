@@ -762,7 +762,12 @@ func _toggle_ads() -> void:
 	_kill_scope_tween()
 	ads_active = not ads_active
 	camera.fov = _current_ads_fov() if ads_active else HIP_FOV
-	message.emit("ADS " + ("ON — red laser hot (10m tell)" if ads_active else "OFF"))
+	# The number here is READ FROM THE CONSTANT, not typed in. It used to say a
+	# hardcoded "10m" while LASER_DETECT_RADIUS was 15 — the game told the
+	# player the laser was a third safer than it is. Interpolating means the
+	# prompt can never drift from the rule again.
+	message.emit("ADS " + ("ON — red laser hot (%dm tell)" % int(LASER_DETECT_RADIUS)
+		if ads_active else "OFF"))
 
 ## The ADS FOV for the currently equipped weapon: the M110's adjustable optic
 ## (if bought) wins over its fixed-scope default, which in turn wins over the
@@ -2122,6 +2127,14 @@ func area_damage_points() -> Array:
 		global_position + Vector3(0.0, head_y * 0.55, 0.0),
 		global_position + Vector3(0.0, head_y, 0.0),
 	]
+
+## Zombie.GROUP_HOSTILE_TARGET's melee contract — see Zombie._acquire_target()'s
+## note on why melee has its own verb. Delegates to take_damage(), which the
+## player has always used for this and which already handles a source position
+## for the directional hit indicator. Nothing about the player's damage
+## behaviour changed; only the name the zombie calls it by.
+func take_melee_damage(amount: int, source_pos: Vector3) -> void:
+	take_damage(amount, source_pos)
 
 func take_damage(amount: int, source_pos = null) -> void:
 	hp = maxi(0, hp - amount)

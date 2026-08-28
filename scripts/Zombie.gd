@@ -517,8 +517,8 @@ func _do_attack(delta: float) -> void:
 	_attack_timer -= delta
 	if _attack_timer <= 0.0:
 		_attack_timer = zombie_type.melee_cooldown
-		if target.has_method("take_damage"):
-			target.take_damage(zombie_type.melee_damage, global_position)
+		if target.has_method("take_melee_damage"):
+			target.take_melee_damage(zombie_type.melee_damage, global_position)
 
 # --- Obstacle states -------------------------------------------------------
 ## Held in wire: immobile and permanent, but still dangerous at melee range.
@@ -535,13 +535,13 @@ func _do_entangled(delta: float) -> void:
 		if _attack_timer <= 0.0:
 			_attack_timer = zombie_type.melee_cooldown
 			# Guarded to match _do_attack(): a target that doesn't implement
-			# take_damage() is simply never damaged rather than crashing the
-			# state machine. The two melee sites disagreed before this
+			# take_melee_damage() is simply never damaged rather than crashing
+			# the state machine. The two melee sites disagreed before this
 			# refactor — only _do_attack() guarded — which was harmless while
 			# the sole target was the player but would not survive a second
 			# member of the group.
-			if target.has_method("take_damage"):
-				target.take_damage(zombie_type.melee_damage, global_position)
+			if target.has_method("take_melee_damage"):
+				target.take_melee_damage(zombie_type.melee_damage, global_position)
 
 ## Fell into a ditch pit. NavigationAgent3D is never touched here — no target
 ## is ever set and get_next_path_position() is never called, so there is no
@@ -973,9 +973,26 @@ func eye_position() -> Vector3:
 ##   - it is a Node3D (global_position is read constantly)
 ##   - it IS the collider, not the owner of one (_has_los_to compares the
 ##     raycast's hit.collider against it by identity)
-##   - take_damage(amount: int, source_pos) — guarded with has_method() at
-##     both melee sites, so a target without it is simply never damaged
-##     rather than crashing the state machine
+##   - take_melee_damage(amount: int, source_pos: Vector3) — guarded with
+##     has_method() at both melee sites, so a target without it is simply
+##     never damaged rather than crashing the state machine
+##
+## WHY MELEE HAS ITS OWN VERB rather than reusing take_damage(): this project
+## now has THREE damage axes, and two of them had incompatible take_damage()
+## signatures that would have failed SILENTLY the moment one entity joined
+## both groups —
+##     Zombie.take_damage(amount, headshot: bool, falloff_mult)   bullets
+##     Player.take_damage(amount, source_pos = null)              melee
+## A Fighter is in both groups. Passing a Vector3 source position into the
+## bullet signature binds it to `headshot`, and a non-null Vector3 is truthy,
+## so every zombie melee hit on a fighter would have silently dealt DOUBLE
+## damage with no error. That is the exact trap AreaDamageSystem.gd documents
+## and solved by introducing take_area_damage(); this is the same fix applied
+## to the third axis. One verb per axis, and none of them can be called
+## wrongly:
+##     take_area_damage(amount, origin)         blasts    (faction-blind)
+##     take_damage(amount, headshot, falloff)   bullets   (Damageable)
+##     take_melee_damage(amount, source_pos)    melee     (this group)
 ##
 ## Returned as Node3D rather than a widened base class: GDScript has no
 ## interfaces, and duck-typing against a documented contract is what

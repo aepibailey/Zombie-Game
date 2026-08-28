@@ -76,11 +76,54 @@ class_name FighterType
 ## Slightly below body_height: the eye sits in the head, not on the crown.
 @export var eye_height: float = 1.58
 
-## How often acquire_target() is re-run for the visibility readout. NOT the
-## firing cadence (that is fire_interval, and the engagement loop is a later
-## phase) — this only paces how quickly a fighter notices its shot line has
-## opened or closed.
+## How often acquire_target() is re-run. NOT the firing cadence (that is
+## fire_interval) — this paces how quickly a fighter notices its shot line
+## has opened or closed, and how quickly it switches contacts.
 @export var acquire_scan_interval: float = 0.25
+
+## Startup invariants for this variant. Called once from Main._ready().
+##
+## The M17's two noise radii are PASSED IN rather than read from Arsenal here,
+## for the same reason LineOfSight.assert_masks_sane() takes its masks as
+## arguments: this file must not grow a dependency on the weapon system to
+## check a number. Main already knows both.
+func validate(m17_unsuppressed: float, m17_suppressed: float) -> void:
+	# INVARIANT: a fighter can never be certain. Upgrades interpolate toward
+	# hit_chance_max, so if that reaches 1.0 a tier-3 fighter never misses and
+	# the competence gap that makes recruiting a decision disappears.
+	assert(hit_chance_max < 1.0,
+		"[FIGHTERTYPE] hit_chance_max must stay below 1.0 — upgrades land exactly on it, so 1.0 would make a maxed fighter incapable of missing.")
+	assert(hit_chance_min <= hit_chance_max,
+		"[FIGHTERTYPE] hit_chance_min is above hit_chance_max — the roll band is inverted.")
+	assert(damage_min <= damage_max,
+		"[FIGHTERTYPE] damage_min is above damage_max — the roll band is inverted.")
+	assert(reaction_delay_min <= reaction_delay_max,
+		"[FIGHTERTYPE] reaction_delay_min is above reaction_delay_max — the roll band is inverted.")
+
+	# INVARIANT: the suppressor actually buys something.
+	assert(noise_radius_suppressed < noise_radius_unsuppressed,
+		"[FIGHTERTYPE] a suppressed fighter is not quieter than an unsuppressed one — the suppressor purchase buys nothing.")
+
+	# INVARIANT: a fighter's rifle is exactly as loud as the player's M17.
+	# The docstring on Fighter.noise_radius() binds these deliberately — the
+	# M17 is the project's reference sidearm and the one stable number to tie
+	# to. Asserted against Arsenal's REAL values rather than copied constants,
+	# so retuning the M17 cannot silently desync the fighters.
+	assert(is_equal_approx(noise_radius_unsuppressed, m17_unsuppressed),
+		"[FIGHTERTYPE] fighter unsuppressed noise no longer matches the M17's. These are bound on purpose — change both or neither.")
+	assert(is_equal_approx(noise_radius_suppressed, m17_suppressed),
+		"[FIGHTERTYPE] fighter suppressed noise no longer matches the M17's. These are bound on purpose — change both or neither.")
+
+	# INVARIANT: the eye sits in the head, not above it. LineOfSight casts
+	# from here, so an eye above the silhouette would see over cover the
+	# fighter's own body is behind.
+	assert(eye_height <= body_height,
+		"[FIGHTERTYPE] eye_height is above body_height — the fighter would see over cover its own silhouette is hidden behind.")
+	assert(eye_height > 0.0,
+		"[FIGHTERTYPE] eye_height must be positive — a LOS ray from the ground sees under every wall in the game.")
+
+	if not (hit_chance_max < 1.0 and noise_radius_suppressed < noise_radius_unsuppressed):
+		push_error("[FIGHTERTYPE] '%s' failed validation — see the asserts in FighterType.validate()." % id)
 
 # --- Derived ---------------------------------------------------------------
 ## Capsule centre height, matching ZombieType's own convention so world-space
