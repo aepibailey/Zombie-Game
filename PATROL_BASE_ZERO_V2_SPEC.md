@@ -375,8 +375,8 @@ exactly the intact state with nothing left over.
 whole-wall version) is generic and still exists, but 5 simultaneous floating
 bars on one wall was judged clutter beyond what tint+sag already reads as —
 matching the brief's own "tint plus a small vertical sag is sufficient."
-Left wired up for nothing today; the right tool for a future single-object
-destructible (a gate, say) where one bar per object is exactly right again.
+The right tool for a single-object destructible with one health pool, which
+is what it now does on fighters — and would do again for a gate.
 
 ### Repair
 

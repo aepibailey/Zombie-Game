@@ -16,7 +16,7 @@ class_name Fighter
 ## in the roster, and they are what makes two fighters recruited in the same
 ## session perform observably differently.
 ##
-## THE COMPETENCE GAP IS THE POINT. When this fighter shoots (phase 2) it
+## THE COMPETENCE GAP IS THE POINT. When this fighter shoots (see _shoot()) it
 ## resolves a HIT-CHANCE ROLL, never a raycast. The player raycasts. Those two
 ## paths must not be collapsed into shared code — a fighter that aimed like
 ## the player would erase the reason to be careful about who you recruit.
@@ -44,7 +44,7 @@ var _rolled := false
 
 # --- Rolled at recruitment, permanent --------------------------------------
 ## Fraction, not percent. Never reaches 1.0 — see FighterType.hit_chance_max.
-## CURRENT effective value — what engagement (a later phase) actually reads.
+## CURRENT effective value — what the engagement loop actually reads.
 ## Upgrades move this toward the type's band ceiling; see upgrade(). NOT
 ## guarded by _rolled: upgrade() is a sanctioned post-roll write to this one.
 var hit_chance := 0.0
@@ -93,8 +93,8 @@ var suppressed := false
 var upgrade_tier := 0
 
 # --- Lifetime stats, persisted across nights for the roster ----------------
-## Written by the engagement loop in phase 2; declared here because they are
-## part of what a fighter IS, and the roster reads them straight off this.
+## Written by the engagement loop (see _shoot()); declared here because they
+## are part of what a fighter IS, and the roster reads them straight off this.
 var shots_fired := 0
 var hits_landed := 0
 var kills := 0
@@ -182,12 +182,6 @@ func _ready() -> void:
 	# damage. Joining this group is the ENTIRE integration — AreaDamageSystem
 	# queries the group and duck-types take_area_damage()/is_alive() rather
 	# than special-casing anything, so no change to that system was needed.
-	#
-	# NOT joined to Damageable.GROUP_BULLET or Zombie.GROUP_HOSTILE_TARGET —
-	# player bullets hitting fighters and zombies targeting fighters are both
-	# later phases, out of scope for this pass ("no new spatial or AI
-	# logic"). Both groups exist and are ready for a fighter to join with no
-	# further refactor when that phase happens.
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
 	# A fighter is now a member of ALL THREE damage axes — the only entity in
 	# the project that is. Each has its own verb precisely so that being in

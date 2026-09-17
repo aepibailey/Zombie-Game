@@ -67,19 +67,45 @@ playtest.
 **Fighter system** (`Fighter`/`FighterType`) — stationary, permanently-statted
 allied irregulars the player places by hand. Stats (hit chance, damage,
 reaction delay) are rolled once at recruitment from `FighterType`'s bands and
-never re-roll; a fighter that shoots (not yet built — see Planned) resolves a
-hit-chance roll, never a raycast, so it never aims as well as the player.
-Recruited and managed through the **roster menu** (`RosterMenu`, `F` to open,
-Day-only, halts the clock via `GameManager`'s shared refcounted
+never re-roll; a fighter that shoots resolves a hit-chance roll, never a
+raycast, so it never aims as well as the player. Recruited and managed
+through the **roster menu** (`RosterMenu`, `F` to open, Day-only, halts the
+clock via `GameManager`'s shared refcounted
 `request_clock_halt`/`release_clock_halt`): recruit (`FighterEconomyConfig`,
 cap 8, first 4 free — a stand-in for the Position Two rescue grant until that
 map exists — 5th through 8th cost 20/35/55/80), upgrade in 3 tiers
 (15/20/30 pts, interpolates from the as-rolled stats toward the type's band
-ceiling, never past it), and a permanent suppressor (25 pts). Killable by any
-blast (`AreaDamageSystem.GROUP_DAMAGEABLE`) exactly like the player. Cover-
-gated target acquisition exists (range + sector arc + line of sight, see
-below) but is observability-only — no firing loop yet, and fighters are not
-yet a target for player rounds or zombie AI (see Planned).
+ceiling, never past it), and a permanent suppressor (25 pts).
+
+A fighter sits in ALL THREE damage axes, the only entity that does:
+killable by any blast (`AreaDamageSystem.GROUP_DAMAGEABLE`) exactly like the
+player, hit by the player's own rounds (`Damageable.GROUP_BULLET`) so firing
+lanes are something to think about, and hunted by zombies
+(`Zombie.GROUP_HOSTILE_TARGET`) so an emplacement draws real pressure instead
+of being scenery. Each axis has its own verb — `take_area_damage`,
+`take_damage`, `take_melee_damage` — precisely so that being in all three
+cannot silently bind a `Vector3` source position to a `headshot` flag.
+
+**Fighter combat** — cover-gated acquisition (range + sector arc + line of
+sight) every `acquire_scan_interval`, then this individual's rolled
+`reaction_delay`, then a round every `fire_interval`. Each round resolves a
+hit-chance roll and never a raycast — the player raycasts, a fighter does
+not — and never a headshot. Reaction delay is PER TARGET, not per shot: a
+slow fighter is slow onto each new contact, not slow between rounds at one it
+is already on. Every round emits noise whether it hits or misses, which is
+the entire value of the suppressor purchase. Night-gated in the loop rather
+than inside `acquire_target()`, so that stays a pure "what can this fighter
+see" query for the Day-time placement preview. `FighterType.validate()`
+(called from `Main._ready()` with Arsenal's real M17 data) holds the
+invariants: `hit_chance_max` below 1.0 so a maxed fighter can still miss,
+non-inverted bands, a suppressor that actually reduces noise, and a fighter's
+two noise radii still equal to the M17's.
+
+Fighters carry a `HealthBar3D` — the component's first real consumer, built
+for sandbag walls and orphaned when those split into five sections. Bars hold
+by day (the player is walking the base deciding who to spend points on) and
+fade by night (a firefight should not be a wall of floating gauges), off the
+new `persist_while_damaged` export.
 
 **Cover & concealment** (`CoverSurface`, `LineOfSight`) — all four phases
 shipped. Two physics layers, `cover_solid` (stops rounds and blocks sight —
@@ -115,10 +141,6 @@ derive range and arc from `FighterType` rather than copies that could drift.
 
 ## Planned
 
-- **Fighter combat** — the actual firing loop (cadence, the hit-chance roll,
-  noise), fighters as a target for player rounds (`Damageable.GROUP_BULLET`)
-  and for zombie AI (`Zombie.GROUP_HOSTILE_TARGET`). The entity, economy and
-  cover-gated acquisition above are done; nothing shoots yet.
 - **Position Two map** — not started. Also what the fighter system's
   first-4-free recruiting currently stands in for.
 - **Transit night** — not started.

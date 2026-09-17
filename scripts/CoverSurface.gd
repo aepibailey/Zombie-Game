@@ -9,7 +9,7 @@ class_name CoverSurface
 ## D1: SOLID stops rounds AND blocks LOS (sandbags, walls, hulks, rocks).
 ##     CONCEALMENT blocks LOS only — rounds pass through (foliage, smoke).
 ## D2: no cover-snapping, no attach state, no peek. This is a passive marker
-##     read by raycasts (Phase 2) — it never reacts to player input itself.
+##     read by LineOfSight's raycasts — it never reacts to player input itself.
 ##
 ## DESIGN NOTE ON THE THREE LAYERS THE PROMPT ASKS THIS TO CLEAN UP
 ## (cover/concealment layer, projectile-blocking layer, nav mesh):

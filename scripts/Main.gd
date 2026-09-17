@@ -1139,7 +1139,7 @@ func _debug_spawn_cover_test() -> void:
 	body.add_child(cover)
 	cover.attach_to(body)
 
-	_hud.show_message("DEBUG CONCEALMENT TEST spawned (O) — layer bit only, no LOS gating until Phase 2.")
+	_hud.show_message("DEBUG CONCEALMENT TEST spawned (O) — blocks sight, rounds pass through.")
 
 # --- Zombie bookkeeping ---------------------------------------------------
 func _prune_zombies() -> void:
