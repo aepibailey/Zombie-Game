@@ -7,10 +7,12 @@ class_name ZombieType
 ## WeaponData/Arsenal already use for the weapon roster.
 ##
 ## What deliberately does NOT live here: anything shared by every variant and
-## not expected to differ (line-of-sight ranges, investigate timeout, repath
-## cadence, wander radius, the noise-bus wiring). Those stay as constants on
-## Zombie.gd. Pulling genuinely-global tuning into a per-variant resource
-## would just mean editing N files to change one rule.
+## not expected to differ (investigate timeout, repath cadence, wander radius,
+## the noise-bus wiring, chase-lose and laser ranges). Those stay as constants
+## on Zombie.gd. Pulling genuinely-global tuning into a per-variant resource
+## would just mean editing N files to change one rule. Passive SIGHT is the
+## exception, on purpose: how far a variant sees is part of what makes it that
+## variant (the leaper is the alert hunter), so it lives under "Perception".
 ##
 ## See PROJECT_SPEC.md "Zombie AI" and "Zombie variants".
 
@@ -81,6 +83,40 @@ class_name ZombieType
 ## NoiseManager — it's a player-facing tell, not a zombie-facing alert, and
 ## must not pull other zombies in. "" = silent.
 @export var sfx_chase_entry: String = ""
+
+# --- Perception (passive sight) --------------------------------------------
+## How far this variant sees an UPRIGHT player — standing, walking or
+## sprinting alike; sprinting buys speed, not visibility. Only in Wander and
+## Investigate, only at night (Zombie._update_sight). The player says what
+## state it is in; this resource alone decides what that means in metres.
+@export var sight_range: float = 12.0
+## A crouched player, still or moving, is seen at range x this.
+@export var sight_crouch_mult: float = 0.5
+## Half the cone. 60 = a 120-degree cone around the way the zombie faces;
+## walk up behind one and it does not see you (it can still HEAR you).
+@export var sight_half_angle_deg: float = 60.0
+## Seconds the player must stay in view before the zombie commits to Chase.
+@export var notice_threshold: float = 0.75
+## Seen at least this long but lost before notice: the zombie goes to look
+## where it last saw you. Below it, a glimpse is nothing.
+@export var suspicion_threshold: float = 0.25
+
+## Structural sanity, called once from Main._ready() — the same shape as
+## FighterType.validate(). `chase_lose_range` is passed in rather than read
+## off Zombie so this resource takes no dependency on the node that uses it.
+func validate(chase_lose_range: float) -> void:
+	assert(sight_range > 0.0,
+		"[ZOMBIETYPE] %s: sight_range must be positive." % id)
+	assert(sight_crouch_mult > 0.0 and sight_crouch_mult <= 1.0,
+		"[ZOMBIETYPE] %s: sight_crouch_mult must be in (0, 1] — crouching never makes you MORE visible." % id)
+	assert(sight_half_angle_deg > 0.0 and sight_half_angle_deg <= 180.0,
+		"[ZOMBIETYPE] %s: sight_half_angle_deg must be in (0, 180]." % id)
+	assert(suspicion_threshold > 0.0 and suspicion_threshold < notice_threshold,
+		"[ZOMBIETYPE] %s: suspicion_threshold must be positive and below notice_threshold, or a glimpse would outrank a sighting." % id)
+	# A zombie that could acquire beyond the range at which Chase gives up
+	# would flip Chase -> Investigate the moment line of sight blinked.
+	assert(sight_range <= chase_lose_range,
+		"[ZOMBIETYPE] %s: sight_range (%.1f) must not exceed Zombie.CHASE_LOSE_RANGE (%.1f)." % [id, sight_range, chase_lose_range])
 
 # --- Derived ---------------------------------------------------------------
 ## The chase speed actually used. Reads the player's sprint constant directly

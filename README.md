@@ -172,8 +172,9 @@ tools/
 | Suppressed gunshot | 8m |
 | Unsuppressed gunshot | 40m |
 
-Red laser (ADS): any zombie within **10m + line of sight** instantly knows your
-exact position.
+Red laser (ADS): any zombie within **20m of the laser dot** that has line of
+sight to the dot goes to investigate the dot — it does not know where you are.
+If it spots you while it is investigating (within 16m), it chases.
 
 ## Testing against the Acceptance Criteria
 

@@ -92,7 +92,7 @@ const LASER_MAX_DRAW := 100.0
 ##
 ## Deliberately NOT routed through NoiseManager: this is a separate sensory
 ## channel and must never generate a noise event.
-const LASER_DETECT_RADIUS := 15.0
+const LASER_DETECT_RADIUS := 20.0
 ## Evaluated on this cadence rather than per frame.
 const LASER_DETECT_INTERVAL := 0.25
 ## Debounce: a zombie already alerted by the dot only re-arms once the dot has
@@ -2143,6 +2143,14 @@ func is_alive() -> bool:
 ## true for the one frame of a respawn death.
 func is_dead() -> bool:
 	return _dead
+
+## Passive-sight input. The player reports its STATE only; what that state is
+## worth in metres belongs to each ZombieType (see Zombie._update_sight), so
+## the player never knows zombie ranges. Reads the crouch the player chose,
+## not the lerping camera height — that live eye point is what the sight ray
+## itself uses.
+func is_crouched() -> bool:
+	return is_crouching
 
 ## THE point sight enters and leaves this player — LineOfSight's contract (see
 ## LineOfSight.eye_point()). This is the camera's own position, not a body

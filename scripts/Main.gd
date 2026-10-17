@@ -218,6 +218,9 @@ func _ready() -> void:
 	# M17 trips this instead of silently desyncing the two.
 	var _m17 := Arsenal.get_weapon("m17")
 	FIGHTER_TYPE_IRREGULAR.validate(_m17.noise_unsuppressed, _m17.noise_suppressed)
+	# Each zombie variant's passive-sight tuning — see ZombieType "Perception".
+	_type_walker.validate(Zombie.CHASE_LOSE_RANGE)
+	_type_leaper.validate(Zombie.CHASE_LOSE_RANGE)
 	_build_lighting()
 	_build_world()
 	_build_ui()

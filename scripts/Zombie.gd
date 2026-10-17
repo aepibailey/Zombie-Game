@@ -107,15 +107,21 @@ const REPATH_CHECK_INTERVAL := 1.0
 ## How often, in seconds, this zombie reconsiders WHICH hostile target it is
 ## pursuing.
 ##
-## 0.0 = re-evaluate on every query, which is exactly what the pre-abstraction
-## code did (the old _get_player() ran a fresh group lookup at every call
-## site, every frame). It is the default precisely because any positive value
-## would change behaviour on day one, and this refactor must not.
+## 0.0 = re-evaluate on every query, which is what the pre-abstraction code
+## did (the old _get_player() ran a fresh group lookup at every call site,
+## every frame) and was this default until fighters joined the group.
 ##
-## Exported now, unused-in-effect at 0.0, so the step that adds a second
-## target to the group can tune re-acquisition cadence without reopening this
-## file.
-@export var target_reevaluate_interval: float = 0.0
+## 0.25 now: _nearest_hostile_target() walks the whole group, and Chase and
+## Attack ask several times per physics frame. The visible cost is that a
+## chasing zombie keeps its current target for up to a quarter-second after a
+## nearer one appears. A target that LEAVES the group (a dead player) is
+## dropped at once regardless — see _acquire_target()'s membership check.
+@export var target_reevaluate_interval: float = 0.25
+
+## Seconds between passive-sight checks (_update_sight). Not per physics
+## frame: sight ends in a raycast, and a tenth of a second is far below the
+## notice delay it feeds.
+@export var sight_check_interval: float = 0.1
 
 ## Dawn retreat: seconds a survivor gets to walk out past the tree line before
 ## it despawns wherever it stands. Also how a zombie held in wire or down in a
@@ -130,6 +136,10 @@ var active := false                # only true at night (spec: dormant by day)
 var _retreating := false           # set once, at dawn — see begin_retreat()
 var _retreat_timer := 0.0
 var _retreat_arrive_r := 0.0       # despawn once this far from the base centre
+# Passive sight — see _update_sight().
+var _sight_elapsed := 0.0          # time since the last check
+var _notice := 0.0                 # continuous seconds the player has been in view
+var _last_seen_pos := Vector3.ZERO
 var last_hit_headshot := false
 
 # Shots-to-kill telemetry (logged on death to tune the HP step).
@@ -416,6 +426,13 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	# Passive sight, Wander and Investigate only. After the dormant and
+	# retreat early-returns above, so it is night-only and never runs for a
+	# sleeping or departing zombie — by construction, not by a second check.
+	# Before the match, so a sighting that enters Chase is acted on this frame.
+	if state == State.WANDER or state == State.INVESTIGATE:
+		_update_sight(delta)
+
 	match state:
 		State.WANDER:
 			_do_wander(delta)
@@ -441,9 +458,10 @@ func _physics_process(delta: float) -> void:
 
 # --- States ---------------------------------------------------------------
 func _do_wander(delta: float) -> void:
-	# Pure roaming. Zombies never read the player's position here — a silent
-	# (crouching) player can pass right by. Chase is only entered through a
-	# confirmed contact (laser reveal or being shot).
+	# Pure roaming; this function never reads the player's position. What
+	# moves a wandering zombie onto the player is a confirmed contact — being
+	# seen (_update_sight, which runs before this), the laser, being shot —
+	# or a noise. A crouched player is seen at only half range, and silent.
 	_move_toward(_target_pos, zombie_type.move_speed_wander, delta)
 	if global_position.distance_to(_target_pos) < 1.2:
 		_pick_wander_target()
@@ -453,10 +471,13 @@ func _do_investigate(delta: float) -> void:
 	# the player's live transform. If nothing is found before the timeout (or on
 	# arrival), give up and return to Wander.
 	#
-	# The player-sighting check is scoped to LASER investigations only. Noise
-	# investigation deliberately never looks for the player: that is what makes
-	# crouch-past-undetected work, and re-adding it globally would reintroduce
-	# the old "investigate silently becomes a homing chase" bug.
+	# Two different sightings can end an investigation. Passive sight
+	# (_update_sight, cone + range + notice delay) runs for every
+	# investigation, noise ones included. The check below is separate and
+	# scoped to LASER investigations only: having walked to the dot, the
+	# zombie sees the operator within LASER_INVESTIGATE_SIGHT in any
+	# direction. Investigate still paths to a FIXED point, never the player's
+	# live transform; that is what stops it silently becoming a homing chase.
 	if _investigating_laser and _can_see_target():
 		_investigating_laser = false
 		_enter_chase()
@@ -1026,9 +1047,10 @@ func _face(target: Vector3) -> void:
 		look_at(flat, Vector3.UP)
 
 # --- Perception -----------------------------------------------------------
-# NOTE: line-of-sight is only consulted from Chase (to track/lose a target the
-# zombie already has a confirmed fix on). Wander/Investigate never look at the
-# player, so noise events are the only thing that can move an un-alerted zombie.
+# Line of sight is consulted from three places, all through _has_los_to():
+# Chase (to track or lose a target it already has), a laser investigation
+# (spotting the operator near the dot), and passive sight (_update_sight,
+# below), which is what lets an un-alerted zombie find the player at all.
 ##
 ## Delegates to the ONE shared implementation (LineOfSight.between). This
 ## function used to cast its own ray from `global_position + 1.4` to
@@ -1046,6 +1068,65 @@ func _has_los_to(target: Node3D) -> bool:
 ## magic number.
 func eye_position() -> Vector3:
 	return global_position + Vector3(0.0, zombie_type.head_center_y(), 0.0)
+
+## Passive sight: can this zombie find the player by looking? Wander and
+## Investigate only, night only (see the call site in _physics_process).
+##
+## Runs every sight_check_interval, not every frame. While the player is in
+## view the notice timer accumulates; at notice_threshold the zombie commits
+## to Chase. Lost from view after suspicion_threshold but before notice, it
+## goes to look where it last saw them. Out of view, the timer resets. Chase
+## then follows the nearest hostile target as it always has.
+##
+## The PLAYER only reports its state (is_crouched); the range that state
+## buys lives on ZombieType, so variants can differ. Fighters are not
+## perceived by this — only the player.
+func _update_sight(delta: float) -> void:
+	_sight_elapsed += delta
+	if _sight_elapsed < sight_check_interval:
+		return
+	var dt := _sight_elapsed
+	_sight_elapsed = 0.0
+
+	var player := get_tree().get_first_node_in_group("player") as Player
+	if player != null and _sees(player):
+		_notice += dt
+		_last_seen_pos = player.global_position
+		if _notice >= zombie_type.notice_threshold:
+			_enter_chase()
+		return
+
+	# Out of view. A long enough glimpse is worth a look; a shorter one is
+	# nothing. Either way the timer starts over.
+	if _notice >= zombie_type.suspicion_threshold:
+		state = State.INVESTIGATE
+		_investigating_laser = false
+		_investigate_timer = INVESTIGATE_TIMEOUT
+		_target_pos = _last_seen_pos
+	_notice = 0.0
+
+## Cheapest rejection first: distance, then the cone, and only then the one
+## raycast, through _has_los_to() -> LineOfSight.between() (eye to eye).
+##
+## The cone is HORIZONTAL — facing and bearing are compared flat. A 3D cone
+## would let a player standing on a box at arm's length slip out of view
+## above the zombie's eye line, which reads as a bug, not as stealth.
+func _sees(player: Player) -> bool:
+	if not player.is_alive():
+		return false
+	var t := zombie_type
+	var sight := t.sight_range * (t.sight_crouch_mult if player.is_crouched() else 1.0)
+	var from := eye_position()
+	var to := LineOfSight.eye_point(player)
+	if from.distance_squared_to(to) > sight * sight:
+		return false
+	var forward := -global_transform.basis.z
+	var bearing := Vector2(to.x - from.x, to.z - from.z)
+	var flat_fwd := Vector2(forward.x, forward.z)
+	if bearing.length_squared() > 0.0001 and flat_fwd.length_squared() > 0.0001:
+		if bearing.normalized().dot(flat_fwd.normalized()) < cos(deg_to_rad(t.sight_half_angle_deg)):
+			return false
+	return _has_los_to(player)
 
 ## The hostile target this zombie is currently pursuing, or null.
 ##
@@ -1185,6 +1266,7 @@ func _enter_chase() -> void:
 	var fresh := state != State.CHASE and state != State.LEAP and state != State.LEAP_RECOVER
 	state = State.CHASE
 	_investigating_laser = false
+	_notice = 0.0   # a later return to Wander starts its sight timer clean
 	if fresh:
 		_chase_elapsed = 0.0
 		if _leap_screech and _leap_screech.stream:

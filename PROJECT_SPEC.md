@@ -63,7 +63,7 @@ Noise is a radius-based broadcast — any zombie within radius of a noise event 
 
 > **This REPLACES the original rule.** The old behaviour — "any zombie within 10m of the *player* with line of sight instantly knows your exact position" — is gone entirely, not extended. The zombie notices *the dot*, not the operator.
 
-- **Red laser (default, when ADS):** the laser's impact point is the dot. **Any zombie within `LASER_DETECT_RADIUS` = 15m of the dot that has line of sight to the dot** becomes alerted. **Distance from the player is irrelevant** — a zombie 200m away is alerted if you put the dot within 15m of it.
+- **Red laser (default, when ADS):** the laser's impact point is the dot. **Any zombie within `LASER_DETECT_RADIUS` = 20m of the dot that has line of sight to the dot** becomes alerted. **Distance from the player is irrelevant** — a zombie 200m away is alerted if you put the dot within 20m of it.
 - On alert the zombie enters **Investigate targeting the dot's world position**. It is curious about the light and has no idea where you are. If it acquires line of sight to the player during that investigation it transitions to **Chase** by the normal rules (`LASER_INVESTIGATE_SIGHT` = 16m).
 - **IR laser:** never triggers any of this, at any range. That is its entire point.
 - **Completely separate from the noise system.** It is not routed through `NoiseManager` and generates no noise event.
