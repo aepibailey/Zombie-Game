@@ -25,6 +25,11 @@ extends Node
 ## the wave is stopped so the fighter's only contact is the one placed for it,
 ## AND the stats below are snapshotted every frame so a dead fighter can still
 ## be reported on rather than crashing the harness.
+##
+## THE FIGHTER IS ALLOWED TO DIE. A 100 HP walker that survives four or five
+## low rolls closes 8m and melees, and a lone fighter losing that is correct
+## behaviour, so a KIA is reported, never asserted against. What IS asserted
+## is the thing the suppression exists for: Main's own wave spawned nothing.
 
 var _main: Node
 var _fighter: Fighter
@@ -50,6 +55,9 @@ var _fighter_kia := false
 # it waits on the hang until someone notices.
 const HARD_FRAME_CAP := 1800
 
+# Frame on which the engagement is set up; snapshots start the frame after.
+const SPAWN_FRAME := 5
+
 func _ready() -> void:
 	_main = load("res://scenes/Main.tscn").instantiate()
 	add_child(_main)
@@ -66,7 +74,7 @@ func _process(_delta: float) -> void:
 		return
 	_frames += 1
 
-	if _frames == 5:
+	if _frames == SPAWN_FRAME:
 		GameManager.force_phase(GameManager.Phase.NIGHT)
 		print("[SMOKE] phase forced to %s" % GameManager.phase_name())
 		_suppress_night_wave()
@@ -106,8 +114,10 @@ func _suppress_night_wave() -> void:
 	_main._zombies.clear()
 
 func _snapshot() -> void:
-	if _fighter == null:
+	if _frames < SPAWN_FRAME:
 		return
+	# Not `_fighter == null`: a freed object also compares equal to null, so
+	# that guard silently swallowed a KIA and the survival check never fired.
 	if not is_instance_valid(_fighter):
 		_fighter_kia = true
 		return
@@ -126,7 +136,8 @@ func _report() -> void:
 	_done = true
 	print("[SMOKE] --- results ---")
 	_check(GameManager.phase_name() == "NIGHT", "engagement ran during NIGHT")
-	_check(not _fighter_kia, "test fighter survived (night wave stayed suppressed)")
+	_main._prune_zombies()
+	_check(_main._zombies.is_empty(), "night wave stayed suppressed (Main spawned nothing)")
 	_check(_shots > 0, "fighter fired at least one round")
 	_check(_hits > 0, "fighter landed at least one hit")
 	_check(_hits <= _shots, "hits never exceed shots")
