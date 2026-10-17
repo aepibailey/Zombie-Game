@@ -17,8 +17,8 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 
 ## Headless smoke test
 
-There is one automated test. It needs the engine on the command line, which is
-a separate install from the editor:
+There are two automated tests: this one and the table tests below. Both need
+the engine on the command line, which is a separate install from the editor:
 
 ```sh
 # Linux x86_64; match the version in project.godot's config/features (4.3).
@@ -45,6 +45,26 @@ harness then "fails" for reasons that have nothing to do with the game.
 Headless prints `ERROR: Parameter "m" is null` / `mesh_get_surface_count`
 repeatedly. That is Godot's dummy renderer, not this project — filter it:
 `| grep -vE 'mesh_get_surface_count|Parameter "m" is null'`.
+
+## Headless table tests
+
+```sh
+./Godot_v4.3-stable_linux.x86_64 --headless res://tools/table_tests.tscn
+```
+
+Runs in about a second; exit code 0 on all-pass, 1 on any failure. It checks the
+numbers the specs work out by hand against the live functions that produce
+them: zombie HP per night, spawn interval, leaper share, weapon falloff, SPAS-12
+pellet lethality, headshots-to-kill (and the 416-beats-M17 rule over nights
+1–200 × 0–150m), leaper ballistics, and supply-drop pricing. No world is built;
+per-hit damage comes from the real `Zombie.take_damage()` on one inactive
+dummy. Same rules as the smoke test: run it as a scene, filter the renderer
+noise. CI runs both.
+
+A failure means the code and a spec table disagree. Decide which is right
+before changing either. A section that throws is reported as aborted, and a
+run that never reaches its report fails on a 10s watchdog, so a crash can never
+read as a pass.
 
 ## Controls
 
@@ -159,6 +179,7 @@ assets/audio/zombie/
 tools/
   gen_placeholder_audio.py  # re-roll footstep variations (edit CONFIG)
   smoke_test.gd/.tscn       # headless engagement test — see above, run as a SCENE
+  table_tests.gd/.tscn      # headless spec-number checks — see above, run as a SCENE
 ```
 
 ## Noise model (from the spec)
@@ -178,8 +199,9 @@ If it spots you while it is investigating (within 16m), it chases.
 
 ## Testing against the Acceptance Criteria
 
-These are by hand and by eye. The headless smoke test above covers only the
-fighter engagement loop; everything below still needs a human at the keyboard.
+These are by hand and by eye. The headless tests above cover only the fighter
+engagement loop and the spec's worked numbers; everything below still needs a
+human at the keyboard.
 
 1. **Crouch past a zombie (<10m) undetected** — at Night, press `C` and walk
    slowly past a zombie a few metres away. It should stay in Wander (no laser).

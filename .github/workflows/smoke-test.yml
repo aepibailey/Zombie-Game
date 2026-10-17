@@ -1,7 +1,8 @@
-# Runs the headless smoke test (tools/smoke_test.tscn) on every push and PR.
-# Scope is the smoke test only: no lint, no broader suite.
+# Runs the headless smoke test (tools/smoke_test.tscn) and the table tests
+# (tools/table_tests.tscn) on every push and PR. No lint, no broader suite.
+# The job keeps its original `smoke-test` name so the check name is stable.
 #
-# The step that runs the test is wrapped in a hard 60s `timeout`. An earlier
+# Each step that runs a test is wrapped in a hard 60s `timeout`. An earlier
 # version of this test could hang instead of failing; CI must turn a future
 # hang into a loud failure (exit 124), never a stuck job.
 name: Smoke test
@@ -42,4 +43,11 @@ jobs:
       - name: Run smoke test (60s hard timeout)
         run: |
           timeout 60 "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless res://tools/smoke_test.tscn 2>&1 \
+            | grep -vE 'mesh_get_surface_count|Parameter "m" is null'
+
+      # Pure-function checks of the spec's worked numbers; ~1s. Same
+      # run-as-a-scene rule and the same filter as the smoke test.
+      - name: Run table tests (60s hard timeout)
+        run: |
+          timeout 60 "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless res://tools/table_tests.tscn 2>&1 \
             | grep -vE 'mesh_get_surface_count|Parameter "m" is null'
