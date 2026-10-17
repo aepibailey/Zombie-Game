@@ -151,7 +151,8 @@ not on death). Buy more by the magazine at the crate. All granting goes through
 
 **Nights** spawn an escalating pool of zombies — `base_spawn + spawn_per_night *
 (night_number - 1)` (6, 9, 12, … tunable on the Main node), capped at
-`max_concurrent` alive at once — that trickle in over the night. Any zombies
+a max-alive count (20, rising from night 15 to a ceiling of 32) — that
+trickle in over the night. Any zombies
 left alive at dawn **retreat** past the tree line and despawn, and **carry
 over** as a count, folded into the next night's total. Once every zombie for
 the night (carryover + pool) has spawned *and* been killed, an **all-clear**

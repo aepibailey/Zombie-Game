@@ -13,7 +13,17 @@ const TREE_COUNT := 44
 #   spawn_count = base_spawn + spawn_per_night * (night_number - 1)
 @export var base_spawn: int = 6
 @export var spawn_per_night: int = 3
-@export var max_concurrent: int = 20     # hard cap on zombies alive at once
+
+# --- Max alive (the concurrent cap) — see max_alive_for_night() -------------
+## The real density lever once the pool outgrows the spawn window (around
+## night 15): a flat base, then +step every `step_every` nights from
+## `step_start_night`, never above the ceiling. The ceiling is frame-rate
+## bound — see docs/RUN_STRUCTURE.md "Open questions".
+@export var max_alive_base: int = 20
+@export var max_alive_step: int = 2
+@export var max_alive_step_every: int = 5
+@export var max_alive_step_start_night: int = 10
+@export var max_alive_ceiling: int = 32
 
 # Wave pacing — zombies trickle in rather than all at once. The interval scales
 # with pool size so bigger nights still deliver their allotment: the pool is
@@ -24,11 +34,18 @@ const FIRST_SPAWN_DELAY := 1.5
 @export var spawn_interval_max: float = 20.0  # ceiling, so tiny nights still trickle
 @export var spawn_jitter: float = 0.35        # ±35% randomisation per spawn
 
-# --- Zombie health scaling (tunable) --------------------------------------
-#   zombie_hp = zombie_base_hp + hp_per_step * floor((night_number - 1) / nights_per_step)
+# --- Zombie health scaling (tunable) — see hp_for_night() -----------------
+#   nights 1..hp_linear_until_night:
+#     zombie_hp = base + hp_per_step * floor((night_number - 1) / nights_per_step)
+#   after that, compounding on the last linear night:
+#     zombie_hp = round(hp(hp_linear_until_night) * hp_growth_per_night ^ (n - that night))
 @export var zombie_base_hp: int = 100
 @export var hp_per_step: int = 8
 @export var nights_per_step: int = 2
+## Last night on the linear step. Past it, HP compounds — the run's soft wall
+## (docs/RUN_STRUCTURE.md "Decision"): HP outgrows a fully bought kit.
+@export var hp_linear_until_night: int = 10
+@export var hp_growth_per_night: float = 1.06
 
 # --- Zombie variant mix ----------------------------------------------------
 ## Leapers debut on this night; everything before it is 100% walkers.
@@ -196,6 +213,7 @@ var _wave_total := 0            # zombies to spawn this night
 var _wave_spawned := 0          # how many have spawned so far
 var _spawn_timer := 0.0         # countdown to the next trickle spawn
 var _spawn_interval := 4.0      # this night's base interval (scaled to pool size)
+var _max_alive := 0             # this night's concurrent cap (max_alive_for_night)
 var _all_clear_shown := false   # prompt fires once per all-clear event
 
 @onready var player: Player = $Player
@@ -775,12 +793,15 @@ func _begin_night() -> void:
 	# Carryover now trickles in alongside the fresh pool, so the interval
 	# spreads the whole count across the spawn window.
 	_spawn_interval = _compute_spawn_interval(_wave_total)
+	_max_alive = max_alive_for_night(GameManager.night_number, max_alive_base, max_alive_step,
+		max_alive_step_every, max_alive_step_start_night, max_alive_ceiling)
 	_all_clear_shown = false
-	RunLogger.begin_night(GameManager.night_number, new_pool, carryover)
+	RunLogger.begin_night(GameManager.night_number, new_pool, carryover,
+		_max_alive, _zombie_hp_for_type(_type_walker.max_health))
 	var lf := leaper_fraction_for_night(GameManager.night_number)
 	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
 		GameManager.night_number, _wave_total, new_pool, carryover,
-		max_concurrent, _zombie_hp_for_night(), _spawn_interval])
+		_max_alive, _zombie_hp_for_night(), _spawn_interval])
 	print("[Night %d] mix: %d%% leapers (walker %d HP / leaper %d HP)" % [
 		GameManager.night_number, int(round(lf * 100.0)),
 		_zombie_hp_for_type(_type_walker.max_health),
@@ -821,7 +842,7 @@ func _process(delta: float) -> void:
 	_spawn_timer -= delta
 	# Remaining spawns queue while we're at the concurrent cap; the timer stays
 	# elapsed so the next slot fills as soon as a zombie dies.
-	if _spawn_timer <= 0.0 and alive_count() < max_concurrent:
+	if _spawn_timer <= 0.0 and alive_count() < _max_alive:
 		_spawn_zombie()
 		_wave_spawned += 1
 		RunLogger.note_alive(alive_count())
@@ -910,18 +931,41 @@ func _compute_spawn_interval(pool: int) -> float:
 	var window: float = GameManager.NIGHT_LENGTH * spawn_window_frac
 	return clampf(window / float(pool), spawn_interval_min, spawn_interval_max)
 
-## Per-night zombie max HP: negligible early, compounding later.
-##   100 / 100 / 108 / 108 / 116 / 116 ...
+## Tonight's concurrent cap: the base before `step_start_night`, then +step
+## every `step_every` nights from it, ceiling last. 20 through night 14,
+## 22 / 24 / ... from 15, 32 from night 40 at the defaults. Static and handed
+## the tunables, like pool_for_night(), so it is testable without a Main.
+static func max_alive_for_night(night: int, base: int, step: int, step_every: int,
+		step_start_night: int, ceiling: int) -> int:
+	var cap := base
+	if night >= step_start_night:
+		cap += step * int(floor(float(night - step_start_night) / float(maxi(1, step_every))))
+	return mini(cap, ceiling)
+
+## A variant's max HP on `night`. Linear through `linear_until`:
+##   100 / 100 / 108 / 108 / 116 / 116 ... 132 on nights 9-10 for a walker.
+## The step is absolute (+8 per 2 nights), not proportional, so a leaper's 60
+## and a walker's 100 gain the same amount up to there. After it, HP compounds
+## on that variant's own last linear value, rounded each night — a walker is
+## round(132 * 1.06^(n-10)), a leaper round(92 * 1.06^(n-10)).
+## Static and handed the tunables, like pool_for_night().
+static func hp_for_night(night: int, base: int, per_step: int, nights_per_step_: int,
+		linear_until: int, growth: float) -> int:
+	var linear_night := mini(night, linear_until)
+	var steps: int = int(floor(float(linear_night - 1) / float(maxi(1, nights_per_step_))))
+	var linear := base + per_step * maxi(0, steps)
+	if night <= linear_until:
+		return linear
+	return roundi(float(linear) * pow(growth, night - linear_until))
+
+## Per-night walker max HP (the base the HP tables quote).
 func _zombie_hp_for_night() -> int:
 	return _zombie_hp_for_type(zombie_base_hp)
 
-## Same per-night step, applied to whatever the variant's BASE health is.
-## The step is absolute (+8 per 2 nights), not proportional, so a leaper's
-## 60 HP and a walker's 100 HP both gain the same amount and the leaper stays
-## exactly 40 HP squishier for the whole run.
+## Tonight's max HP for whatever the variant's BASE health is.
 func _zombie_hp_for_type(base: int) -> int:
-	var steps: int = int(floor(float(GameManager.night_number - 1) / float(maxi(1, nights_per_step))))
-	return base + hp_per_step * maxi(0, steps)
+	return hp_for_night(GameManager.night_number, base, hp_per_step, nights_per_step,
+		hp_linear_until_night, hp_growth_per_night)
 
 ## Fraction of tonight's spawns that should be leapers. Nights 1-3 are pure
 ## walkers; from night 4 it opens at 10% and climbs 5%/night to a 30% ceiling.

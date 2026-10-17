@@ -42,6 +42,8 @@ func _ready() -> void:
 	var saved_night: int = GameManager.night_number
 	for section in [
 		_test_zombie_hp,
+		_test_hp_curve,
+		_test_max_alive,
 		_test_night_pool,
 		_test_spawn_interval,
 		_test_leaper_fraction,
@@ -95,10 +97,33 @@ func _hp_on_night(night: int, base: int = 100) -> int:
 func _test_zombie_hp() -> bool:
 	print("[TABLE] zombie HP per night (PROJECT_SPEC.md \"Zombie health scaling\")")
 	for row in [[1, 100], [2, 100], [3, 108], [4, 108], [5, 116], [6, 116],
-			[9, 132], [10, 132], [21, 180]]:
+			[9, 132], [10, 132]]:
 		_eq(_hp_on_night(row[0]), row[1], "night %d walker HP" % row[0])
-	# The step is absolute, not proportional (Main._zombie_hp_for_type()).
+	# The step is absolute, not proportional (Main.hp_for_night()).
 	_eq(_hp_on_night(3, 60), 68, "night 3 leaper HP (60 base + 8)")
+	return true
+
+# --- docs/RUN_STRUCTURE.md "Escalation" + Prompt A phase 1 -----------------------
+## Past hp_linear_until_night, HP compounds on the variant's own night-10
+## value. Walker rows are Prompt A's table; leaper rows follow from the same
+## rule on 92 (60 + 8 x 4), which is "leapers keep their current scaling
+## through night 10".
+func _test_hp_curve() -> bool:
+	print("[TABLE] HP curve (docs/RUN_STRUCTURE.md \"Escalation\", Prompt A phase 1)")
+	for row in [[1, 100], [10, 132], [11, 140], [15, 177], [20, 236], [30, 423], [50, 1358]]:
+		_eq(_hp_on_night(row[0]), row[1], "night %d walker HP" % row[0])
+	for row in [[10, 92], [11, 98], [15, 123], [20, 165], [30, 295]]:
+		_eq(_hp_on_night(row[0], 60), row[1], "night %d leaper HP" % row[0])
+	return true
+
+## Max alive with no night type: the base before night 10, +2 every 5 nights
+## from it, the 32 ceiling last.
+func _test_max_alive() -> bool:
+	print("[TABLE] max alive, no night type (Prompt A phase 1)")
+	for row in [[1, 20], [9, 20], [10, 20], [14, 20], [15, 22], [20, 24], [40, 32], [60, 32]]:
+		_eq(_main_script.max_alive_for_night(row[0], _main.max_alive_base, _main.max_alive_step,
+			_main.max_alive_step_every, _main.max_alive_step_start_night, _main.max_alive_ceiling),
+			row[1], "night %d max alive" % row[0])
 	return true
 
 # --- PROJECT_SPEC.md "Night scaling" ------------------------------------------
@@ -176,6 +201,10 @@ func _test_spas_one_shot() -> bool:
 	return true
 
 # --- PATROL_BASE_ZERO_V2_SPEC.md §4.4 headshot shots-to-kill table ----------
+## Nights 1-10 are §4.4's own rows. From night 11 the CODE's numbers are
+## pinned: §4.4 was written for the linear HP formula, and HP now compounds
+## after night 10 (docs/RUN_STRUCTURE.md). §4.4's derivation of the 416's 66
+## is unaffected — its binding case is the 132 HP of nights 9-10.
 func _test_headshots_to_kill() -> bool:
 	print("[TABLE] headshots to kill (V2_SPEC §4.4)")
 	var m17: WeaponData = Arsenal.get_weapon("m17")
@@ -187,8 +216,8 @@ func _test_headshots_to_kill() -> bool:
 	# night, HP, M17 @10m, M17 @35m, 416
 	var table := [
 		[1, 100, 2, 3, 1], [3, 108, 2, 4, 1], [5, 116, 2, 4, 1], [7, 124, 2, 4, 1],
-		[9, 132, 2, 4, 1], [11, 140, 3, 4, 2], [13, 148, 3, 5, 2], [15, 156, 3, 5, 2],
-		[17, 164, 3, 5, 2], [19, 172, 3, 5, 2], [21, 180, 3, 6, 2],
+		[9, 132, 2, 4, 1], [11, 140, 3, 4, 2], [13, 157, 3, 5, 2], [15, 177, 3, 6, 2],
+		[17, 198, 3, 6, 2], [19, 223, 4, 7, 2], [21, 251, 4, 8, 2],
 	]
 	for row in table:
 		var hp := _hp_on_night(row[0])

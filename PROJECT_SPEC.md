@@ -18,7 +18,7 @@ A lone Tier 1 operator holds a patrol base in the woods after everyone else is g
 ### Night scaling (implemented)
 Escalation is live (formerly a v2 item). Tunables are `@export` vars on the **Main** node.
 - **Spawn count per night:** `spawn_count = base_spawn + spawn_per_night * (night_number - 1)` → `base_spawn = 6`, `spawn_per_night = 3` (Night 1 = 6, Night 2 = 9, Night 3 = 12, …).
-- **Concurrent cap:** never more than `max_concurrent = 20` zombies alive at once; remaining spawns queue and trickle in as others die.
+- **Concurrent cap:** never more than `Main.max_alive_for_night()` zombies alive at once — 20 through night 14, +2 every 5 nights from night 10, ceiling 32 (see "Zombie health scaling"); remaining spawns queue and trickle in as others die.
 - Zombies trickle in; the whole allotment never appears at once. The spawn interval is **derived from night length and pool size**, never hardcoded: the pool is spread over `spawn_window_frac = 0.75` of the night, clamped to `spawn_interval_min = 0.6s` … `spawn_interval_max = 20.0s`, with `spawn_jitter = ±35%` per spawn. At 120s nights that gives a 90s spawn window and a 30s tail for cleanup: **Night 1 = 15.0s, Night 3 = 7.5s, Night 5 = 5.0s, Night 10 = 2.7s**.
 
 ### All-clear (implemented)
@@ -31,10 +31,13 @@ Escalation is live (formerly a v2 item). Tunables are `@export` vars on the **Ma
 - A debug line prints at each night start: night number, total to spawn, cap, zombie HP, and the computed spawn interval.
 
 ### Zombie health scaling (implemented)
-Zombies gain health every other night — negligible early, compounding later. Tunables are `@export` vars on **Main**.
-- `zombie_hp = zombie_base_hp + hp_per_step * floor((night_number - 1) / nights_per_step)`
-- Defaults: `zombie_base_hp = 100`, `hp_per_step = 8`, `nights_per_step = 2`.
-- Nights 1–2 = **100**, nights 3–4 = **108**, nights 5–6 = **116**, … no cap.
+Zombies gain health every other night through night 10, then compound — the run's soft wall (see `docs/RUN_STRUCTURE.md`). Tunables are `@export` vars on **Main**; the rule is `Main.hp_for_night()`.
+- Nights 1–`hp_linear_until_night` (10): `zombie_hp = base + hp_per_step * floor((night_number - 1) / nights_per_step)`.
+- After that: `zombie_hp = round(hp(10) * hp_growth_per_night ^ (night_number - 10))`, compounding on each variant's own night-10 value.
+- Defaults: `zombie_base_hp = 100`, `hp_per_step = 8`, `nights_per_step = 2`, `hp_linear_until_night = 10`, `hp_growth_per_night = 1.06`.
+- Walker: nights 1–2 = **100**, 3–4 = **108**, 5–6 = **116**, 9–10 = **132**, then 11 = **140**, 15 = **177**, 20 = **236**, 30 = **423**, 50 = **1358**, … no cap.
+- Leaper (60 base): the same +8 step to **92** on night 10, then `round(92 * 1.06^(n - 10))`.
+- Max alive at once is `Main.max_alive_for_night()`: `max_alive_base` (20) before `max_alive_step_start_night` (10), then `+max_alive_step` (2) every `max_alive_step_every` (5) nights, capped at `max_alive_ceiling` (32).
 - On every zombie death a debug line logs night number, that zombie's max HP, and shots-to-kill split by headshot/body — used to find the shots-to-kill breakpoints when tuning the step size.
 
 ## Movement & Noise

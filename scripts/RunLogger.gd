@@ -25,6 +25,7 @@ extends Node
 const RUNS_DIR := "user://runs"
 const COLUMNS := [
 	"run_id", "night", "ended_by", "pool", "carryover_in", "carryover_out",
+	"max_alive", "walker_hp",
 	"walker_kills_head", "walker_kills_body", "leaper_kills_head", "leaper_kills_body",
 	"day_kills", "points_earned", "bank_at_dawn", "bank_at_dusk",
 	"spent_ammo", "spent_weapons", "spent_attachments", "spent_equipment",
@@ -90,12 +91,16 @@ func _start_run() -> void:
 ## Night N has started. Closes row N-1 (its Day just ended) and opens row N.
 ## `carryover_in` is also the closing row's carryover_out — the same survivors
 ## counted at the same moment, so the two can never disagree.
-func begin_night(night: int, pool: int, carryover_in: int) -> void:
+## `max_alive` and `walker_hp` are the night's escalation as Main computed
+## it — the cap and a walker's max HP — so a run can be checked against
+## docs/RUN_STRUCTURE.md's night-by-night table straight from the CSV.
+func begin_night(night: int, pool: int, carryover_in: int, max_alive: int, walker_hp: int) -> void:
 	if not _row.is_empty():
 		_row["carryover_out"] = carryover_in
 		_close_row("dusk")
 	_row = {
 		"run_id": run_id, "night": night, "pool": pool, "carryover_in": carryover_in,
+		"max_alive": max_alive, "walker_hp": walker_hp,
 		"walker_kills_head": 0, "walker_kills_body": 0,
 		"leaper_kills_head": 0, "leaper_kills_body": 0, "day_kills": 0,
 		"max_alive_reached": 0, "player_hp_lost": 0, "ifaks_used": 0, "fighters_lost": 0,
