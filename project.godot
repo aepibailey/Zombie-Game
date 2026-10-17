@@ -25,6 +25,7 @@ ObstacleCatalog="*res://scripts/ObstacleCatalog.gd"
 GameState="*res://scripts/GameState.gd"
 AreaDamageSystem="*res://scripts/AreaDamageSystem.gd"
 UAVSystem="*res://scripts/UAVSystem.gd"
+RunLogger="*res://scripts/RunLogger.gd"
 
 [input]
 

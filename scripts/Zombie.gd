@@ -1455,6 +1455,7 @@ func _die() -> void:
 	# their damage in PointsManager.credit_defense_kills().
 	if not GameManager.is_day() or PointsManager.defense_credit_active():
 		PointsManager.add_points(zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill)
+	RunLogger.record_kill(zombie_type.id, last_hit_headshot)
 	# Shots-to-kill telemetry for tuning the HP step size.
 	print("[Night %d] zombie down — maxHP %d, shots: %d head + %d body = %d total (killing blow: %s)" % [
 		GameManager.night_number, max_hp, _hits_head, _hits_body,

@@ -227,6 +227,8 @@ func _ready() -> void:
 	_apply_lighting(GameManager.is_day())
 
 	GameManager.phase_changed.connect(_on_phase_changed)
+	# A run-ending death writes the row in progress (RunLogger, ended_by = death).
+	player.died_permanently.connect(RunLogger.on_player_died)
 
 	# Bake the navmesh after the geometry is in the tree, then let the
 	# NavigationServer sync for a frame before anything queries a path.
@@ -770,7 +772,7 @@ func _begin_night() -> void:
 	# spreads the whole count across the spawn window.
 	_spawn_interval = _compute_spawn_interval(_wave_total)
 	_all_clear_shown = false
-	PointsManager.begin_night_tally()
+	RunLogger.begin_night(GameManager.night_number, new_pool, carryover)
 	var lf := leaper_fraction_for_night(GameManager.night_number)
 	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
 		GameManager.night_number, _wave_total, new_pool, carryover,
@@ -795,10 +797,7 @@ func _begin_day() -> void:
 	for z in _zombies:
 		z.begin_retreat(TREE_RING_MIN, TREE_RING_MAX)
 	_hud.hide_all_clear()
-	# Per-night earnings telemetry — the data pricing decisions need.
-	print("[ECONOMY] night %d earned %d pts, spent %d, balance %d" % [
-		GameManager.night_number, PointsManager.earned_this_night,
-		PointsManager.spent_this_night, PointsManager.points])
+	RunLogger.mark_dawn()
 	_update_wave_hud()
 
 	_hud.show_message("DAY — safe. Open the supply crate to spend points.")

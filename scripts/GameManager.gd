@@ -119,6 +119,7 @@ func start_new_run() -> void:
 	AmmoManager.reset()
 	EnablerManager.reset()
 	UAVSystem.reset()
+	RunLogger.reset()
 	# Last before the reload, after anything that might snapshot.
 	GameState.clear()
 	get_tree().reload_current_scene()
