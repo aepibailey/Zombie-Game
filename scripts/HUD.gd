@@ -328,7 +328,7 @@ func bind_player(player: Player) -> void:
 	# The player's _ready() emitted its initial values before we connected,
 	# so pull the current state once to seed the labels.
 	_on_ammo_changed(player.ammo, player.reserve)
-	_on_health_changed(player.hp, player.MAX_HP)
+	_on_health_changed(player.health.hp, player.MAX_HP)
 	_on_state_changed(player._state_label())
 	_on_weapon_changed(player.weapon.display_name, player._fire_mode_label())
 	_on_suppressor_changed(player.has_suppressor())

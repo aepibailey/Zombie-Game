@@ -210,7 +210,7 @@ func _process(_delta: float) -> void:
 		_update_hp_label()
 
 func _update_hp_label() -> void:
-	var hp: int = _player.hp
+	var hp: int = _player.health.hp
 	_hp_label.text = "HP: %d" % hp
 	var danger: bool = hp <= 40
 	_hp_label.add_theme_color_override("font_color",

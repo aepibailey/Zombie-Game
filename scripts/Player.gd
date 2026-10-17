@@ -270,7 +270,10 @@ var control_enabled := true
 var mouse_captured := true
 var ads_active := false
 
-var hp := MAX_HP
+## No head hitbox and never in Damageable.GROUP_BULLET, so headshots never
+## apply; a player that has died takes nothing further until a debug respawn
+## refills it. See Health.
+var health := Health.new(MAX_HP)
 ## True only for the remainder of the frame in which the player died. The
 ## player respawns instantly, so this is the only window in which a death is
 ## observable at all — see is_alive().
@@ -491,7 +494,7 @@ func _ready() -> void:
 	AmmoManager.reserve_changed.connect(_on_reserve_changed)
 
 	# Prime the HUD.
-	health_changed.emit(hp, MAX_HP)
+	health_changed.emit(health.hp, MAX_HP)
 	state_changed.emit("WALK")
 
 func _physics_process(delta: float) -> void:
@@ -2122,7 +2125,7 @@ func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 ## the `damageable` group like everything else — a blast has no idea who threw
 ## it, so your own grenade at your own feet will kill you.
 func take_area_damage(amount: int, origin: Vector3) -> void:
-	take_damage(amount, origin)
+	_take(DamageInfo.blast(amount, origin))
 
 ## AreaDamageSystem's optional liveness convention, same as Zombie.is_alive().
 ##
@@ -2181,34 +2184,35 @@ func area_damage_points() -> Array:
 	]
 
 ## Zombie.GROUP_HOSTILE_TARGET's melee contract — see Zombie._acquire_target()'s
-## note on why melee has its own verb. Delegates to take_damage(), which the
-## player has always used for this and which already handles a source position
-## for the directional hit indicator. Nothing about the player's damage
-## behaviour changed; only the name the zombie calls it by.
+## note on why melee has its own verb.
 func take_melee_damage(amount: int, source_pos: Vector3) -> void:
-	take_damage(amount, source_pos)
+	_take(DamageInfo.melee(amount, source_pos))
 
-func take_damage(amount: int, source_pos = null) -> void:
+## Every hit on the player lands here. Health does the arithmetic and decides
+## death; this does what being hit looks like, in the order it always has,
+## then acts on a death.
+func _take(info: DamageInfo) -> int:
 	# A dead player has left every damage group, but a blast already iterating
 	# or a zombie swinging off a stale target can still land one call here.
 	if _dead:
-		return
-	hp = maxi(0, hp - amount)
-	health_changed.emit(hp, MAX_HP)
+		return 0
+	var dealt := health.apply(info)
+	health_changed.emit(health.hp, MAX_HP)
 	add_shake(HURT_SHAKE)
 	# Direction the hit came from, in the player's own frame.
 	var ang := 0.0
-	if source_pos != null:
-		var local: Vector3 = global_transform.basis.inverse() * ((source_pos as Vector3) - global_position)
+	if info.has_source:
+		var local: Vector3 = global_transform.basis.inverse() * (info.source_pos - global_position)
 		ang = atan2(local.x, -local.z)
 	damaged.emit(ang)
 	if _sfx_hurt.stream:
 		_sfx_hurt.play()
-	if hp <= 0:
+	if health.is_depleted():
 		if respawn_on_death:
 			_respawn()
 		else:
 			_die()
+	return dealt
 
 ## The run ends here. Persistent, unlike _respawn(): the player stays where it
 ## fell, takes no input and no damage, and stops being anything's target.
@@ -2246,11 +2250,11 @@ func _respawn() -> void:
 	died_while_busy.emit()
 	_cancel_ifak("died")
 	message.emit("You died — respawning at base. Ammo is NOT replenished.")
-	hp = MAX_HP
+	health.refill()
 	# Ammo deliberately does NOT regenerate — not on death, not at dawn.
 	global_position = _spawn_point
 	velocity = Vector3.ZERO
-	health_changed.emit(hp, MAX_HP)
+	health_changed.emit(health.hp, MAX_HP)
 
 func _clear_death_latch() -> void:
 	_died_this_frame = false
@@ -2460,7 +2464,7 @@ func _start_ifak() -> void:
 		return
 	# Blocked at full health rather than silently wasting the IFAK — a
 	# consumable this scarce should never be spent for nothing.
-	if hp >= MAX_HP:
+	if health.hp >= MAX_HP:
 		message.emit("Already at full health.")
 		return
 	_ifak_applying = true
@@ -2492,12 +2496,12 @@ func _update_ifak(delta: float) -> void:
 	if _ifak_timer >= ifak_apply_time:
 		_ifak_applying = false
 		ifaks -= 1
-		hp = mini(MAX_HP, hp + ifak_heal)   # no overheal
+		health.heal(ifak_heal)   # no overheal
 		ifaks = maxi(0, ifaks)
 		ifak_changed.emit(ifaks, ifak_max_carry)
-		health_changed.emit(hp, MAX_HP)
+		health_changed.emit(health.hp, MAX_HP)
 		ifak_progress.emit(false, 0.0)
-		message.emit("IFAK applied — %d HP." % hp)
+		message.emit("IFAK applied — %d HP." % health.hp)
 
 # --- Store purchase API ---------------------------------------------------
 ## Owned check for any catalog item. Ammo is always repurchasable.

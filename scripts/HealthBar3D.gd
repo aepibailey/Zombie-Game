@@ -1,10 +1,11 @@
 extends Node3D
 class_name HealthBar3D
-## Reusable world-space health bar. NOT sandbag-specific — `attach_to()`
-## takes any owner node plus the two property names to poll, so any future
-## destructible (mortar-damaged sandbags, a destructible gate, whatever)
-## gets a working bar by adding three lines at its own _ready(), not by
-## subclassing or duplicating this file.
+## Reusable world-space health bar. NOT sandbag-specific. Two ways in:
+## `attach_to_health()` polls an actor's Health directly (a Fighter today),
+## and `attach_to()` takes any owner node plus the two property names to poll,
+## so any future destructible that is not an actor (mortar-damaged sandbags,
+## a destructible gate, whatever) gets a working bar by adding three lines at
+## its own _ready(), not by subclassing or duplicating this file.
 ##
 ## Deliberately POLLING rather than signal-driven: requiring every future
 ## damageable to emit a specific health-changed signal would make this
@@ -41,6 +42,8 @@ const MARGIN_ABOVE := 0.35       # clearance above the object's own top
 @export var persist_while_damaged: bool = false
 
 var _owner: Node3D
+## Set by attach_to_health(); when present it is read instead of the props.
+var _health: Health
 var _health_prop: String
 var _max_prop: String
 var _bg: MeshInstance3D
@@ -56,8 +59,8 @@ var _shown := false
 ## `bounds` sizes and positions the bar relative to the OWNER's own footprint
 ## rather than a fixed offset — a wide object gets a (clamped) wider bar, and
 ## a tall object gets its bar pushed further up. Property names default to
-## "health"/"max_health", the convention every damageable in this project
-## already follows (SandbagPanel, Player, Zombie all use those names).
+## "health"/"max_health"; pass others for an owner that names them
+## differently. Actors have a Health; use attach_to_health() for those.
 ##
 ## Currently unattached to anything: the sandbag wall that originally used
 ## this was split into 5 SandbagPanel sections, and 5 simultaneous floating
@@ -76,6 +79,12 @@ func attach_to(owner: Node3D, bounds: Vector3,
 	visible = false
 	owner.add_child(self)
 	set_physics_process(true)
+
+## Same as attach_to(), but polls `health` (the owner's Health) rather than
+## two named properties.
+func attach_to_health(owner: Node3D, bounds: Vector3, health: Health) -> void:
+	_health = health
+	attach_to(owner, bounds)
 
 func _build_visuals() -> void:
 	# Background: dark, slightly wider than the fill so the fill reads as
@@ -120,8 +129,14 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 
-	var current: float = float(_owner.get(_health_prop))
-	var max_value: float = float(_owner.get(_max_prop))
+	var current: float
+	var max_value: float
+	if _health != null:
+		current = float(_health.hp)
+		max_value = float(_health.max_hp)
+	else:
+		current = float(_owner.get(_health_prop))
+		max_value = float(_owner.get(_max_prop))
 	if max_value <= 0.0:
 		visible = false
 		return

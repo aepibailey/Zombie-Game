@@ -63,7 +63,7 @@ func _melee(target: Node, amount: int, source: Vector3) -> void:
 	target.take_melee_damage(amount, source)
 
 func _player_hp(p: Player) -> int:
-	return p.hp
+	return p.health.hp
 
 # --- Harness -----------------------------------------------------------------
 ## A section that throws stops at the error and returns null; see table_tests.gd.

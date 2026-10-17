@@ -77,7 +77,6 @@ const DEFAULT_TYPE := "res://resources/zombie_walker.tres"
 
 # --- Tuning (shared by every variant — deliberately NOT per-type) ---------
 const BASE_HP := 100                # night-scaled by the spawner via `max_hp`
-const HEADSHOT_MULT := 2            # PROJECT_SPEC.md "Combat & Scoring"
 const CHASE_LOSE_RANGE := 26.0     # drop chase past this with no LOS
 ## Sight range used ONLY while investigating a laser dot — an alerted zombie
 ## that spots the operator switches to Chase by the normal rules.
@@ -128,9 +127,16 @@ const REPATH_CHECK_INTERVAL := 1.0
 ## pit leaves at all — it cannot walk, so it waits this out.
 @export var retreat_timeout: float = 20.0
 
-## Set by the spawner BEFORE add_child(); _ready() seeds `hp` from it.
-var max_hp := BASE_HP
-var hp := BASE_HP
+## Honours headshots, and keeps taking hits after death: a corpse stays
+## instance-valid until queue_free() runs, and the rest of a shotgun blast
+## still lands on it and reports damage. See Health.
+var health := Health.new(BASE_HP, true, true)
+## Set by the spawner BEFORE add_child(); _ready() fills `health` to it.
+var max_hp: int:
+	get:
+		return health.max_hp
+	set(value):
+		health.max_hp = value
 var state: int = State.WANDER
 var active := false                # only true at night (spec: dormant by day)
 var _retreating := false           # set once, at dawn — see begin_retreat()
@@ -225,7 +231,7 @@ func _ready() -> void:
 	head_hitbox.add_to_group("zombie_heads")
 	head_hitbox.add_to_group(Damageable.GROUP_BULLET_HEAD)
 	head_hitbox.set_meta(Damageable.HEAD_META, self)
-	hp = max_hp   # spawner set max_hp for this night's scaling
+	health.refill()   # spawner set max_hp for this night's scaling
 	_build_footsteps()
 	_build_screech()
 	agent.path_desired_distance = 0.6
@@ -1329,19 +1335,19 @@ func footstep_range() -> float:
 # --- Combat ---------------------------------------------------------------
 ## Returns the damage actually dealt, so the shooter can report it.
 ##
-## `falloff_mult` is applied AFTER the headshot multiplier, not before —
-## callers must pass the weapon's raw, un-multiplied damage here rather than
-## pre-multiplying by falloff themselves. Rounding only happens once, at the
-## end, in this function. Applying falloff first and rounding to an int
-## before the headshot multiplier (the previous behaviour, with callers
-## pre-multiplying) silently produced different final damage than this order
-## whenever the intermediate round truncated a fraction — e.g. 34 body dmg at
-## a 0.4 falloff multiplier: round(34*0.4)*2 = 28, but round(34*2*0.4) = 27.
+## Callers pass the weapon's raw, un-multiplied damage and the falloff
+## multiplier separately; Health.resolve() applies headshot then falloff and
+## rounds once. See its docstring for why the order matters.
 func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
-	var dmg: int = maxi(1, int(round(float(amount) * (HEADSHOT_MULT if headshot else 1) * falloff_mult)))
-	hp -= dmg
-	last_hit_headshot = headshot
-	if headshot:
+	return _take(DamageInfo.bullet(amount, headshot, falloff_mult))
+
+## Every hit, whatever its kind, lands here: Health does the arithmetic and
+## decides death; this does what a hit looks like on a zombie, in the order it
+## always has.
+func _take(info: DamageInfo) -> int:
+	var dmg := health.apply(info)
+	last_hit_headshot = info.headshot
+	if info.headshot:
 		_hits_head += 1
 	else:
 		_hits_body += 1
@@ -1354,7 +1360,7 @@ func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
 	if active and not GameManager.is_day() and not _retreating and not is_immobilised() \
 			and state != State.LEAP and state != State.LEAP_RECOVER:
 		_enter_chase()
-	if hp <= 0:
+	if health.is_depleted():
 		_die()
 	return dmg
 
@@ -1365,8 +1371,8 @@ func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
 ## silent bug: a Vector3 origin binds to `headshot` and is truthy, doubling
 ## every blast. Immobilised zombies (FALLEN in a ditch, ENTANGLED in wire)
 ## take this normally; nothing here checks state.
-func take_area_damage(amount: int, _origin: Vector3) -> void:
-	take_damage(amount, false)
+func take_area_damage(amount: int, origin: Vector3) -> void:
+	_take(DamageInfo.blast(amount, origin))
 
 ## World-space points the blast tests line of sight against, sized to this
 ## variant's actual silhouette so a tall leaper is harder to fully cover than
@@ -1381,10 +1387,10 @@ func area_damage_points() -> Array:
 
 ## Damageable.GROUP_BULLET contract: HP left after a hit, floored at 0.
 ##
-## Exists so the weapon path never reads this pool's field name directly —
-## a Fighter calls the same quantity `health`. See Damageable.gd.
+## Exists so the weapon path never reads another actor's pool directly. See
+## Damageable.gd.
 func remaining_hp() -> int:
-	return maxi(0, hp)
+	return health.hp
 
 ## True until this zombie has actually died. `queue_free()` is deferred, so a
 ## corpse stays instance-valid for the rest of the frame — callers must use

@@ -75,16 +75,17 @@ var _base_damage := 0:
 		_base_damage = value
 
 # --- Live state ------------------------------------------------------------
-## Named `health`/`max_health` deliberately: that is the convention every
-## damageable in this project follows (SandbagPanel, Player, Zombie), and it
-## is what HealthBar3D.attach_to() reads by default. Phase 5 attaches it.
-## max_health is part of the permanent rolled profile (never rewritten after
-## recruit()); health is live state and legitimately changes on every hit.
+## The live pool. No head hitbox, so headshots are not honoured; and a dead
+## fighter takes nothing further. See Health.
+var health := Health.new(100)
+## Part of the permanent rolled profile (never rewritten after recruit()), so
+## guarded like the other rolled fields; `health` is live state and changes on
+## every hit. Writes through to the pool's ceiling.
 var max_health := 100:
 	set(value):
 		_assert_not_rolled("max_health")
 		max_health = value
-var health := 100
+		health.max_hp = value
 
 ## Purchased per fighter from the roster menu, lost permanently on death.
 ## Independent of the stat upgrade tiers — see PROJECT_SPEC.md.
@@ -149,7 +150,7 @@ func recruit(type: FighterType, rng_seed: int = -1) -> void:
 	fighter_name = _roll_name(rng, type)
 
 	max_health = type.max_health
-	health = max_health
+	health.refill()
 
 	print("[FIGHTER] recruited %s — hit %.0f%%, dmg %d, reaction %.2fs, HP %d" % [
 		fighter_name, hit_chance * 100.0, damage, reaction_delay, max_health])
@@ -220,9 +221,7 @@ func _ready() -> void:
 ## a real question with no other answer in the world. The roster menu knows,
 ## but that requires stopping to open it.
 ##
-## No new drawing code: the component already polls `health`/`max_health` by
-## name, which is exactly what this class calls them (see the note on those
-## fields — they were named for this convention before anything read them).
+## No new drawing code: the component polls this fighter's Health directly.
 func _build_health_bar() -> void:
 	var t := fighter_type
 	var d: float = t.body_radius * 2.0
@@ -231,7 +230,7 @@ func _build_health_bar() -> void:
 	# attach_to() parents itself to the owner, so this is not add_child()ed
 	# here. Bounds are the capsule's own footprint and full height, so the bar
 	# sits clear of the head rather than at a guessed offset.
-	_health_bar.attach_to(self, Vector3(d, t.total_height(), d))
+	_health_bar.attach_to_health(self, Vector3(d, t.total_height(), d), health)
 
 ## THE ENGAGEMENT LOOP: acquire, hesitate, then fire on cadence.
 ##
@@ -383,46 +382,42 @@ func acquire_target() -> Node3D:
 ## AreaDamageSystem's uniform blast entry point — the SAME contract Zombie
 ## and Player implement. Faction-blind by construction: a grenade at a
 ## fighter's feet kills it exactly as it would the player.
-func take_area_damage(amount: int, _origin: Vector3) -> void:
-	_apply_damage(amount)
+func take_area_damage(amount: int, origin: Vector3) -> void:
+	_take(DamageInfo.blast(amount, origin))
 
 ## Damageable.GROUP_BULLET contract: a player round hit this fighter.
 ## Returns the damage actually dealt, which is what the hitmarker reads.
 ##
-## HEADSHOTS ARE NOT HONOURED and the parameter is ignored on purpose. A
-## fighter registers no head hitbox (nothing puts one in GROUP_BULLET_HEAD
-## for it), so `headshot` can only ever arrive false — Damageable's own
-## hit-zone assertion checks exactly that. Taking the argument keeps the
-## signature uniform with Zombie's; acting on it would imply a hit zone that
-## does not exist.
-func take_damage(amount: int, _headshot: bool, falloff_mult: float = 1.0) -> int:
-	if _dead:
-		return 0
-	var dmg: int = maxi(1, int(round(float(amount) * falloff_mult)))
-	_apply_damage(dmg)
-	return dmg
+## HEADSHOTS ARE NOT HONOURED: this fighter's Health is built with
+## honors_headshots off. A fighter registers no head hitbox (nothing puts one
+## in GROUP_BULLET_HEAD for it), so `headshot` can only ever arrive false —
+## Damageable's own hit-zone assertion checks exactly that. Honouring it would
+## imply a hit zone that does not exist.
+func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
+	return _take(DamageInfo.bullet(amount, headshot, falloff_mult))
 
 ## Damageable.GROUP_BULLET contract: HP left after that hit, floored at 0.
-## A METHOD, not a field read — this fighter calls its pool `health` while a
-## Zombie calls its `hp`, and the weapon path must not know which.
+## A METHOD, not a field read: the weapon path never reaches into another
+## actor's pool. See Damageable.gd.
 func remaining_hp() -> int:
-	return maxi(0, health)
+	return health.hp
 
 ## Zombie.GROUP_HOSTILE_TARGET contract: a zombie reached this fighter and
 ## hit it. `source_pos` is unused — a fighter has no directional damage
 ## indicator to drive, unlike the player — but the parameter stays so the one
 ## melee verb means the same thing for every member of the group.
-func take_melee_damage(amount: int, _source_pos: Vector3) -> void:
-	_apply_damage(amount)
+func take_melee_damage(amount: int, source_pos: Vector3) -> void:
+	_take(DamageInfo.melee(amount, source_pos))
 
-## THE one place health actually falls. All three damage axes funnel here, so
-## death is decided once rather than in three places that could drift.
-func _apply_damage(amount: int) -> void:
+## All three damage axes funnel here. Health does the arithmetic and decides
+## death once; this only acts on it.
+func _take(info: DamageInfo) -> int:
 	if _dead:
-		return
-	health = maxi(0, health - amount)
-	if health <= 0:
+		return 0
+	var dealt := health.apply(info)
+	if health.is_depleted():
 		_die()
+	return dealt
 
 ## Feet/centre/head sample points for a blast's line-of-sight test, same
 ## shape as Player.area_damage_points() and Zombie.area_damage_points().
@@ -549,5 +544,5 @@ func _build_body() -> void:
 func stat_line() -> String:
 	return "%s — hit %.0f%% · dmg %d · react %.2fs · HP %d/%d · T%d%s · %d/%d shots, %d kills" % [
 		fighter_name, hit_chance * 100.0, damage, reaction_delay,
-		health, max_health, upgrade_tier, " · SUPP" if suppressed else "",
+		health.hp, max_health, upgrade_tier, " · SUPP" if suppressed else "",
 		hits_landed, shots_fired, kills]
