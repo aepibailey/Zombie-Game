@@ -11,7 +11,7 @@ A lone Tier 1 operator holds a patrol base in the woods after everyone else is g
 ---
 
 ## Core Loop: Day/Night Cycle
-- **Day**: safe. The supply crate is open — spend points on weapons/attachments/ammo. No zombies spawn or move (they're wherever they ended the night, dormant).
+- **Day**: safe. The supply crate is open — spend points on weapons/attachments/ammo. No zombies spawn. At dawn every survivor retreats past the tree line and despawns, carrying into the next night as a count, so the base is empty by day.
 - **Night**: zombies spawn in the woods and activate. Player must survive until dawn.
 - Current playtest cadence: **30s day / 120s night** (`GameManager.DAY_LENGTH` / `NIGHT_LENGTH`). Spec default night is 6 min. Night length is the most-tuned value, so it's an editable var rather than a const.
 
@@ -108,11 +108,11 @@ Weapons are data-driven: `WeaponData` resources built by the `Arsenal` autoload.
 | KAC M110 | DMR | 20 | Semi-auto only | 45 pts | 3 pts |
 
 ### KAC M110 — dedicated long-range weapon (implemented)
-The map is close-range and NVG-lit, so a red-dot optic never made sense. The M110 fills the gap deliberately left open: a semi-auto-only DMR with a **built-in fixed 3x scope**, precision handling, and no falloff — the answer for the far edge of the 60×60m map (≈85m diagonal), where the shotgun is useless and even the 416 loses 15%.
+The map is close-range and NVG-lit, so a red-dot optic never made sense. The M110 fills the gap deliberately left open: a semi-auto-only DMR with a **built-in fixed 3x scope**, precision handling, and no falloff — the answer for the far edge of the 60×60m map (≈85m diagonal), where the shotgun is useless.
 
 - **No auto mode exists for it at all** — `fire_mode = SEMI`, `auto_penalty = NONE` (the default). None of the bloom/ramp systems can touch it; `B` (fire-mode toggle) is a no-op, same as any other semi-only weapon.
 - **20-round mag, 2 starting mags (1 loaded + 1 spare) = 40 rounds total**, same rule as every other weapon.
-- **Damage: 60 per body shot.** Two body shots (120) kill a 100 HP baseline zombie with a 20 HP margin; a headshot (60 × 2 = 120) is a clean one-shot. That's double the 416's 30 — meaningfully above it, which is the entire point of the weapon. Unchanged since the first pass.
+- **Damage: 60 per body shot.** Two body shots (120) kill a 100 HP baseline zombie with a 20 HP margin; a headshot (60 × 2 = 120) is a clean one-shot. That was double the 416's original 30. Since the 416 was raised to 66 (`PATROL_BASE_ZERO_V2_SPEC.md` §4.4), the M110 is **below** the 416 per body shot; §4.4 flags this and it has not been rebalanced. The M110's own 60 is unchanged since the first pass.
   - **Two-body-shot kill holds through night 6** (116 HP). It **stops being guaranteed at night 7** (124 HP > 120) — reported per the same convention as the SPAS one-shot threshold, not rebalanced around.
 - **Cycle time 0.24s → 4.17 rounds/sec, 37.5% of the 416's 11.11 rps.** Cut down from the first pass's 0.16s/56% — that read as no real rate-of-fire tradeoff, so this was slowed further to land in the 35–40% target band.
 - **Moving-fire cone: 2.5° added while moving** (`moving_cone_extra_deg`), well above the 416's 1.0° — **2.35× the 416's total moving cone** (2.58° vs 1.1°). This is the "fired from a stable stance" side of the tradeoff: standing/crouched accuracy (`ads_cone_deg = 0.08°`, tighter than the 416's 0.1°) is completely unaffected — the penalty only exists while `is_moving` is true.
@@ -120,12 +120,12 @@ The map is close-range and NVG-lit, so a red-dot optic never made sense. The M11
 
   | | Shots to kill (body) | Cycle | TTK | DPS |
   |---|---|---|---|---|
-  | HK 416 | 4 (4×30=120) | 0.09s | **0.27s** | 333/s |
+  | HK 416 | 2 (2×66=132) | 0.09s | **0.09s** | 733/s |
   | KAC M110 | 2 (2×60=120) | 0.24s | **0.24s** | 250/s |
 
-  DPS comes out as intended — the M110 is lower (250 vs 333/s), the rate-of-fire cost is real. **TTK does not**: the M110 is marginally *faster* in raw kill-time (0.24s vs 0.27s), not slower, because needing only 2 shots instead of 4 means one fewer "wasted" cycle-time gap even though each gap is longer. Closing this would need a cycle time of ≥0.27s (≈33% of the 416's rate), which falls *outside* the requested 35–40% band — so the two instructions are in tension at exactly 2-vs-4 shots-to-kill, and 0.24s (the middle of the requested band) was kept as specified rather than overridden. Headshots make the M110's advantage explicit rather than incidental: **1 headshot (0s) vs. 2 (0.09s)** for the 416.
+  At the 416's current 66 damage the 416 wins on both: faster TTK (0.09s vs 0.24s) and roughly 3× the DPS. On headshots both one-shot a 100 HP zombie (132 and 120). The rest of this paragraph is the analysis from when the 416 did 30, kept for history: DPS comes out as intended — the M110 is lower (250 vs 333/s), the rate-of-fire cost is real. **TTK does not**: the M110 is marginally *faster* in raw kill-time (0.24s vs 0.27s), not slower, because needing only 2 shots instead of 4 means one fewer "wasted" cycle-time gap even though each gap is longer. Closing this would need a cycle time of ≥0.27s (≈33% of the 416's rate), which falls *outside* the requested 35–40% band — so the two instructions are in tension at exactly 2-vs-4 shots-to-kill, and 0.24s (the middle of the requested band) was kept as specified rather than overridden. Headshots make the M110's advantage explicit rather than incidental: **1 headshot (0s) vs. 2 (0.09s)** for the 416.
 - **No laser of any kind.** ADS shows a **scope reticle** (a simple crosshair, HUD-only, `HUD._build_reticle()`) instead of the laser dot/beam every other weapon draws. Not just visually hidden — `Player._update_laser()` and `_update_laser_detection()` both return immediately for `current_weapon_id == "m110"`, before any raycast or zombie-alert work runs, so no zombie can ever be alerted by aiming an M110 regardless of range or angle. Consequently the M110 **never appears in the crate's laser-purchase list** (neither red — which was never purchasable for anyone — nor IR).
-- **No damage falloff at all** (`falloff_near` left at the WeaponData default of effectively-unreachable) — stronger than the 416's "minimal" ≤15% loss at 85m; this is the weapon that's supposed to work at the far end of the map with zero penalty.
+- **No damage falloff at all** (`falloff_near` left at the WeaponData default of effectively-unreachable), the same as the 416, which also has none; this is the weapon that's supposed to work at the far end of the map with zero penalty.
 - **Recoil is cosmetic, not accuracy-affecting**: `recoil_per_shot 0.06` / `horizontal_recoil 0.02` (more pronounced than the 416's 0.025 / 0.014, reflecting the bigger cartridge) drive camera kick only — the firing cone is `ads_cone_deg + bloom + moving_cone_extra_deg`, and bloom never applies without an auto_penalty, so recoil cannot degrade follow-up-shot accuracy the way it does on the 416/SAW. Waiting for the sight picture costs nothing mechanically.
 - **Built-in scope: fixed 3x**, implemented as a per-weapon ADS field-of-view override (`ads_fov = 28.7°`, derived from `2·atan(tan(37.5°)/3)` against the player's 75° hip FOV). Being a pure FOV change with no separate reticle render pass, it renders correctly under the NVG shader by construction — there's nothing for the shader to conflict with.
 - **Attachments (both new, M110-only):**
@@ -137,7 +137,7 @@ The map is close-range and NVG-lit, so a red-dot optic never made sense. The M11
 Switching weapons while ADS'd used to leave the outgoing weapon's zoom/FOV active on the new one. Fixed at the single choke point every switch passes through (`Player._equip()`): if `ads_active` is true when a switch starts, it's forced false and `camera.fov` is reset to the hip default before the new weapon is assigned. Verified against all five weapons, not just the M110 where it was noticed. The M110's own scope position (`_scope_far`, if the Variable Zoom Optic is owned) is deliberately **not** reset by this — swapping away and back to the M110 keeps its scope at whichever of the two positions it was left on, the same way a real scope doesn't rezero itself when you sling the rifle.
 
 ### Damage falloff (implemented)
-Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, then linear to `falloff_mid_mult` at `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond. Every hit logs its distance and multiplier.
+Two models in `WeaponData.damage_mult_at()`, and a weapon uses exactly one. **Piecewise** (the default): full damage to `falloff_near`, then linear to `falloff_mid_mult` at `falloff_mid`, then to `falloff_far_mult` at `falloff_far`, flat beyond. **Simple** (`use_simple_falloff`, only the M17 today): full damage to `falloff_start_distance`, linear to `falloff_min_multiplier` at `falloff_end_distance`, flat beyond. Every hit logs its distance and multiplier.
 
 | Weapon | Full to | → mult @ range | → mult @ range |
 |---|---|---|---|
@@ -165,7 +165,7 @@ Widens the **hip-fire-only** pellet spread from 3.0° to 3.75° (+25%); ADS keep
 
 ### Long-range viability (implemented)
 Weapon max ray distance was **not** the problem — M17 150m, HK 416 200m, SPAS 40m, M249 220m, all beyond the ~85m map diagonal.
-- **HK 416 semi-auto:** `ads_cone_deg = 0.1°` — effectively a laser at map scale — with only 15% damage loss at 85m. Full-auto penalties are unchanged, keeping semi the sharp long-range answer.
+- **HK 416 semi-auto:** `ads_cone_deg = 0.1°` — effectively a laser at map scale — and no damage falloff at all. Full-auto penalties are unchanged, keeping semi the sharp long-range answer.
 - **M249:** bloom tightened to `bloom_min_deg 0.08` / `bloom_max_deg 0.8` so a **crouched** (1.1×) 3–5 round burst holds ~0.5m at 60m (torso-sized), while **moving** (3.0×) scatters to ~1.4m. The moving penalty is deliberately unchanged.
 
 Starting loadout: M17 only, per the operator-stranded premise. No attachments by default.
@@ -209,14 +209,8 @@ Each weapon has **two audio states**, selected purely by whether a suppressor is
 ### NVGs in daylight (implemented)
 Leaving NVGs on during Day ramps to a heavy **gain-limit whiteout** over ~0.5s: near-opaque white overlay plus a large glow/bloom boost. Navigable but precise aiming is effectively impossible. A **`NVG — GAIN LIMIT`** HUD indicator shows while active so it reads as intentional. Clears immediately when NVGs are toggled off or Night begins.
 
-### Guaranteed ammo drops (implemented — stopgap)
-A temporary resupply until the purchasable supply-drop enabler exists.
-- Spawns at the **dawn following nights 3, 5 and 10** (`EnablerManager.guaranteed_drop_nights`, an editable array). Scheduling deliberately lives **outside** the drop scene so the whole stopgap can be disabled wholesale.
-- Grants **1 magazine per owned weapon** (nothing for unowned), always via `AmmoManager.grant_ammo()`.
-- **Placement:** random within `drop_radius` (5m) of the crate, at least **2m from the player**, on flat walkable ground, with a box-shape check rejecting anything intersecting geometry. Re-rolls up to **10 times**, then falls back to a fixed known-good offset.
-- Available for the whole Day and **persists if uncollected** — it never despawns at nightfall.
-- Visually distinct from the crate (emissive orange cylinder + tall beacon, readable under NVGs). Collect with `E`; grants are logged and summarised on the HUD. A `RESUPPLY — DROPPED NEAR BASE` message fires at the dawn it spawns.
-- `SupplyDrop` is a **reusable scene** taking a contents config, spawn anchor, and radius — the future purchasable enabler instances the same scene with the player as anchor.
+### Guaranteed ammo drops (removed)
+The free dawn drop after nights 3, 5 and 10 was removed in `d0bbf18`. The paid, player-painted Supply Drop radio enabler is now the only way a crate arrives (see `docs/ROADMAP.md`). The `SupplyDrop` crate class it used is still what that enabler drops.
 
 ### Ammunition scarcity (implemented)
 - **Every weapon starts with exactly 2 magazines total — one loaded, one spare** (`WeaponData.starting_mags = 2`). M17 = 17+17, HK416 = 30+30, SPAS-12 = 8+8, M249 = 100+100.

@@ -120,7 +120,7 @@ You start with the M17; buy the rest at the crate and switch with `1`–`4`:
 |---|---|---|---|---|
 | Sig Sauer M17 | Pistol | 17 | Semi | starter |
 | HK 416 | AR | 30 | Semi/Auto (`B`) | 15 |
-| SPAS-12 | Shotgun (8 pellets) | 8 | Semi | 20 |
+| SPAS-12 | Shotgun (9 pellets) | 8 | Semi | 20 |
 | M249 SAW | LMG | 100 | Auto | 30 |
 
 Ammo, suppressor state, and reloads are tracked **per weapon**. The suppressor
@@ -134,10 +134,10 @@ not on death). Buy more by the magazine at the crate. All granting goes through
 **Nights** spawn an escalating pool of zombies — `base_spawn + spawn_per_night *
 (night_number - 1)` (6, 9, 12, … tunable on the Main node), capped at
 `max_concurrent` alive at once — that trickle in over the night. Any zombies
-left alive at dawn go dormant and **carry over**, folded into the next night's
-total. Once every zombie for the night (carryover + pool) has spawned *and* been
-killed, an **all-clear** prompt lets you skip straight to Day (`Y`) or ride out
-the timer (`N`).
+left alive at dawn **retreat** past the tree line and despawn, and **carry
+over** as a count, folded into the next night's total. Once every zombie for
+the night (carryover + pool) has spawned *and* been killed, an **all-clear**
+prompt lets you skip straight to Day (`Y`) or ride out the timer (`N`).
 
 **Aiming:** there is no always-on crosshair. Hip-firing is blind and each shot
 is scattered within a spread cone (`HIP_FIRE_SPREAD_RADIUS` in `Player.gd`) — a
@@ -223,10 +223,12 @@ human at the keyboard.
    **1 pt**). Watch the Points HUD. Hip-fire is intentionally too loose to land
    reliable headshots.
 5. **Day/night auto-transition** — the countdown flips phases automatically;
-   lighting darkens at Night, zombies activate; they go dormant by Day.
+   lighting darkens at Night, zombies activate; at dawn survivors retreat past
+   the tree line and despawn.
 6. **Nightly wave + all-clear** — watch the wave counter as zombies trickle in.
-   Kill all 5 and an "AREA CLEAR" prompt appears: press `Y` to skip to Day or
-   `N` to keep playing the night out. The "Night N" counter bumps each night.
+   Kill them all (6 on night 1, plus any carryover) and an "AREA CLEAR" prompt
+   appears: press `Y` to skip to Day or `N` to keep playing the night out. The
+   "Night N" counter bumps each night.
 7. **Crate shop (weapons + suppressor)** — during Day, walk up to the supply
    crate (wooden box, center-ish). A "Press E to open the supply crate" prompt
    appears; press `E` to open (it won't auto-open). Buy a weapon (it equips
