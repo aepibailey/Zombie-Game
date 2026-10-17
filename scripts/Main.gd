@@ -126,7 +126,7 @@ const KEY_DEBUG_COVER_DRAW := KEY_P
 ## SectorPreview.gd.
 const KEY_DEBUG_SECTOR_PREVIEW := KEY_U
 ## TEMPORARY (Prompt C gate 2): grants DEBUG_POINTS_GRANT so one Day can
-## exercise every spend category. Removed before Prompt C phase 3 ends.
+## exercise every spend category. Remove after Prompt A testing.
 const KEY_DEBUG_POINTS := KEY_I
 const DEBUG_POINTS_GRANT := 500
 const COVER_PREVIEW_CONFIG := preload("res://resources/cover_preview.tres")
