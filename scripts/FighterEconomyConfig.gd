@@ -7,13 +7,20 @@ class_name FighterEconomyConfig
 ## actually be tunable. Same pattern FireMissionConfig/UAVConfig/
 ## SupplyDropConfig/ApacheConfig use.
 
-## Hard cap on live fighters. The 5th through 8th cost points; the first four
-## are free (currently reachable only via Main's debug M spawn, standing in
-## for the Position Two rescue grant — see Main.gd's scaffolding note).
+## Hard cap on live fighters: the rescue grant's four plus recruits 5-8.
 const FIGHTER_CAP := 8
 
+## The roster is locked ("Rescue at Position Two") until the run reaches this
+## position. On arriving there (GameManager.position_changed) the player is
+## granted free_fighter_count fighters, once per run — the Position Two
+## rescue. That grant is the ONLY way a fighter is ever free.
+@export var fighters_unlock_position: int = 2
+@export var free_fighter_count: int = 4
+
 ## Cost to recruit the 5th, 6th, 7th and 8th fighter, in that order — index 0
-## is the 5th fighter's price. Recruiting adds another gun; see
+## is the 5th fighter's price. With fewer than free_fighter_count alive (the
+## granted ones died), a replacement costs index 0: replacing fighters is an
+## endless sink (docs/RUN_STRUCTURE.md "New price list"), not a free refill. Recruiting adds another gun; see
 ## upgrade_tier1_cost and friends below for the DIFFERENT axis of improving a
 ## gun you already have. validate() asserts these strictly increase.
 @export var recruit_costs: Array[int] = [20, 35, 55, 80]
@@ -52,6 +59,12 @@ func upgrade_path_total() -> int:
 ## roster is full: deepening a fighter you already have must be cheaper than
 ## the most expensive body you could add instead, so that keeping fighters
 ## alive is rewarded at every roster size, not just some.
+## What recruiting the next fighter costs with `live_count` alive. Index 0 of
+## recruit_costs is the 5th fighter's price; below the grant's count it is
+## also what a replacement costs. Nothing is ever free here: the grant is.
+func recruit_cost(live_count: int) -> int:
+	return recruit_costs[clampi(live_count - free_fighter_count, 0, recruit_costs.size() - 1)]
+
 func validate() -> void:
 	var total := upgrade_path_total()
 	var highest_recruit: int = recruit_costs[recruit_costs.size() - 1]
@@ -79,3 +92,11 @@ func validate() -> void:
 			"[FIGHTER ECONOMY] an individual upgrade tier costs %d, not below the full path total %d." % [tier_cost, total])
 		if tier_cost >= total:
 			push_error("[FIGHTER ECONOMY] upgrade tier %d >= path total %d." % [tier_cost, total])
+
+	# 4. The grant plus one priced recruit per remaining slot fills the cap
+	#    exactly — recruit_costs indexes from the first fighter past the grant.
+	assert(free_fighter_count + recruit_costs.size() == FIGHTER_CAP,
+		"[FIGHTER ECONOMY] free_fighter_count (%d) + recruit_costs (%d) must equal FIGHTER_CAP (%d)." % [
+			free_fighter_count, recruit_costs.size(), FIGHTER_CAP])
+	if free_fighter_count + recruit_costs.size() != FIGHTER_CAP:
+		push_error("[FIGHTER ECONOMY] grant + recruit tiers != FIGHTER_CAP.")

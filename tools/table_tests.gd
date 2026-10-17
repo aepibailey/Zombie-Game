@@ -45,6 +45,7 @@ func _ready() -> void:
 		_test_hp_curve,
 		_test_max_alive,
 		_test_night_types,
+		_test_fighter_gate,
 		_test_night_pool,
 		_test_spawn_interval,
 		_test_leaper_fraction,
@@ -170,6 +171,23 @@ func _test_night_types() -> bool:
 	_eq(GameManager.normal_profile.apply_points(3), 3, "Normal leaves kill awards alone")
 	_check(GameManager.siege_profile.has_spawn_arc() and not GameManager.normal_profile.has_spawn_arc(),
 		"Siege has a spawn arc, Normal the full ring")
+	return true
+
+# --- Prompt A phase 3: positions and the fighter gate ---------------------------
+## Recruit prices by live count: 4 granted at Position Two, then 20/35/55/80
+## for fighters 5-8, and a replacement below 4 costs 20 — nothing is free here.
+func _test_fighter_gate() -> bool:
+	print("[TABLE] fighter gate (Prompt A phase 3)")
+	var econ: FighterEconomyConfig = load("res://resources/fighter_economy.tres")
+	_eq(GameManager.position_transit_nights, [9, 25] as Array[int], "transit nights")
+	_eq(econ.fighters_unlock_position, 2, "roster unlocks at Position Two")
+	_eq(econ.free_fighter_count, 4, "Position Two grants 4")
+	_eq(econ.free_fighter_count + econ.recruit_costs.size(), FighterEconomyConfig.FIGHTER_CAP,
+		"grant + priced recruits fill the cap")
+	var got := []
+	for live in FighterEconomyConfig.FIGHTER_CAP:
+		got.append(econ.recruit_cost(live))
+	_eq(got, [20, 20, 20, 20, 20, 35, 55, 80], "recruit cost for 0..7 alive")
 	return true
 
 # --- PROJECT_SPEC.md "Night scaling" ------------------------------------------

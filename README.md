@@ -110,7 +110,6 @@ still playing when the run quits, not a failure.
 | `J` | Debug: list audible zombies + their distance |
 | `K` | Debug: show zombie head/body hitbox volumes |
 | `L` | Debug: detonate a test blast at the player |
-| `M` | Debug: spawn a recruited fighter in front of the player |
 | `O` | Debug: spawn a concealment (CoverSurface) test box |
 
 In build mode: `WASD` pans, wheel or `[` / `]` zooms, `Esc` exits.

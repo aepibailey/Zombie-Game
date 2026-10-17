@@ -10,13 +10,21 @@ class_name RosterMenu
 ## a dedicated memorial UI). Those are deferred; see the memorial note below
 ## for what stands in for them here.
 ##
-## OWNS NO PLACEMENT OR COMBAT CODE. Recruiting spawns a fighter via a
-## Callable supplied by Main (the same spawn-in-front-of-player logic the
-## debug M key already uses) — this menu does not reason about world space
-## itself. Damage and death are Fighter's own (via the shared
+## OWNS NO PLACEMENT OR COMBAT CODE. Recruiting, and the Position Two rescue
+## grant, spawn fighters via a Callable supplied by Main (its one
+## spawn-in-front-of-player function) — this menu does not reason about world
+## space itself.
+##
+## LOCKED until the run reaches economy.fighters_unlock_position: the recruit
+## row reads "Rescue at Position Two". Arriving there grants the free
+## fighters, once per run (_on_position_changed). Damage and death are Fighter's own (via the shared
 ## AreaDamageSystem); this menu only reads the result.
 
 const ACTION_OPEN := "roster_menu"
+const LOCKED_TEXT := "Rescue at Position Two"
+## Lateral spacing of the granted fighters, so they do not spawn inside each
+## other: centred on the player's line of sight, this far apart.
+const GRANT_SPACING := 2.0
 
 @export var economy: FighterEconomyConfig
 
@@ -37,6 +45,9 @@ var _rows_box: VBoxContainer
 var _memorial: Array = []
 ## Last state the rows were built against — see _process()/_state_signature().
 var _last_signature := ""
+## Set by the Position Two grant. This node is rebuilt with the scene on
+## Restart, so it is exactly "once per run" — and asserted as such.
+var _free_grant_done := false
 
 func setup(player: Player, hud: HUD, econ: FighterEconomyConfig,
 		spawn_fighter_fn: Callable) -> void:
@@ -45,6 +56,9 @@ func setup(player: Player, hud: HUD, econ: FighterEconomyConfig,
 	economy = econ
 	_spawn_fighter_fn = spawn_fighter_fn
 	economy.validate()
+	# Freed with this menu on a scene reload, so a Restart never leaves a
+	# stale connection on the autoload.
+	GameManager.position_changed.connect(_on_position_changed)
 	# Every LIVE fighter at setup time (debug-spawned ones from before the
 	# menu existed) needs its death caught too.
 	for f in get_tree().get_nodes_in_group(Fighter.GROUP):
@@ -120,7 +134,7 @@ func _process(_delta: float) -> void:
 ## tier, suppressor, health and the lifetime counters.
 func _state_signature() -> String:
 	var parts: PackedStringArray = [
-		str(PointsManager.points), str(_memorial.size())]
+		str(PointsManager.points), str(_memorial.size()), str(GameManager.current_position)]
 	for node in _live_fighters():
 		var f := node as Fighter
 		parts.append("%d:%s" % [f.get_instance_id(), f.stat_line()])
@@ -282,17 +296,16 @@ func _build_recruit_row(live_count: int) -> Control:
 		row.add_child(label)
 		return row
 
-	# Fighters 1-4 are free (debug/Position-Two-stand-in grants); the recruit
-	# curve applies from the 5th onward — index 0 of recruit_costs IS the 5th
-	# fighter's price. A live_count below that free allotment shows as free
-	# rather than indexing before the array.
-	var free_slots := FighterEconomyConfig.FIGHTER_CAP - economy.recruit_costs.size()
-	var cost := 0
-	if live_count >= free_slots:
-		cost = economy.recruit_costs[live_count - free_slots]
+	if not is_unlocked():
+		label.text = LOCKED_TEXT
+		label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+		row.add_child(label)
+		return row
+
+	var cost := economy.recruit_cost(live_count)
 
 	var btn := Button.new()
-	btn.text = "Recruit (%s)" % ("free" if cost == 0 else "%d pts" % cost)
+	btn.text = "Recruit (%d pts)" % cost
 	btn.disabled = PointsManager.points < cost
 	btn.pressed.connect(_on_recruit_pressed.bind(cost))
 	row.add_child(btn)
@@ -328,10 +341,38 @@ func _on_suppress_pressed(f) -> void:
 	_refresh()
 
 func _on_recruit_pressed(cost: int) -> void:
-	if cost > 0 and not PointsManager.spend_points(cost, PointsManager.SpendCategory.FIGHTERS):
+	if not is_unlocked():
+		return
+	if not PointsManager.spend_points(cost, PointsManager.SpendCategory.FIGHTERS):
 		return
 	if not _spawn_fighter_fn.is_valid():
 		return
 	var f: Fighter = _spawn_fighter_fn.call()
 	_watch(f)
 	_refresh()
+
+# --- Position Two ------------------------------------------------------------
+func is_unlocked() -> bool:
+	return GameManager.current_position >= economy.fighters_unlock_position
+
+## The rescue: arriving at the unlock position grants free_fighter_count
+## fighters, spread across the player's view. The ONLY free fighters in the
+## game. Positions only ever increase, so this fires at most once a run; the
+## assert says so rather than trusting it.
+func _on_position_changed(new_position: int) -> void:
+	if new_position != economy.fighters_unlock_position:
+		return
+	assert(not _free_grant_done, "[ROSTER] the Position Two fighter grant ran twice in one run.")
+	if _free_grant_done or not _spawn_fighter_fn.is_valid():
+		return
+	_free_grant_done = true
+	var room := FighterEconomyConfig.FIGHTER_CAP - _live_fighters().size()
+	var n := mini(economy.free_fighter_count, room)
+	for i in n:
+		var lateral := (float(i) - float(n - 1) * 0.5) * GRANT_SPACING
+		_watch(_spawn_fighter_fn.call(lateral))
+	print("[ROSTER] Position %d rescue: %d fighters granted" % [new_position, n])
+	if _hud:
+		_hud.show_message("POSITION TWO — %d fighters rescued. Roster (F) is open." % n)
+	if _open:
+		_refresh()

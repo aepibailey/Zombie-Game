@@ -103,8 +103,8 @@ raycast, so it never aims as well as the player. Recruited and managed
 through the **roster menu** (`RosterMenu`, `F` to open, Day-only, halts the
 clock via `GameManager`'s shared refcounted
 `request_clock_halt`/`release_clock_halt`): recruit (`FighterEconomyConfig`,
-cap 8, first 4 free — a stand-in for the Position Two rescue grant until that
-map exists — 5th through 8th cost 20/35/55/80), upgrade in 3 tiers
+cap 8; locked until Position Two, where arriving grants 4 fighters once per
+run; 5th through 8th cost 20/35/55/80, and a replacement below 4 costs 20), upgrade in 3 tiers
 (15/20/30 pts, interpolates from the as-rolled stats toward the type's band
 ceiling, never past it), and a permanent suppressor (25 pts).
 

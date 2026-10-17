@@ -11,6 +11,10 @@ signal time_updated(time_left: float, phase: int)
 ## Fired at dusk, right after phase_changed(NIGHT), once night_number has
 ## advanced. Carries the night's scheduled type so the HUD can name it.
 signal night_started(night: int, type_name: String)
+## Fired at the dawn after a transit night, once current_position has
+## advanced. There is no map change yet; listeners react to the number
+## (the roster's Position Two rescue grant).
+signal position_changed(new_position: int)
 
 enum Phase { DAY, NIGHT }
 
@@ -42,6 +46,13 @@ const DAY_LENGTH: float = 30.0
 @export var hunters_profile: NightTypeProfile = preload("res://resources/night_hunters.tres")
 ## What a TRANSIT night actually plays as until the transit night is built.
 @export var transit_standin_profile: NightTypeProfile = preload("res://resources/night_siege.tres")
+
+# --- Positions — docs/RUN_STRUCTURE.md "Decision" ---------------------------
+## The run is split into positions that act as chapters. The dawn after each
+## of these nights moves the operator to the next one.
+@export var position_transit_nights: Array[int] = [9, 25]
+## 1 = Position One, the lone-operator act. Only ever increases in a run.
+var current_position: int = 1
 
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
@@ -116,6 +127,13 @@ func _start_phase(phase: int) -> void:
 	phase_changed.emit(phase)
 	if phase == Phase.NIGHT:
 		night_started.emit(night_number, night_type_name(night_number))
+	# After phase_changed, so the Day is fully set up (survivors retreating,
+	# HUD in Day mode) before anything reacts to the move.
+	elif night_number in position_transit_nights:
+		current_position += 1
+		print("[POSITION] dawn after night %d: now at Position %d (no map change yet)" % [
+			night_number, current_position])
+		position_changed.emit(current_position)
 
 ## The scheduled type of `night`: a fixed special night, else the cycle from
 ## special_cycle_start, else NORMAL.
@@ -195,3 +213,4 @@ func reset_run() -> void:
 	current_phase = Phase.DAY
 	time_left = DAY_LENGTH
 	night_number = 0
+	current_position = 1

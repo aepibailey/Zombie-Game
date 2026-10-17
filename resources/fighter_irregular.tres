@@ -1,8 +1,8 @@
 [gd_resource type="Resource" script_class="FighterType" load_steps=2 format=3]
 
 ; The baseline local irregular — the only fighter variant, and the one the
-; player rescues at Position Two (which does not exist yet; everything is
-; tested at Position One behind a debug spawn).
+; player rescues at Position Two (reached at the dawn after night 9; there is
+; no Position Two map yet, so the rescue happens where the player stands).
 ;
 ; HIT CHANCE 0.60-0.95 and DAMAGE 20-35 are wide bands ON PURPOSE. Two
 ; fighters recruited in the same session must be observably different over a

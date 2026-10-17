@@ -24,7 +24,7 @@ extends Node
 
 const RUNS_DIR := "user://runs"
 const COLUMNS := [
-	"run_id", "night", "night_type", "ended_by", "pool", "carryover_in", "carryover_out",
+	"run_id", "night", "night_type", "position", "ended_by", "pool", "carryover_in", "carryover_out",
 	"max_alive", "walker_hp",
 	"walker_kills_head", "walker_kills_body", "leaper_kills_head", "leaper_kills_body",
 	"day_kills", "points_earned", "bank_at_dawn", "bank_at_dusk",
@@ -103,6 +103,9 @@ func begin_night(night: int, night_type: String, pool: int, carryover_in: int,
 		_close_row("dusk")
 	_row = {
 		"run_id": run_id, "night": night, "night_type": night_type,
+		# The position this night is fought at; a transit moves it at the
+		# dawn AFTER, so night 9's row reads 1 and night 10's reads 2.
+		"position": GameManager.current_position,
 		"pool": pool, "carryover_in": carryover_in,
 		"max_alive": max_alive, "walker_hp": walker_hp,
 		"walker_kills_head": 0, "walker_kills_body": 0,

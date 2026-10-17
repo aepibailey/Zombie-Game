@@ -85,20 +85,13 @@ const KEY_DEBUG_HITBOX := KEY_K
 const KEY_DEBUG_BLAST := KEY_L
 const DEBUG_BLAST_PROFILE := preload("res://resources/frag_grenade.tres")
 
-# ---------------------------------------------------------------------------
-# TEMPORARY SCAFFOLDING — DELETE WHEN POSITION TWO EXISTS.
-#
-# Fighters are narratively local irregulars rescued at Position Two, and the
-# real grant happens on arrival there. Position Two does not exist yet, so
-# this spawns them at Position One instead, behind a debug key, purely so the
-# system can be built and tested. Everything in this block and in
-# _debug_spawn_fighter() is throwaway — no other code should come to depend
-# on it. See PROJECT_SPEC.md "Allied fighters".
-const KEY_DEBUG_SPAWN_FIGHTER := KEY_M
+# --- Allied fighters -------------------------------------------------------
+# Local irregulars, rescued at Position Two: the roster grants the first ones
+# on arrival there (RosterMenu._on_position_changed) and sells the rest.
+# _spawn_fighter() below is the one place any of them enters the world.
 const FIGHTER_TYPE_IRREGULAR := preload("res://resources/fighter_irregular.tres")
-## How far in front of the player a debug fighter appears.
-const DEBUG_FIGHTER_SPAWN_DISTANCE := 4.0
-# ---------------------------------------------------------------------------
+## How far in front of the player a fighter appears.
+const FIGHTER_SPAWN_DISTANCE := 4.0
 
 # ---------------------------------------------------------------------------
 # TEMPORARY SCAFFOLDING — DELETE ONCE POSITION TWO SHIPS REAL CONCEALMENT.
@@ -670,9 +663,9 @@ func _build_ui() -> void:
 	add_child(_apache_system)
 	_apache_system.setup(player, _hud, _radio_menu, _target_painter)
 
-	# Day-only, F to open. Recruiting calls back into _spawn_fighter() —
-	# the same placement the debug M key uses — so this menu never makes a
-	# spatial decision of its own.
+	# Day-only, F to open, locked until Position Two. Recruiting and the
+	# rescue grant call back into _spawn_fighter(), so this menu never makes
+	# a spatial decision of its own.
 	_roster_menu = RosterMenu.new()
 	_roster_menu.name = "RosterMenu"
 	add_child(_roster_menu)
@@ -1131,9 +1124,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hud.show_message("DEBUG BLAST — %d actors, %d killed, %d structures" % [
 			r.get("actors", 0), r.get("killed", 0), r.get("structures", 0)])
 		return
-	if event.keycode == KEY_DEBUG_SPAWN_FIGHTER:
-		_debug_spawn_fighter()
-		return
 	if event.keycode == KEY_DEBUG_POINTS:
 		# Through add_points, so it is an ordinary award to the run log.
 		PointsManager.add_points(DEBUG_POINTS_GRANT)
@@ -1178,18 +1168,14 @@ func _debug_jump_night() -> void:
 			return
 	_hud.show_message("DEBUG: next night is %d — no further jump." % upcoming)
 
-func _debug_spawn_fighter() -> void:
-	var f := _spawn_fighter()
-	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
-	_hud.show_message("DEBUG FIGHTER — %s (%d live)" % [f.fighter_name, live])
-
-## THE ONE place a Fighter is spawned into the world. Both the debug M key
-## above and RosterMenu's recruit purchase (wired via a Callable in
-## _ready()) call this — recruiting reuses the exact same spawn-in-front-of-
-## the-player placement, not a second spatial decision. Placement UI (a real
-## ghost preview the player aims) is a later phase; this is deliberately the
-## simplest thing that puts a fighter somewhere reasonable.
-func _spawn_fighter() -> Fighter:
+## THE ONE place a Fighter is spawned into the world. RosterMenu's recruit
+## purchase and its Position Two rescue grant both call this (wired via a
+## Callable in _ready()) — the same spawn-in-front-of-the-player placement,
+## not a second spatial decision. `lateral` shifts it sideways across the
+## player's view, so a grant of several does not stack them in one spot.
+## Placement UI (a real ghost preview the player aims) is a later phase; this
+## is deliberately the simplest thing that puts a fighter somewhere reasonable.
+func _spawn_fighter(lateral: float = 0.0) -> Fighter:
 	var f := Fighter.new()
 	f.name = "Fighter"
 	# recruit() BEFORE add_child() — same convention _spawn_zombie() already
@@ -1209,7 +1195,8 @@ func _spawn_fighter() -> Fighter:
 	if fwd.length_squared() < 0.0001:
 		fwd = Vector3.FORWARD
 	fwd = fwd.normalized()
-	f.global_position = player.global_position + fwd * DEBUG_FIGHTER_SPAWN_DISTANCE
+	var right := fwd.cross(Vector3.UP)
+	f.global_position = player.global_position + fwd * FIGHTER_SPAWN_DISTANCE + right * lateral
 	# Facing the same way the player is, so the sector points downrange rather
 	# than back at whoever just spawned it.
 	f.global_rotation.y = player.global_rotation.y
