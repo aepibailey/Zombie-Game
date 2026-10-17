@@ -181,13 +181,13 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	# What blasts (grenades, claymores, the mortar, WP, the Apache) can
 	# damage. Joining this group is the ENTIRE integration — AreaDamageSystem
-	# queries the group and duck-types take_area_damage()/is_alive() rather
+	# queries the group and duck-types take_damage()/is_alive() rather
 	# than special-casing anything, so no change to that system was needed.
 	add_to_group(AreaDamageSystem.GROUP_DAMAGEABLE)
 	# A fighter is now a member of ALL THREE damage axes — the only entity in
-	# the project that is. Each has its own verb precisely so that being in
-	# all three cannot produce a silently-miscalled overload; see
-	# Zombie._acquire_target()'s note.
+	# the project that is. All three arrive at the one take_damage(), as a
+	# typed DamageInfo, so being in all three cannot produce a silently
+	# miscalled overload (a blast origin landing in a headshot flag).
 	#
 	# GROUP_BULLET: the player's own rounds can hit their own fighter. That is
 	# deliberate and consistent with the faction-blind blast rule — it makes
@@ -301,8 +301,7 @@ func _retarget(target: Node3D) -> void:
 ##
 ## NEVER A HEADSHOT. The head/body distinction belongs to the player's
 ## hit-zone raycast; a fighter's roll has no geometry to ask about, so it
-## passes false explicitly rather than letting a truthy value slip in — the
-## same trap take_area_damage() exists to avoid.
+## builds its round with headshot false explicitly.
 func _shoot(target: Node3D) -> void:
 	shots_fired += 1
 	# Noise fires on EVERY round, hit or miss. This is what a suppressor buys:
@@ -315,7 +314,7 @@ func _shoot(target: Node3D) -> void:
 	hits_landed += 1
 	if not target.has_method("take_damage"):
 		return
-	target.take_damage(damage, false)
+	target.take_damage(DamageInfo.bullet(damage, false))
 	# Credit only if THIS round is what put it down.
 	if target.has_method("is_alive") and not target.is_alive():
 		kills += 1
@@ -379,45 +378,32 @@ func acquire_target() -> Node3D:
 	return best
 
 # --- Damage ------------------------------------------------------------------
-## AreaDamageSystem's uniform blast entry point — the SAME contract Zombie
-## and Player implement. Faction-blind by construction: a grenade at a
-## fighter's feet kills it exactly as it would the player.
-func take_area_damage(amount: int, origin: Vector3) -> void:
-	_take(DamageInfo.blast(amount, origin))
-
-## Damageable.GROUP_BULLET contract: a player round hit this fighter.
-## Returns the damage actually dealt, which is what the hitmarker reads.
+## The one damage verb, for all three axes this fighter is in: blasts
+## (AreaDamageSystem, faction-blind — a grenade at a fighter's feet kills it
+## exactly as it would the player), the player's own rounds
+## (Damageable.GROUP_BULLET) and zombie melee (Zombie.GROUP_HOSTILE_TARGET).
+## Returns the damage actually dealt, which is what the hitmarker reads; 0 once
+## this fighter is dead.
 ##
 ## HEADSHOTS ARE NOT HONOURED: this fighter's Health is built with
 ## honors_headshots off. A fighter registers no head hitbox (nothing puts one
-## in GROUP_BULLET_HEAD for it), so `headshot` can only ever arrive false —
-## Damageable's own hit-zone assertion checks exactly that. Honouring it would
-## imply a hit zone that does not exist.
-func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
-	return _take(DamageInfo.bullet(amount, headshot, falloff_mult))
-
-## Damageable.GROUP_BULLET contract: HP left after that hit, floored at 0.
-## A METHOD, not a field read: the weapon path never reaches into another
-## actor's pool. See Damageable.gd.
-func remaining_hp() -> int:
-	return health.hp
-
-## Zombie.GROUP_HOSTILE_TARGET contract: a zombie reached this fighter and
-## hit it. `source_pos` is unused — a fighter has no directional damage
-## indicator to drive, unlike the player — but the parameter stays so the one
-## melee verb means the same thing for every member of the group.
-func take_melee_damage(amount: int, source_pos: Vector3) -> void:
-	_take(DamageInfo.melee(amount, source_pos))
-
-## All three damage axes funnel here. Health does the arithmetic and decides
-## death once; this only acts on it.
-func _take(info: DamageInfo) -> int:
+## in GROUP_BULLET_HEAD for it), so a round's headshot flag can only ever
+## arrive false — Damageable's own hit-zone assertion checks exactly that.
+## Honouring it would imply a hit zone that does not exist. A melee source
+## position is unused: a fighter has no directional damage indicator.
+func take_damage(info: DamageInfo) -> int:
 	if _dead:
 		return 0
 	var dealt := health.apply(info)
 	if health.is_depleted():
 		_die()
 	return dealt
+
+## Damageable.GROUP_BULLET contract: HP left after that hit, floored at 0.
+## A METHOD, not a field read: the weapon path never reaches into another
+## actor's pool. See Damageable.gd.
+func remaining_hp() -> int:
+	return health.hp
 
 ## Feet/centre/head sample points for a blast's line-of-sight test, same
 ## shape as Player.area_damage_points() and Zombie.area_damage_points().

@@ -565,8 +565,8 @@ func _do_attack(delta: float) -> void:
 	_attack_timer -= delta
 	if _attack_timer <= 0.0:
 		_attack_timer = zombie_type.melee_cooldown
-		if target.has_method("take_melee_damage"):
-			target.take_melee_damage(zombie_type.melee_damage, global_position)
+		if target.has_method("take_damage"):
+			target.take_damage(DamageInfo.melee(zombie_type.melee_damage, global_position))
 
 # --- Obstacle states -------------------------------------------------------
 ## Held in wire: immobile and permanent, but still dangerous at melee range.
@@ -583,13 +583,13 @@ func _do_entangled(delta: float) -> void:
 		if _attack_timer <= 0.0:
 			_attack_timer = zombie_type.melee_cooldown
 			# Guarded to match _do_attack(): a target that doesn't implement
-			# take_melee_damage() is simply never damaged rather than crashing
+			# take_damage() is simply never damaged rather than crashing
 			# the state machine. The two melee sites disagreed before this
 			# refactor — only _do_attack() guarded — which was harmless while
 			# the sole target was the player but would not survive a second
 			# member of the group.
-			if target.has_method("take_melee_damage"):
-				target.take_melee_damage(zombie_type.melee_damage, global_position)
+			if target.has_method("take_damage"):
+				target.take_damage(DamageInfo.melee(zombie_type.melee_damage, global_position))
 
 ## Fell into a ditch pit. NavigationAgent3D is never touched here — no target
 ## is ever set and get_next_path_position() is never called, so there is no
@@ -1141,30 +1141,15 @@ func _sees(player: Player) -> bool:
 ##   - it is a Node3D (global_position is read constantly)
 ##   - it IS the collider, not the owner of one (_has_los_to compares the
 ##     raycast's hit.collider against it by identity)
-##   - take_melee_damage(amount: int, source_pos: Vector3) — guarded with
-##     has_method() at both melee sites, so a target without it is simply
-##     never damaged rather than crashing the state machine
-##
-## WHY MELEE HAS ITS OWN VERB rather than reusing take_damage(): this project
-## now has THREE damage axes, and two of them had incompatible take_damage()
-## signatures that would have failed SILENTLY the moment one entity joined
-## both groups —
-##     Zombie.take_damage(amount, headshot: bool, falloff_mult)   bullets
-##     Player.take_damage(amount, source_pos = null)              melee
-## A Fighter is in both groups. Passing a Vector3 source position into the
-## bullet signature binds it to `headshot`, and a non-null Vector3 is truthy,
-## so every zombie melee hit on a fighter would have silently dealt DOUBLE
-## damage with no error. That is the exact trap AreaDamageSystem.gd documents
-## and solved by introducing take_area_damage(); this is the same fix applied
-## to the third axis. One verb per axis, and none of them can be called
-## wrongly:
-##     take_area_damage(amount, origin)         blasts    (faction-blind)
-##     take_damage(amount, headshot, falloff)   bullets   (Damageable)
-##     take_melee_damage(amount, source_pos)    melee     (this group)
+##   - take_damage(info: DamageInfo) — guarded with has_method() at both
+##     melee sites, so a target without it is simply never damaged rather
+##     than crashing the state machine. A swing is DamageInfo.melee(), which
+##     carries the source position for the player's hit indicator and can
+##     never be a headshot.
 ##
 ## Returned as Node3D rather than a widened base class: GDScript has no
 ## interfaces, and duck-typing against a documented contract is what
-## AreaDamageSystem already does for take_area_damage()/is_alive(). Every
+## AreaDamageSystem already does for take_damage()/is_alive(). Every
 ## internal use goes through this one boundary.
 func _acquire_target() -> Node3D:
 	# Cache only when a cadence was actually asked for. At the 0.0 default
@@ -1333,18 +1318,16 @@ func footstep_range() -> float:
 	return footstep_max_distance
 
 # --- Combat ---------------------------------------------------------------
-## Returns the damage actually dealt, so the shooter can report it.
+## Every hit lands here, whatever its kind: player and fighter rounds, blasts
+## (AreaDamageSystem) and mines. Returns the damage actually dealt, so the
+## shooter can report it.
 ##
-## Callers pass the weapon's raw, un-multiplied damage and the falloff
-## multiplier separately; Health.resolve() applies headshot then falloff and
-## rounds once. See its docstring for why the order matters.
-func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
-	return _take(DamageInfo.bullet(amount, headshot, falloff_mult))
-
-## Every hit, whatever its kind, lands here: Health does the arithmetic and
-## decides death; this does what a hit looks like on a zombie, in the order it
-## always has.
-func _take(info: DamageInfo) -> int:
+## Health does the arithmetic (headshot then falloff, rounded once — see
+## Health.resolve()) and decides death; this does what a hit looks like on a
+## zombie. A blast or mine is never a headshot: DamageInfo.blast() cannot set
+## the flag. Immobilised zombies (FALLEN in a ditch, ENTANGLED in wire) take
+## every kind normally; nothing here checks state.
+func take_damage(info: DamageInfo) -> int:
 	var dmg := health.apply(info)
 	last_hit_headshot = info.headshot
 	if info.headshot:
@@ -1363,16 +1346,6 @@ func _take(info: DamageInfo) -> int:
 	if health.is_depleted():
 		_die()
 	return dmg
-
-## Uniform blast entry point (AreaDamageSystem convention).
-##
-## Explosions are never headshots — frag doesn't care where it lands, and
-## routing this through take_damage(amount, headshot) directly would be a
-## silent bug: a Vector3 origin binds to `headshot` and is truthy, doubling
-## every blast. Immobilised zombies (FALLEN in a ditch, ENTANGLED in wire)
-## take this normally; nothing here checks state.
-func take_area_damage(amount: int, origin: Vector3) -> void:
-	_take(DamageInfo.blast(amount, origin))
 
 ## World-space points the blast tests line of sight against, sized to this
 ## variant's actual silhouette so a tall leaper is harder to fully cover than

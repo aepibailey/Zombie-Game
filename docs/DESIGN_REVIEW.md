@@ -29,6 +29,9 @@ carry a **Status** line. Since the review:
   (`a462fe1`). The `Targets` registry is still open.
 - **§3.9 / §4.8 day-time kills** — survivors retreat at dawn and day kills
   score nothing (`6fb5019`).
+- **§3.3 damage verbs** — one `take_damage(DamageInfo)` and a `Health` per
+  actor (`8a8d6ee`, `a77c58d` and the single-verb switch after them).
+  SandbagPanel was left out.
 
 ---
 
@@ -255,6 +258,14 @@ plus a `DamageInfo` resource/class (`amount`, `kind: BULLET|MELEE|BLAST`,
 `source`, `is_headshot`, `falloff_mult`). One verb: `take_damage(info)`. The
 headshot/falloff ordering lives in one function. Player, Zombie, Fighter and
 SandbagPanel all carry the same component; `HealthBar3D` reads it directly.
+
+**Status: addressed for actors.** Player, Zombie and Fighter each own a
+`Health` and take every hit through `take_damage(info: DamageInfo)`; the three
+verbs are gone, and behaviour is unchanged (pinned first by
+`tools/damage_tests.tscn`). `HealthBar3D` reads a fighter's `Health` directly.
+`SandbagPanel` was deliberately left out: obstacle damage stays on its own
+`take_structure_damage()` path. The groups are unchanged, since they decide
+who a round or blast can reach, which is a separate question.
 
 ### 3.4 Stringly-typed everything
 
@@ -492,6 +503,7 @@ infinite linear ramp, and they give the run (§1) a story.
    (§2.4).
 6. **Health/DamageInfo component** (§3.3) — the refactor with the best
    payoff-to-risk ratio, because the three verbs are already funnelled.
+   **Done for actors**; sandbags left on their own path.
 7. **Split `Player.gd`** (§3.1), starting with `LaserSight` and `Inventory`,
    which are the most self-contained.
 8. **Playtest the 10-minute loop** with a stopwatch and the ECONOMY log, then

@@ -54,13 +54,13 @@ func _ready() -> void:
 
 # --- Adapters: the ONLY places that name the damage API ----------------------
 func _bullet(target: Node, amount: int, headshot: bool, falloff: float = 1.0) -> int:
-	return target.take_damage(amount, headshot, falloff)
+	return target.take_damage(DamageInfo.bullet(amount, headshot, falloff))
 
 func _blast(target: Node, amount: int, origin: Vector3) -> void:
-	target.take_area_damage(amount, origin)
+	target.take_damage(DamageInfo.blast(amount, origin))
 
 func _melee(target: Node, amount: int, source: Vector3) -> void:
-	target.take_melee_damage(amount, source)
+	target.take_damage(DamageInfo.melee(amount, source))
 
 func _player_hp(p: Player) -> int:
 	return p.health.hp
@@ -274,11 +274,11 @@ func _test_minefield() -> bool:
 	GameManager.force_phase(GameManager.Phase.DAY)
 	var mf := Minefield.new()
 	var z := _zombie(Vector3(0, 0, -40), 200)
-	mf._apply(z, 125)
+	mf._apply(z, 125, Vector3(0, 0, -39))
 	_eq(z.remaining_hp(), 75, "mine charge takes its amount exactly")
 	_check(z.is_alive(), "a 200 HP zombie survives a 125 charge")
 	_eq(z.last_hit_headshot, false, "a mine is never a headshot")
-	mf._apply(z, 125)
+	mf._apply(z, 125, Vector3(0, 0, -39))
 	_check(not z.is_alive(), "second charge kills")
 	mf.free()
 	await _free([z])

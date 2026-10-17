@@ -47,7 +47,7 @@ var _hit_chance := 0.0
 var _in_bullet_group := false
 var _in_hostile_group := false
 var _in_damageable_group := false
-var _has_melee_verb := false
+var _typed_damage_exact := false
 var _fighter_kia := false
 
 # 5s of setup slack past the 900-frame engagement window. A smoke test that can
@@ -92,6 +92,7 @@ func _process(_delta: float) -> void:
 		_main.add_child(_zombie)
 		_zombie.global_position = Vector3(0.0, 0.3, -8.0)
 		_zombie.set_active(true)
+		_typed_damage_exact = _probe_typed_damage()
 		print("[SMOKE] fighter hit_chance=%.2f damage=%d reaction=%.2fs" % [
 			_fighter.hit_chance, _fighter.damage, _fighter.reaction_delay])
 		return
@@ -101,6 +102,25 @@ func _process(_delta: float) -> void:
 	# ~15s of engagement at 60fps, or the hard cap if anything above stalls.
 	if _frames >= 900 or _frames >= HARD_FRAME_CAP:
 		_report()
+
+## A fighter is in all three damage axes. This used to check that melee had
+## its own verb, because a Vector3 source passed into the bullet verb's
+## `headshot` parameter is truthy and would have doubled every swing. Every hit
+## is now a typed DamageInfo, so check the outcome itself: on a throwaway
+## fighter (never added to the scene, so the engagement above is untouched),
+## a melee swing and a blast, each carrying a source position, take exactly
+## their amount and neither is a headshot.
+func _probe_typed_damage() -> bool:
+	var probe := Fighter.new()
+	probe.recruit(load("res://resources/fighter_irregular.tres"))
+	var before := probe.remaining_hp()
+	var swing := DamageInfo.melee(20, Vector3(1.0, 0.0, 0.0))
+	var blast := DamageInfo.blast(20, Vector3(0.0, 0.0, 2.0))
+	var ok := probe.take_damage(swing) == 20 and probe.take_damage(blast) == 20 \
+			and probe.remaining_hp() == before - 40 \
+			and not swing.headshot and not blast.headshot
+	probe.free()
+	return ok
 
 ## Stops Main's own night wave. `_spawn_zombie()` is gated on
 ## `_wave_spawned < _wave_total`, so levelling the two ends the trickle, and
@@ -128,7 +148,6 @@ func _snapshot() -> void:
 	_in_bullet_group = _fighter.is_in_group(Damageable.GROUP_BULLET)
 	_in_hostile_group = _fighter.is_in_group(Zombie.GROUP_HOSTILE_TARGET)
 	_in_damageable_group = _fighter.is_in_group(AreaDamageSystem.GROUP_DAMAGEABLE)
-	_has_melee_verb = _fighter.has_method("take_melee_damage")
 	if not _fighter.is_alive():
 		_fighter_kia = true
 
@@ -145,7 +164,7 @@ func _report() -> void:
 	_check(_in_bullet_group, "joined GROUP_BULLET")
 	_check(_in_hostile_group, "joined GROUP_HOSTILE_TARGET")
 	_check(_in_damageable_group, "joined GROUP_DAMAGEABLE")
-	_check(_has_melee_verb, "melee axis has its own verb")
+	_check(_typed_damage_exact, "melee and blast with a source position deal exactly their amount, never as a headshot")
 	print("[SMOKE] shots=%d hits=%d kills=%d fighter_kia=%s zombie_alive=%s" % [
 		_shots, _hits, _kills, _fighter_kia,
 		is_instance_valid(_zombie) and _zombie.is_alive()])

@@ -82,7 +82,7 @@ func _eq(a, b, label: String) -> void:
 ## Damage the real take_damage() deals for one hit. The dummy has a billion HP
 ## and is never activated, so it never dies and never enters chase.
 func _hit(weapon: WeaponData, distance: float, headshot: bool) -> int:
-	return _dummy.take_damage(weapon.body_damage, headshot, weapon.damage_mult_at(distance))
+	return _dummy.take_damage(DamageInfo.bullet(weapon.body_damage, headshot, weapon.damage_mult_at(distance)))
 
 func _shots_to_kill(hp: int, per_hit: int) -> int:
 	return ceili(float(hp) / float(per_hit))

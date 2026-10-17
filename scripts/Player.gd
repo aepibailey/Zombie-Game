@@ -1032,13 +1032,13 @@ func _fire_ray(from: Vector3, dir: Vector3) -> void:
 			if targets_damaged > 0:
 				mult *= weapon.penetration_damage_multiplier
 			# Raw body_damage + the multiplier, NOT a pre-multiplied value:
-			# take_damage() applies headshot first, then falloff, and rounds
-			# exactly once — see Zombie.take_damage()'s docstring. This is the
-			# damageable contract, documented on Damageable.gd.
-			var dealt: int = target.take_damage(weapon.body_damage, headshot, mult)
-			# Through the contract method, NOT a direct field read. Zombie
-			# names its pool `hp` and a Fighter names its `health`; the weapon
-			# path must not know which. Warned rather than defaulted, matching
+			# Health applies headshot first, then falloff, and rounds exactly
+			# once — see Health.resolve(). This is the damageable contract,
+			# documented on Damageable.gd.
+			var dealt: int = target.take_damage(DamageInfo.bullet(weapon.body_damage, headshot, mult))
+			# Through the contract method, NOT a direct field read: the weapon
+			# path never reaches into another actor's pool. Warned rather than
+			# defaulted, matching
 			# AreaDamageSystem's own handling of a group member missing its
 			# contract method — a wrong number here is displayed on the
 			# hitmarker, so failing quietly would be worse than failing loud.
@@ -2121,12 +2121,6 @@ func _make_sfx(path: String, volume_db: float) -> AudioStreamPlayer:
 	return p
 
 # --- Damage / life --------------------------------------------------------
-## Uniform blast entry point (AreaDamageSystem convention). The player is in
-## the `damageable` group like everything else — a blast has no idea who threw
-## it, so your own grenade at your own feet will kill you.
-func take_area_damage(amount: int, origin: Vector3) -> void:
-	_take(DamageInfo.blast(amount, origin))
-
 ## AreaDamageSystem's optional liveness convention, same as Zombie.is_alive().
 ##
 ## Without this the player was silently absent from every blast's `killed`
@@ -2135,7 +2129,7 @@ func take_area_damage(amount: int, origin: Vector3) -> void:
 ##
 ## `hp > 0` would NOT have worked. The player has no persistent dead state —
 ## take_damage() calls _respawn() synchronously at 0 HP, which restores full
-## HP before take_area_damage() even returns — so a naive HP test reads true
+## HP before that call even returns — so a naive HP test reads true
 ## both before and after the killing blow and still never counts. Hence the
 ## latch below: _respawn() sets it, and it clears deferred, i.e. after every
 ## same-frame consumer (the blast loop is synchronous) has sampled it.
@@ -2183,15 +2177,14 @@ func area_damage_points() -> Array:
 		global_position + Vector3(0.0, head_y, 0.0),
 	]
 
-## Zombie.GROUP_HOSTILE_TARGET's melee contract — see Zombie._acquire_target()'s
-## note on why melee has its own verb.
-func take_melee_damage(amount: int, source_pos: Vector3) -> void:
-	_take(DamageInfo.melee(amount, source_pos))
-
-## Every hit on the player lands here. Health does the arithmetic and decides
-## death; this does what being hit looks like, in the order it always has,
-## then acts on a death.
-func _take(info: DamageInfo) -> int:
+## The one damage verb: blasts (the player is in the `damageable` group like
+## everything else — a blast has no idea who threw it, so your own grenade at
+## your own feet will kill you) and zombie melee (Zombie.GROUP_HOSTILE_TARGET).
+## Never a player round: the player is kept out of Damageable.GROUP_BULLET.
+##
+## Health does the arithmetic and decides death; this does what being hit
+## looks like, then acts on a death. Returns the damage dealt.
+func take_damage(info: DamageInfo) -> int:
 	# A dead player has left every damage group, but a blast already iterating
 	# or a zombie swinging off a stale target can still land one call here.
 	if _dead:

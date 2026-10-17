@@ -113,9 +113,18 @@ killable by any blast (`AreaDamageSystem.GROUP_DAMAGEABLE`) exactly like the
 player, hit by the player's own rounds (`Damageable.GROUP_BULLET`) so firing
 lanes are something to think about, and hunted by zombies
 (`Zombie.GROUP_HOSTILE_TARGET`) so an emplacement draws real pressure instead
-of being scenery. Each axis has its own verb — `take_area_damage`,
-`take_damage`, `take_melee_damage` — precisely so that being in all three
-cannot silently bind a `Vector3` source position to a `headshot` flag.
+of being scenery. All three arrive at one verb, `take_damage(info:
+DamageInfo)` (see Damage below), so being in all three cannot silently bind a
+`Vector3` source position to a `headshot` flag.
+
+**Damage** — every actor (player, zombie, fighter) owns a `Health` and takes
+every hit through one `take_damage(info: DamageInfo)`. A `DamageInfo` is a
+typed BULLET, MELEE or BLAST hit built by `bullet()`, `melee()` or `blast()`;
+only a bullet can carry a headshot. `Health.resolve()` is the one damage rule:
+headshot (zombies only) then falloff, rounded once, never below 1. Each actor
+keeps its own hit effects and death handling. The groups that decide who a
+round or blast can reach are unchanged. Obstacles keep their own
+structure-damage path. `tools/damage_tests.tscn` pins every path.
 
 **Fighter combat** — cover-gated acquisition (range + sector arc + line of
 sight) every `acquire_scan_interval`, then this individual's rolled

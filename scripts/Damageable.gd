@@ -21,15 +21,15 @@ class_name Damageable
 ##   Damageable.GROUP_BULLET           — player rounds. Player is NOT.
 ##
 ## A member must implement:
-##   take_damage(amount: int, headshot: bool, falloff_mult: float) -> int
-##       Applies the hit and returns the damage actually dealt.
+##   take_damage(info: DamageInfo) -> int
+##       Applies the hit and returns the damage actually dealt. A round is
+##       DamageInfo.bullet(raw_damage, headshot, falloff_mult); the member's
+##       Health applies headshot then falloff and rounds once.
 ##   remaining_hp() -> int
 ##       HP left after that hit, floored at 0. A METHOD, not a property read:
-##       Zombie calls its pool `hp` and Fighter calls its `health` (that name
-##       is the project's damageable convention and what HealthBar3D reads),
-##       and the weapon path must not know which. The value is shown on the
-##       hitmarker, so a wrong answer is visible to the player rather than
-##       silent.
+##       the weapon path never reaches into another actor's pool. The value is
+##       shown on the hitmarker, so a wrong answer is visible to the player
+##       rather than silent.
 ## and MAY register a head hitbox — see GROUP_BULLET_HEAD.
 
 ## Entities a player round can damage. The round passes through or stops

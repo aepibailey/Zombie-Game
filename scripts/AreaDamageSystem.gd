@@ -9,17 +9,13 @@ extends Node
 ## `damageable` group is hit — zombies, the player, and allied fighters the
 ## moment they exist. There is deliberately no "friendly" concept to forget to
 ## update; a fighter is picked up automatically by joining the group and
-## implementing take_area_damage().
+## implementing take_damage(info: DamageInfo).
 ##
-## WHY A CONVENTION METHOD RATHER THAN CALLING take_damage() DIRECTLY:
-## the two existing take_damage() signatures are incompatible in a way that
-## fails SILENTLY —
-##     Player.take_damage(amount: int, source_pos = null)
-##     Zombie.take_damage(amount: int, headshot: bool, falloff_mult := 1.0)
-## Passing a Vector3 origin to a zombie would bind it to `headshot`, and a
-## non-null Vector3 is truthy, so every blast would register as a headshot and
-## deal DOUBLE damage with no error. take_area_damage(amount, origin) is
-## uniform across all damageables and cannot be called wrongly.
+## Every hit is handed over as DamageInfo.blast(amount, origin), which cannot
+## carry a headshot. Before DamageInfo there was a separate take_area_damage()
+## verb for exactly that reason: the player's and the zombie's old
+## take_damage() signatures differed, and a Vector3 origin bound to a zombie's
+## `headshot` parameter is truthy, so every blast would have doubled silently.
 
 ## Every actor that can be hurt by a blast. Joined by Player and Zombie in
 ## their _ready(); future allied fighters join the same group and are picked
@@ -92,8 +88,8 @@ func _apply_once(origin: Vector3, profile: AreaDamageProfile,
 		var actor := node as Node3D
 		if actor == null or not is_instance_valid(actor):
 			continue
-		if not actor.has_method("take_area_damage"):
-			push_warning("[AREADMG] %s is in '%s' but has no take_area_damage()"
+		if not actor.has_method("take_damage"):
+			push_warning("[AREADMG] %s is in '%s' but has no take_damage()"
 				% [actor.name, GROUP_DAMAGEABLE])
 			continue
 		# Immobilised zombies (FALLEN in a ditch, ENTANGLED in wire) are
@@ -121,7 +117,7 @@ func _apply_once(origin: Vector3, profile: AreaDamageProfile,
 		var was_alive := true
 		if actor.has_method("is_alive"):
 			was_alive = actor.is_alive()
-		actor.take_area_damage(dmg, origin)
+		actor.take_damage(DamageInfo.blast(dmg, origin))
 		total += dmg
 		hit_actors += 1
 		if was_alive and actor.has_method("is_alive") and not actor.is_alive():

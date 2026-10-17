@@ -183,17 +183,17 @@ func _detonate(mine: Dictionary, trigger) -> void:
 ## The triggering zombie takes the full charge; everything nearby takes
 ## splash. Survivors of either are permanently crippled.
 func _apply_blast(trigger, blast_pos: Vector3) -> void:
-	_apply(trigger, trigger_damage)
+	_apply(trigger, trigger_damage, blast_pos)
 	for other in get_tree().get_nodes_in_group("zombies"):
 		if other == trigger or not is_instance_valid(other) or not other.is_alive():
 			continue
 		if other.global_position.distance_to(blast_pos) <= splash_radius:
-			_apply(other, splash_damage)
+			_apply(other, splash_damage, blast_pos)
 
-func _apply(z, amount: int) -> void:
+func _apply(z, amount: int, blast_pos: Vector3) -> void:
 	if not is_instance_valid(z) or not z.is_alive():
 		return
-	z.take_damage(amount, false)
+	z.take_damage(DamageInfo.blast(amount, blast_pos))
 	# Mine kills award 1 point, same as a body-shot kill.
 	if is_instance_valid(z) and z.is_alive():
 		z.apply_permanent_slow(survivor_speed_mult)
