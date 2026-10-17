@@ -141,11 +141,13 @@ Piecewise-linear over distance from the muzzle: full damage to `falloff_near`, t
 
 | Weapon | Full to | → mult @ range | → mult @ range |
 |---|---|---|---|
-| M17 | 25m | 0.70 @ 60m | 0.50 @ 100m |
-| HK 416 | 30m | 0.85 @ 85m | 0.85 @ 120m |
+| M17 (simple falloff) | 15m | 0.40 @ 40m | 0.40 (flat beyond) |
+| HK 416 | — | 1.00 (always) | 1.00 (always) |
 | SPAS-12 | 10m | 0.40 @ 20m | 0.15 @ 30m |
 | M249 | 30m | 0.80 @ 85m | 0.80 @ 120m |
 | KAC M110 | — | 1.00 (always) | 1.00 (always) |
+
+`Arsenal.gd` is the source of truth for these values; `tools/table_tests.tscn` pins them.
 
 ### SPAS-12 close-range lethality (implemented)
 **9 pellets × 22 dmg** (198 at point blank), **3°** cone, each pellet raycast independently with the headshot multiplier applied per pellet.

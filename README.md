@@ -203,8 +203,13 @@ These are by hand and by eye. The headless tests above cover only the fighter
 engagement loop and the spec's worked numbers; everything below still needs a
 human at the keyboard.
 
-1. **Crouch past a zombie (<10m) undetected** — at Night, press `C` and walk
-   slowly past a zombie a few metres away. It should stay in Wander (no laser).
+1. **Crouch past a zombie outside its sight, undetected** — at Night, press
+   `C`. Crouched movement is silent (0m noise), but a crouched player is still
+   visible inside a zombie's 120° forward cone, with line of sight, out to 6m
+   (walker) or 9m (leaper). Walk crouched past a wandering zombie either
+   outside its cone (behind or beside it) or beyond that range. It should stay
+   in Wander (no laser). Inside the cone and range it will see you; that is
+   expected, not a failure.
 2. **Standing/sprint triggers Investigate** — walk (5m) or sprint (15m) near a
    zombie; it should turn and path to the fixed spot the noise came from, then
    give up (~10s) and return to Wander if it finds nothing there. A fresh noise
