@@ -1624,8 +1624,8 @@ func _clear_recovery_prompt() -> void:
 ##
 ## World geometry (layer 1) shares the query mask with the claymore's own
 ## interaction layer, so a wall between the player and the mine correctly
-## blocks recovery — the ray hits the wall first and "claymore" meta lookup
-## on a wall collider is simply absent.
+## blocks recovery — the ray hits the wall first, and a wall collider has no
+## "claymore" meta.
 func _find_recovery_target() -> Claymore:
 	var space := get_world_3d().direct_space_state
 	var from := camera.global_position
@@ -1640,7 +1640,11 @@ func _find_recovery_target() -> Claymore:
 	var col = hit.collider
 	if col == null:
 		return null
-	var c = col.get_meta("claymore", null)
+	# has_meta() first: get_meta() with a null default still logs an error in
+	# Godot 4 when the key is missing, and this runs every physics frame.
+	if not col.has_meta("claymore"):
+		return null
+	var c = col.get_meta("claymore")
 	if c == null or not is_instance_valid(c) or not c.can_recover():
 		return null
 	return c
