@@ -1,0 +1,45 @@
+# Runs the headless smoke test (tools/smoke_test.tscn) on every push and PR.
+# Scope is the smoke test only: no lint, no broader suite.
+#
+# The step that runs the test is wrapped in a hard 60s `timeout`. An earlier
+# version of this test could hang instead of failing; CI must turn a future
+# hang into a loud failure (exit 124), never a stuck job.
+name: Smoke test
+
+on:
+  push:
+  pull_request:
+
+# Match project.godot's config/features ("4.3"). Bump both together.
+env:
+  GODOT_VERSION: 4.3-stable
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # belt-and-braces; the real bound is `timeout 60` below
+    defaults:
+      run:
+        shell: bash       # explicit so `-o pipefail` is on; the filter pipe must not mask a bad exit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot ${{ env.GODOT_VERSION }} (headless-capable Linux x86_64 build)
+        run: |
+          curl -fsSLO "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q "Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          chmod +x "Godot_v${GODOT_VERSION}_linux.x86_64"
+          "./Godot_v${GODOT_VERSION}_linux.x86_64" --version
+
+      - name: Import project
+        run: |
+          "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless --import
+
+      # Run AS A SCENE, never with --script: a custom MainLoop does not register
+      # autoload globals, which fails to compile this project's own scripts.
+      # See README "Headless smoke test". The grep only strips the dummy
+      # renderer's `mesh_get_surface_count` spam; pipefail keeps Godot's exit code.
+      - name: Run smoke test (60s hard timeout)
+        run: |
+          timeout 60 "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless res://tools/smoke_test.tscn 2>&1 \
+            | grep -vE 'mesh_get_surface_count|Parameter "m" is null'
