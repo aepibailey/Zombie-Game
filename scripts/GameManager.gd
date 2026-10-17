@@ -27,6 +27,9 @@ enum NightType { NORMAL, SWARM, SIEGE, HUNTERS, TRANSIT }
 # 6 min.) Night length is the value tuned most often, so it's a plain var
 # rather than a const — edit here, or set it at runtime.
 const DAY_LENGTH: float = 30.0
+## The Ready action (Main) may end Day early. The 30s Day itself is
+## unchanged; Ready only stops waiting it out.
+@export var day_skip_enabled: bool = true
 @export var NIGHT_LENGTH: float = 120.0
 
 # --- Night schedule — docs/RUN_STRUCTURE.md "Escalation, night types and Day" --
@@ -170,6 +173,18 @@ func is_day() -> bool:
 
 func phase_name() -> String:
 	return "DAY" if current_phase == Phase.DAY else "NIGHT"
+
+## Ready: end Day now. The caller (Main's Ready action) has already refused
+## while any clock halt is held, so this never has a halt to release — and
+## asserting it here, rather than releasing someone else's halt, keeps
+## _start_phase()'s leak guard exactly as strict as it was. Returns false,
+## and does nothing, if Day cannot end early right now.
+func end_day_early() -> bool:
+	if not day_skip_enabled or not is_day() or is_clock_halted():
+		return false
+	print("[GAMEMANAGER] Ready: Day %d ended early with %.1fs left" % [night_number, time_left])
+	_start_phase(Phase.NIGHT)
+	return true
 
 ## Convenience for external callers (crate, all-clear skip) to force dawn/dusk.
 func force_phase(phase: int) -> void:

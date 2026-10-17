@@ -25,6 +25,19 @@ const TREE_COUNT := 44
 @export var max_alive_step_start_night: int = 10
 @export var max_alive_ceiling: int = 32
 
+# --- Run end -----------------------------------------------------------------
+## The game-over panel's rank, keyed by NIGHTS SURVIVED: the highest key at or
+## below the run's count wins. On Main, not the panel, because the panel is
+## built in code and an @export there never reaches the inspector. Must
+## contain 0, so every run has a rank (GameOverPanel asserts it). No win
+## condition and no run length: "Legend" is a rank, not an ending.
+@export var rank_thresholds: Dictionary = {
+	0: "Overrun", 15: "Held the Line", 30: "Veteran", 50: "Legend",
+}
+
+## Ready (Q by default, project.godot's Input Map) ends Day early.
+const ACTION_READY := "ready"
+
 # Wave pacing — zombies trickle in rather than all at once. The interval scales
 # with pool size so bigger nights still deliver their allotment: the pool is
 # spread across `spawn_window_frac` of the night, clamped and jittered.
@@ -676,7 +689,7 @@ func _build_ui() -> void:
 	var game_over := GameOverPanel.new()
 	game_over.name = "GameOverPanel"
 	add_child(game_over)
-	game_over.setup(player)
+	game_over.setup(player, rank_thresholds)
 
 	# Step 8A phase 4 debug overlay (P). Built here rather than lazily on
 	# first toggle so it is in the tree with everything else and its own
@@ -840,11 +853,13 @@ func _begin_day() -> void:
 	RunLogger.mark_dawn()
 	_update_wave_hud()
 
-	_hud.show_message("DAY — safe. Open the supply crate to spend points.")
+	_hud.show_message("DAY — safe. Open the supply crate to spend points. [%s] Ready." % _ready_key_name())
 
 # --- Nightly wave: trickle spawn + all-clear -----------------------------
 func _process(delta: float) -> void:
 	_update_nvg_daylight(delta)
+	if Input.is_action_just_pressed(ACTION_READY):
+		_try_ready()
 	if _hud and _hud.debug_audio_visible():
 		_update_audio_debug()
 	# Safety net: if the prompt is up while something is still alive, retract it.
@@ -1152,6 +1167,37 @@ func _unhandled_input(event: InputEvent) -> void:
 # rules, the 8-cap and the recruit economy are all phases of their own — this
 # deliberately enforces NONE of them, because its only job is to put a fighter
 # in the world so the entity itself can be verified.
+## Ready: end Day early. Polled, not an input event, so it is decided here in
+## one place for every menu rather than in each menu's own input handler —
+## which also means the game-over panel's key swallowing does not stop it,
+## and the checks below must.
+##
+## REFUSED while any clock halt is held: build mode, the roster and the
+## game-over panel each hold one, and Night must never start under a menu
+## that thinks the clock is paused (GameManager._start_phase() asserts it).
+## Ready never releases a halt it does not own. Menus that hold NO halt — the
+## crate and the radio — are closed first, then Day ends.
+func _try_ready() -> void:
+	if not GameManager.day_skip_enabled or not GameManager.is_day() or player.is_dead():
+		return
+	if GameManager.is_clock_halted():
+		_hud.show_message("Close the menu first, then [%s] to ready up." % _ready_key_name())
+		return
+	if _crate_ui and _crate_ui.is_open():
+		_crate_ui.close_crate()
+	if _radio_menu and _radio_menu.is_open():
+		_radio_menu.close()
+	GameManager.end_day_early()
+
+## The key bound to Ready, for HUD text — read from the Input Map, so a rebind
+## in Project Settings shows up without a code change.
+func _ready_key_name() -> String:
+	for ev in InputMap.action_get_events(ACTION_READY):
+		if ev is InputEventKey:
+			var code: int = ev.physical_keycode if ev.physical_keycode != 0 else ev.keycode
+			return OS.get_keycode_string(code)
+	return ACTION_READY
+
 ## TEMPORARY — see KEY_DEBUG_NIGHT_JUMP. Day only: at night the current
 ## night's pool, HP and cap are already set, and changing the counter under
 ## them would make the run log's row disagree with what actually spawned.

@@ -46,6 +46,7 @@ func _ready() -> void:
 		_test_max_alive,
 		_test_night_types,
 		_test_fighter_gate,
+		_test_rank,
 		_test_night_pool,
 		_test_spawn_interval,
 		_test_leaper_fraction,
@@ -188,6 +189,21 @@ func _test_fighter_gate() -> bool:
 	for live in FighterEconomyConfig.FIGHTER_CAP:
 		got.append(econ.recruit_cost(live))
 	_eq(got, [20, 20, 20, 20, 20, 35, 55, 80], "recruit cost for 0..7 alive")
+	return true
+
+# --- Prompt A phase 4: the rank on game over -------------------------------------
+## Keyed by nights SURVIVED (GameOverPanel.nights_survived): dying during night
+## 15 is 14 survived, still Overrun; dying in the Day after it is Held the Line.
+func _test_rank() -> bool:
+	print("[TABLE] game-over rank (Prompt A phase 4)")
+	var ranks: Dictionary = _main.rank_thresholds
+	for row in [[0, "Overrun"], [14, "Overrun"], [15, "Held the Line"], [29, "Held the Line"],
+			[30, "Veteran"], [49, "Veteran"], [50, "Legend"], [80, "Legend"]]:
+		_eq(GameOverPanel.rank_for(row[0], ranks), row[1], "%d nights survived" % row[0])
+	_eq(GameOverPanel.nights_survived(15, false), 14, "dying during night 15 survives 14")
+	_eq(GameOverPanel.nights_survived(15, true), 15, "dying in the Day after night 15 survives 15")
+	_eq(GameOverPanel.rank_for(GameOverPanel.nights_survived(15, false), ranks), "Overrun",
+		"died on night 15: Overrun")
 	return true
 
 # --- PROJECT_SPEC.md "Night scaling" ------------------------------------------

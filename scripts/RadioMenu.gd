@@ -111,6 +111,10 @@ func _process(delta: float) -> void:
 func is_open() -> bool:
 	return _open
 
+## For callers that end the menu's moment from outside (Ready ending Day).
+func close() -> void:
+	_close_menu()
+
 func _open_menu() -> void:
 	if _open:
 		return

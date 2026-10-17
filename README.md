@@ -107,6 +107,7 @@ still playing when the run quits, not a failure.
 | `T` | Open the radio menu (requires the Radio; movement stays on, look is frozen while it's open) |
 | `Esc` | Free / recapture mouse (and close the crate) |
 | `Y` / `N` | On the all-clear prompt: skip to Day / finish the night |
+| `Q` | Ready — end the Day early (closes the crate or radio first; refused while build mode or the roster is open) |
 | `J` | Debug: list audible zombies + their distance |
 | `K` | Debug: show zombie head/body hitbox volumes |
 | `L` | Debug: detonate a test blast at the player |

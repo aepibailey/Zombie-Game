@@ -7,8 +7,10 @@ class_name GameOverPanel
 ## source id, takes the mouse off the player. Mouse-driven only — no keys of
 ## its own, so it adds no hardcoded keycodes.
 ##
-## Reports what is already tracked: nights survived and points earned this
-## run. Kills are not tracked run-wide anywhere, so they are not shown.
+## Reports the night the run ended on, a rank for the nights survived (from
+## Main.rank_thresholds), and points earned this run. Kills are not tracked
+## run-wide anywhere, so they are not shown. There is no win condition: the
+## rank is a description of how far the run got, not an ending.
 ##
 ## WHILE SHOWN, THE GAME BEHIND IT IS INERT — enforced here, in one place,
 ## rather than by gating each of the nine _unhandled_input handlers that act
@@ -24,9 +26,15 @@ const HALT_ID := "game_over"
 var _player: Player
 var _shown := false
 var _summary: Label
+var _rank_label: Label
+## nights survived -> rank name. See Main.rank_thresholds.
+var _rank_thresholds: Dictionary = {}
 
-func setup(player: Player) -> void:
+func setup(player: Player, rank_thresholds: Dictionary) -> void:
 	_player = player
+	assert(rank_thresholds.has(0),
+		"[GAMEOVER] rank_thresholds must have a 0 entry, or a run that survives no nights has no rank.")
+	_rank_thresholds = rank_thresholds
 	player.died_permanently.connect(_show)
 
 func _ready() -> void:
@@ -69,6 +77,12 @@ func _ready() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(title)
 
+	_rank_label = Label.new()
+	_rank_label.add_theme_font_size_override("font_size", 26)
+	_rank_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.55))
+	_rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	root.add_child(_rank_label)
+
 	_summary = Label.new()
 	_summary.add_theme_font_size_override("font_size", 15)
 	_summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -97,6 +111,15 @@ func _ready() -> void:
 static func nights_survived(night_number: int, is_day: bool) -> int:
 	return maxi(0, night_number if is_day else night_number - 1)
 
+## The rank for `survived` nights: the name at the highest threshold at or
+## below it. 0 -> Overrun, 14 -> Overrun, 15 -> Held the Line, 50+ -> Legend.
+static func rank_for(survived: int, thresholds: Dictionary) -> String:
+	var best := -1
+	for t in thresholds:
+		if int(t) <= survived and int(t) > best:
+			best = int(t)
+	return thresholds[best] if best >= 0 else ""
+
 func _show() -> void:
 	if _shown:
 		return
@@ -104,9 +127,12 @@ func _show() -> void:
 	GameManager.request_clock_halt(HALT_ID)
 	if _player:
 		_player._set_mouse_captured(false)
-	_summary.text = "Nights survived: %d\nPoints earned this run: %d" % [
-		nights_survived(GameManager.night_number, GameManager.is_day()),
-		PointsManager.earned_this_run]
+	var survived := nights_survived(GameManager.night_number, GameManager.is_day())
+	_rank_label.text = rank_for(survived, _rank_thresholds)
+	# "Night N" is the night the run ended on: the night being fought, or by
+	# day the one just survived.
+	_summary.text = "Night %d\nNights survived: %d\nPoints earned this run: %d" % [
+		maxi(GameManager.night_number, 1), survived, PointsManager.earned_this_run]
 	visible = true
 
 ## Keys only. Mouse buttons must reach the GUI stage for the buttons to work;
