@@ -351,7 +351,9 @@ func _detonate() -> void:
 	var origin := global_position + Vector3(0.0, EMIT_HEIGHT, 0.0)
 	var face := facing()
 	_spawn_burst(origin, face)
-	AreaDamageSystem.detonate(origin, config.damage_profile, face, "claymore")
+	# Wrapped so a kill scores even by day — see PointsManager's placed-defense credit.
+	PointsManager.credit_defense_kills(
+		AreaDamageSystem.detonate.bind(origin, config.damage_profile, face, "claymore"))
 	queue_free()
 
 ## Placeholder directional VFX: a one-shot cone of particles along the facing

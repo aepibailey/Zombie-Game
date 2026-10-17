@@ -137,6 +137,9 @@ var _nav_bakes_in_flight := 0
 var _ground_body: StaticBody3D
 var _ground_holes: Array = []   # Array[Rect2], one per placed ditch (XZ, world space)
 var _zombies: Array = []
+## Survivors that walked out since dawn — next night's carryover. A count,
+## not nodes: see _begin_night().
+var _retreated_count := 0
 var _hud: HUD
 var _crate_ui: SupplyCrateUI
 var _pending_crate_zone: SupplyCrateZone
@@ -741,21 +744,28 @@ func capture_state() -> void:
 		_build_mode.capture_state()
 
 func _begin_night() -> void:
-	# Survivors from previous nights carry over: reactivate them and fold them
-	# into this night's totals on top of the fresh pool. They already count as
-	# "spawned" and "alive", so the trickle only adds the new pool and the
-	# all-clear still requires every carried-over zombie to be killed too.
+	# Survivors from previous nights carry over — as a COUNT, not as nodes.
+	# Each one walked out at dawn (Zombie.begin_retreat) and was tallied in
+	# _retreated_count as it despawned; tonight they come back through the
+	# normal trickle, from the ring, at tonight's HP. Anything still on the
+	# field (a retreat cut short by a forced early dusk) is despawned here so
+	# it is counted the same way. The all-clear still requires every
+	# carried-over zombie to be killed too.
 	_prune_zombies()
-	var carryover := _zombies.size()
-	for z in _zombies:
-		z.set_active(true)
+	for z in _zombies.duplicate():   # despawn() re-enters via the signal
+		if is_instance_valid(z) and z.is_alive():
+			z.despawn()
+	var carryover := _retreated_count
+	_retreated_count = 0
 
 	var new_pool: int = base_spawn + spawn_per_night * (GameManager.night_number - 1)
 	_wave_total = carryover + new_pool
-	_wave_spawned = carryover
+	_wave_spawned = 0
 	# alive count is derived (see alive_count()), never tracked separately.
 	_spawn_timer = FIRST_SPAWN_DELAY
-	_spawn_interval = _compute_spawn_interval(new_pool)
+	# Carryover now trickles in alongside the fresh pool, so the interval
+	# spreads the whole count across the spawn window.
+	_spawn_interval = _compute_spawn_interval(_wave_total)
 	_all_clear_shown = false
 	PointsManager.begin_night_tally()
 	var lf := leaper_fraction_for_night(GameManager.night_number)
@@ -774,10 +784,13 @@ func _begin_night() -> void:
 		_hud.show_message("NIGHT %d — %d hostiles inbound." % [GameManager.night_number, new_pool])
 
 func _begin_day() -> void:
-	# Any survivors go dormant where they stand; the all-clear prompt is moot now.
+	# Survivors walk out past the tree line and despawn, each one counted into
+	# tomorrow night's pool as it goes (_on_zombie_despawned). The base is
+	# empty by day: nothing to farm for points, nothing in build mode's way.
+	# The all-clear prompt is moot now.
 	_prune_zombies()
 	for z in _zombies:
-		z.set_active(false)
+		z.begin_retreat(TREE_RING_MIN, TREE_RING_MAX)
 	_hud.hide_all_clear()
 	# Per-night earnings telemetry — the data pricing decisions need.
 	print("[ECONOMY] night %d earned %d pts, spent %d, balance %d" % [
@@ -924,6 +937,7 @@ func _spawn_zombie() -> void:
 	add_child(z)
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
 	z.died.connect(_on_zombie_died)
+	z.despawned.connect(_on_zombie_despawned)
 	z.set_active(true)
 	if _hitbox_debug_on:
 		z.set_hitbox_debug(true)
@@ -945,6 +959,12 @@ func _on_zombie_died() -> void:
 	_prune_zombies()
 	_update_wave_hud()
 	_check_all_clear()
+
+## A survivor walked out at dawn. Not a kill: it comes back next night.
+func _on_zombie_despawned() -> void:
+	_retreated_count += 1
+	_prune_zombies()
+	_update_wave_hud()
 
 func _check_all_clear() -> void:
 	if GameManager.is_day():

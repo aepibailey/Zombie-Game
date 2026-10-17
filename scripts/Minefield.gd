@@ -177,8 +177,12 @@ func _detonate(mine: Dictionary, trigger) -> void:
 	# The field announcing itself and pulling more zombies in is intended.
 	NoiseManager.emit_noise(blast_pos, blast_noise_radius)
 
-	# The triggering zombie takes the full charge; everything nearby takes
-	# splash. Survivors of either are permanently crippled.
+	# Wrapped so a kill scores even by day — see PointsManager's placed-defense credit.
+	PointsManager.credit_defense_kills(_apply_blast.bind(trigger, blast_pos))
+
+## The triggering zombie takes the full charge; everything nearby takes
+## splash. Survivors of either are permanently crippled.
+func _apply_blast(trigger, blast_pos: Vector3) -> void:
 	_apply(trigger, trigger_damage)
 	for other in get_tree().get_nodes_in_group("zombies"):
 		if other == trigger or not is_instance_valid(other) or not other.is_alive():

@@ -28,7 +28,29 @@ func reset() -> void:
 	earned_this_night = 0
 	spent_this_night = 0
 	earned_this_run = 0
+	_defense_credit_depth = 0
 	points_changed.emit(points)
+
+# --- Placed-defense credit --------------------------------------------------
+## Kills by a PLACED DEFENSE score even by day: a dawn retreat that walks into
+## your claymore or minefield still pays, the way it would for real. What the
+## player does directly — gunfire, grenades, enablers — scores nothing by day
+## (Zombie._die() is the one gate).
+##
+## The defense wraps its own damage in credit_defense_kills(), and _die()
+## reads defense_credit_active(). Exact rather than a heuristic because both
+## defenses deal their damage synchronously inside the call (the claymore
+## profile has duration 0, so AreaDamageSystem applies it in one pass). A
+## depth counter, not a bool, so a nested call can never clear an outer one.
+var _defense_credit_depth := 0
+
+func credit_defense_kills(apply_damage: Callable) -> void:
+	_defense_credit_depth += 1
+	apply_damage.call()
+	_defense_credit_depth -= 1
+
+func defense_credit_active() -> bool:
+	return _defense_credit_depth > 0
 
 func begin_night_tally() -> void:
 	earned_this_night = 0

@@ -4,6 +4,9 @@ class_name Zombie
 ## driven by the noise bus and line-of-sight. See PROJECT_SPEC.md "Zombie AI".
 
 signal died   ## emitted just before this zombie frees itself (wave tracking)
+## Left the field at dawn without dying (see begin_retreat). Distinct from
+## `died` so the wave tracker counts it toward the NEXT night, not as a kill.
+signal despawned
 
 const SFX_DEATH := "res://audio/zombie_death.wav"
 const FOOTSTEP_DIR := "res://assets/audio/zombie/"
@@ -54,6 +57,7 @@ enum State {
 	ATTACK_STRUCTURE,   # no path to the player — breaking through sandbags
 	LEAP,               # committed ballistic arc over an obstruction
 	LEAP_RECOVER,       # landed, briefly immobile
+	RETREAT,            # dawn: walking out past the tree line to despawn
 }
 
 # --- Fallen (ditch pit) -----------------------------------------------------
@@ -113,11 +117,19 @@ const REPATH_CHECK_INTERVAL := 1.0
 ## file.
 @export var target_reevaluate_interval: float = 0.0
 
+## Dawn retreat: seconds a survivor gets to walk out past the tree line before
+## it despawns wherever it stands. Also how a zombie held in wire or down in a
+## pit leaves at all — it cannot walk, so it waits this out.
+@export var retreat_timeout: float = 20.0
+
 ## Set by the spawner BEFORE add_child(); _ready() seeds `hp` from it.
 var max_hp := BASE_HP
 var hp := BASE_HP
 var state: int = State.WANDER
 var active := false                # only true at night (spec: dormant by day)
+var _retreating := false           # set once, at dawn — see begin_retreat()
+var _retreat_timer := 0.0
+var _retreat_arrive_r := 0.0       # despawn once this far from the base centre
 var last_hit_headshot := false
 
 # Shots-to-kill telemetry (logged on death to tune the HP step).
@@ -386,6 +398,15 @@ func _physics_process(delta: float) -> void:
 	if state == State.LEAP:
 		_do_leap(delta)
 		move_and_slide()
+		return
+
+	# Dawn retreat also runs BEFORE the dormant check, for the same reason as
+	# LEAP above: it is the one thing a zombie does by day. A leap in flight
+	# at sunrise lands first (above), then walks out from here.
+	if _retreating:
+		_do_retreat(delta)
+		move_and_slide()
+		_update_footsteps(delta)
 		return
 
 	# Dormant during the day (or before night activation): stand still.
@@ -916,6 +937,66 @@ func set_temp_slow(mult: float) -> void:
 func speed_mult() -> float:
 	return maxf(min_speed_mult, _perm_speed_mult * _temp_speed_mult)
 
+# --- Dawn retreat -----------------------------------------------------------
+## Sunrise: walk out past the tree line and despawn. Main calls this on every
+## survivor at dawn and folds each despawn into the next night's spawn count,
+## so the pressure carries over without leaving bodies in the base all day.
+##
+## While retreating a zombie never attacks and ignores noise and the laser
+## (each of those entry points checks _retreating). `arrive_radius` is the
+## tree line: past it, from the base centre, the zombie is gone into the
+## woods. The goal is further out along the zombie's own bearing, snapped to
+## the navmesh — the map ends barely beyond the tree ring, so aiming for the
+## open ground past it would mostly aim off the mesh.
+func begin_retreat(arrive_radius: float, goal_radius: float) -> void:
+	if _dead or _retreating:
+		return
+	_retreating = true
+	_retreat_timer = retreat_timeout
+	_retreat_arrive_r = arrive_radius
+	_investigating_laser = false
+	var flat := Vector2(global_position.x, global_position.z)
+	var bearing := flat.normalized() if flat.length() > 0.1 \
+			else Vector2.from_angle(randf() * TAU)
+	var goal := Vector3(bearing.x * goal_radius, global_position.y, bearing.y * goal_radius)
+	var snapped := NavigationServer3D.map_get_closest_point(agent.get_navigation_map(), goal)
+	# An empty map answers Vector3.ZERO — the base centre, the wrong way.
+	_target_pos = goal if snapped.is_zero_approx() else snapped
+	# A leap in flight finishes first; wire and pits hold their state and
+	# wait out the timer. Everything else turns for the trees now.
+	if state != State.LEAP and not is_immobilised():
+		state = State.RETREAT
+
+func is_retreating() -> bool:
+	return _retreating
+
+func _do_retreat(delta: float) -> void:
+	_retreat_timer -= delta
+	var r := Vector2(global_position.x, global_position.z).length()
+	if r >= _retreat_arrive_r or _retreat_timer <= 0.0:
+		despawn()
+		return
+	# Held in wire or down in a pit: nowhere to go, and not swinging either —
+	# a retreating zombie never attacks. The timeout is how it leaves.
+	if is_immobilised():
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	state = State.RETREAT
+	_move_toward(_target_pos, zombie_type.move_speed_wander, delta)
+
+## Leaves the field without dying: no points, no death sound, not a kill.
+## Mirrors _die()'s bookkeeping otherwise — the re-entry guard, and releasing
+## a wire slot so the section doesn't stay full of a zombie that is gone.
+func despawn() -> void:
+	if _dead:
+		return
+	_dead = true
+	if _held_by and is_instance_valid(_held_by):
+		_held_by.release(self)
+	despawned.emit()
+	queue_free()
+
 # --- Movement helper (nav agent w/ direct fallback) -----------------------
 func _move_toward(target: Vector3, speed: float, delta: float) -> void:
 	_repath_timer -= delta
@@ -1069,7 +1150,7 @@ func _no_live_player() -> bool:
 ## within range while wandering/investigating simply replaces the target with
 ## its own fixed location — each event is independent of the player's transform.
 func _on_noise_emitted(position: Vector3, radius: float) -> void:
-	if not active or GameManager.is_day():
+	if not active or GameManager.is_day() or _retreating:
 		return
 	if _is_committed():
 		return
@@ -1089,7 +1170,7 @@ func _on_noise_emitted(position: Vector3, radius: float) -> void:
 ##
 ## Deliberately NOT a noise event: this never touches NoiseManager.
 func notice_laser_dot(dot_pos: Vector3) -> void:
-	if not active or GameManager.is_day() or _dead or is_immobilised():
+	if not active or GameManager.is_day() or _dead or _retreating or is_immobilised():
 		return
 	if _is_committed():
 		return   # already has a confirmed fix; the light tells it nothing new
@@ -1188,7 +1269,7 @@ func take_damage(amount: int, headshot: bool, falloff_mult: float = 1.0) -> int:
 	# Airborne/recovering leapers are excluded specifically: the arc is
 	# committed, and yanking them into Chase mid-flight would cancel it.
 	# Walkers never enter those states, so this is a no-op for them.
-	if active and not GameManager.is_day() and not is_immobilised() \
+	if active and not GameManager.is_day() and not _retreating and not is_immobilised() \
 			and state != State.LEAP and state != State.LEAP_RECOVER:
 		_enter_chase()
 	if hp <= 0:
@@ -1241,6 +1322,7 @@ func state_name() -> String:
 		State.ATTACK_STRUCTURE: return "ATTACK_STRUCTURE"
 		State.LEAP: return "LEAP"
 		State.LEAP_RECOVER: return "LEAP_RECOVER"
+		State.RETREAT: return "RETREAT"
 		_: return "UNKNOWN(%d)" % state
 
 ## Toggle translucent hitbox volumes (debug affordance).
@@ -1303,7 +1385,15 @@ func _die() -> void:
 	if _held_by and is_instance_valid(_held_by):
 		_held_by.release(self)
 	# Headshot kill = 3 pts, body kill = 1 pt (not additive) — spec scoring.
-	PointsManager.add_points(zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill)
+	#
+	# DAY KILLS SCORE NOTHING — unless a placed defense made them. This is the
+	# single site every zombie death passes through (bullets, blasts, mines,
+	# fighter rounds all end in take_damage() -> here), so one gate covers
+	# every source. A dawn retreat must not be a shooting gallery, but one
+	# that walks into your claymore or minefield still pays: those two wrap
+	# their damage in PointsManager.credit_defense_kills().
+	if not GameManager.is_day() or PointsManager.defense_credit_active():
+		PointsManager.add_points(zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill)
 	# Shots-to-kill telemetry for tuning the HP step size.
 	print("[Night %d] zombie down — maxHP %d, shots: %d head + %d body = %d total (killing blow: %s)" % [
 		GameManager.night_number, max_hp, _hits_head, _hits_body,
