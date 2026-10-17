@@ -20,6 +20,16 @@ across three files. 11 autoloads. 3 scene files totalling 89 lines (everything
 else is built in code). Zero automated tests until the branch this review
 ships on (one headless smoke test).
 
+**Status (2026-10-17).** The findings below are left as written; addressed ones
+carry a **Status** line. Since the review:
+- **§1 fail state** — death ends the run (`3c239de`). The run *goal* is still
+  open.
+- **§3.5 zombie sight** — shipped (`a462fe1`).
+- **§3.6 target interval** — `target_reevaluate_interval` is now 0.25
+  (`a462fe1`). The `Targets` registry is still open.
+- **§3.9 / §4.8 day-time kills** — survivors retreat at dawn and day kills
+  score nothing (`6fb5019`).
+
 ---
 
 ## 0. What is genuinely good
@@ -79,6 +89,11 @@ against anything because nothing is at stake.
 2. A run is N nights (pick 7 or 10), with a defined end (extraction / transit /
    "relief arrives"). Escalation curves get a ceiling to tune toward.
 3. Then re-price everything against "points per night × N nights".
+
+**Status: partly addressed** (`3c239de`). Recommendation 1 is done: death ends
+the run, `Player.respawn_on_death` (default off) is the debug toggle, and a
+game-over panel offers Restart, which resets every run-scoped autoload. Items
+2 and 3 (a run length or end, and re-pricing) are still open.
 
 **Questions for discussion.**
 - Is this a roguelite (a run is 20–40 minutes, death resets) or a campaign
@@ -276,6 +291,16 @@ or red-laser-on 20m), through `LineOfSight.between()`. That turns crouching
 into a real decision instead of a free invisibility toggle, and it is ~20
 lines on top of infrastructure that already exists.
 
+**Status: addressed** (`a462fe1`), with different numbers than proposed here.
+Sight runs in Wander and Investigate at night through `LineOfSight.between()`:
+a 120° flat cone, 12m for the walker and 18m for the leaper, halved when
+crouched, rather than a range per movement state. Seen for 0.75s → Chase;
+seen for 0.25s and then lost → Investigate the last-seen spot. Tunables live on
+`ZombieType`, validated at startup. Path (b) is unchanged: a zombie
+investigating a laser dot still sees the player within 16m
+(`Zombie.LASER_INVESTIGATE_SIGHT`). The radius at which the dot draws zombies
+in the first place is now 20m (`Player.LASER_DETECT_RADIUS`; it was 15m).
+
 ### 3.6 Per-frame group scans
 
 `Zombie._nearest_hostile_target()` walks `GROUP_HOSTILE_TARGET` on *every
@@ -289,6 +314,9 @@ Apache and the map scale (§4.5) imply more.
 **Recommendation.** Set `target_reevaluate_interval` to 0.25 (the refactor that
 added it explicitly kept 0.0 to be behaviour-identical — that constraint is
 over). A `Targets` registry on `Main` that zombies read instead of the tree.
+
+**Status: partly addressed** (`a462fe1`). The interval is now 0.25. The
+`Targets` registry has not been built.
 
 ### 3.7 Input
 
@@ -322,6 +350,10 @@ one pass.
   executed for full points (`_die()` → `PointsManager.add_points`). With
   carryover, a bad night is a free point piñata the next morning. Either
   despawn at dawn, or 0 points by day.
+  **Status: addressed** (`6fb5019`), and both were done. At dawn survivors
+  retreat past the tree line and despawn (or despawn in place after 20s),
+  and carry into the next night as a count. Day kills score 0, except
+  claymore and minefield kills.
 - Headless Godot does not throttle `_process`; 900 idle frames in the smoke
   test are ~380 physics ticks (~6s), not the "~15s" the comment says.
   Anything timed in `_process` (the day/night clock, enabler cooldowns) runs
@@ -435,7 +467,7 @@ infinite linear ramp, and they give the run (§1) a story.
 - Out of ammo and no melee: the player is helpless; the "fix" is to die and
   respawn with full HP (and still no ammo). A knife or stock-bash closes it.
 - Dormant zombies standing inside the base all day (carryover) can be shot for
-  points at no risk (§3.9).
+  points at no risk (§3.9). **Addressed** (`6fb5019`).
 - The crate at night "does not pause" — but neither does anything threaten a
   player who stands still (§3.5), so the exposure the spec describes is
   theoretical.
@@ -448,10 +480,12 @@ infinite linear ramp, and they give the run (§1) a story.
 ## 5. A suggested order of operations
 
 1. **Answer §1** (run structure, fail state). Nothing below is priced or
-   balanced until this exists.
+   balanced until this exists. **Fail state done** (`3c239de`); run
+   structure still open.
 2. **Freeze features.** Shelve §4.4 to a branch.
 3. **Give zombies sight** (§3.5) and **gate day-time kills** (§3.9). Two small
-   changes that make the existing loop a game.
+   changes that make the existing loop a game. **Done** (`a462fe1`,
+   `6fb5019`).
 4. **Docs collapse** (§2.1) + `CLAUDE.md` rules file (§2.2). Cheap, and every
    session after it is better.
 5. **Tests for the prose tables** (§2.3); move balance asserts into them

@@ -1,11 +1,29 @@
 # Roadmap
 
-**Last reconciled: 2026-08-28.** This document describes SHIPPED STATE —
+**Last reconciled: 2026-10-17.** This document describes SHIPPED STATE —
 what actually exists in the codebase, verified against source, not what a
 spec once proposed. `PATROL_BASE_ZERO_V2_SPEC.md` describes design intent and
 may run ahead of the code; when the two disagree, this file follows the code.
 
 ## Shipped
+
+**Run structure** — death ends the run. `Player.respawn_on_death` (default
+off) keeps the old teleport-and-heal as a debug toggle. On death a
+`GameOverPanel` shows nights survived and points earned this run, with
+Restart and Quit. Restart is `GameManager.start_new_run()`, which resets
+every run-scoped autoload (`GameManager`, `PointsManager`, `AmmoManager`,
+`EnablerManager`, `UAVSystem`, `GameState`) explicitly, then reloads the
+scene. A bare reload is not enough: the autoloads would carry the dead
+run's base, radio list and ammo reserves into the new one. There is still no
+win condition or run length (see Planned).
+
+**Day gate** — at dawn every surviving zombie enters `RETREAT`: it walks out
+past the tree line (`Main.TREE_RING_MIN`, 23m) and despawns, or despawns in
+place after `Zombie.retreat_timeout` (20s). The retreated survivors carry
+into the next night as a count, not as nodes.
+Day-time kills score nothing, with one exception: claymore and minefield
+kills score through `PointsManager.credit_defense_kills()`. `Zombie._die()`
+is the only place a kill is scored.
 
 **Obstacles** — sandbag walls (`SandbagWall`/`SandbagPanel`, per-section HP,
 repairable), C-wire (`CWireSection`, entangles, does not block frag),
@@ -18,9 +36,22 @@ HK416 foregrip, SPAS-12 breacher choke, M249 extended drum, M110 variable
 zoom. Ammo (`AmmoManager`) is reserve-pool based and uncapped.
 
 **Zombie AI** — walker and leaper variants (`ZombieType` resources), chase/
-investigate/attack state machine, the leaper's ballistic leap (capped so it
-can never outrun a sprint — see `PATROL_BASE_ZERO_V2_SPEC.md` "Leaper"),
-per-night HP scaling, headshot multiplier.
+investigate/attack/retreat state machine, the leaper's ballistic leap (capped
+so it can never outrun a sprint — see `PATROL_BASE_ZERO_V2_SPEC.md` "Leaper"),
+per-night HP scaling, headshot multiplier. Target re-evaluation is throttled
+to every 0.25s (`Zombie.target_reevaluate_interval`).
+
+**Zombie sight** — at night, in Wander and Investigate only. A flat 120°
+cone (`sight_half_angle_deg` 60); range 12m for the walker and 18m for the
+leaper, halved when the player is crouched. Sight checks go through
+`LineOfSight.between()` like every other sight check. Seen for 0.75s
+(`notice_threshold`) → Chase the nearest hostile target; seen for 0.25s
+(`suspicion_threshold`) and then lost → Investigate the last-seen spot. All
+tunables live on `ZombieType` and are checked by `ZombieType.validate()` from
+`Main._ready()`. The red-laser dot is a separate channel: any zombie within
+20m of the dot (`Player.LASER_DETECT_RADIUS`) with line of sight to it goes to
+investigate it, and sees the player within 16m while doing so
+(`Zombie.LASER_INVESTIGATE_SIGHT`).
 
 **Grenades** — carry cap 4, `AreaDamageSystem`-driven blast (see below).
 
@@ -141,6 +172,9 @@ derive range and arc from `FighterType` rather than copies that could drift.
 
 ## Planned
 
+- **Run goal** — death now ends the run, but nothing ends it with a win: no
+  run length, extraction or final night has been decided
+  (`docs/DESIGN_REVIEW.md` §1).
 - **Position Two map** — not started. Also what the fighter system's
   first-4-free recruiting currently stands in for.
 - **Transit night** — not started.
