@@ -99,3 +99,41 @@ func phase_name() -> String:
 ## Convenience for external callers (crate, all-clear skip) to force dawn/dusk.
 func force_phase(phase: int) -> void:
 	_start_phase(phase)
+
+# --- Run lifecycle ----------------------------------------------------------
+## THE way a new run begins (the game-over panel's Restart). Resets every
+## autoload that holds run state, explicitly, and only THEN reloads the scene,
+## which rebuilds everything Main owns (player, base, fighters, zombies, the
+## enabler systems) from scratch.
+##
+## The scene reload is NOT sufficient by itself and is not relied on alone —
+## autoloads survive it, and three of them would actively corrupt the new run:
+## GameState would hand Main the dead run's base to restore, EnablerManager
+## would list every radio entry twice, and AmmoManager would stack the new
+## loadout's starting ammo on the old reserves.
+##
+## A restarted run is a cold boot: opening Day, night counter 0.
+func start_new_run() -> void:
+	reset_run()
+	PointsManager.reset()
+	AmmoManager.reset()
+	EnablerManager.reset()
+	UAVSystem.reset()
+	# Last before the reload, after anything that might snapshot.
+	GameState.clear()
+	get_tree().reload_current_scene()
+
+## This autoload's share of start_new_run(). SILENT: no phase_changed. The old
+## scene is still alive until the deferred reload swaps it out, and its Main
+## snapshots the base into GameState on every phase boundary — emitting here
+## would re-capture the dead run right after it was cleared. A cold boot's
+## own _ready() emit has no listeners either, so this matches it exactly.
+##
+## Clearing every clock halt is what keeps _start_phase()'s leak guard honest
+## rather than weakened: the game-over panel holds one, and the run it was
+## holding for no longer exists.
+func reset_run() -> void:
+	_clock_halt_sources.clear()
+	current_phase = Phase.DAY
+	time_left = DAY_LENGTH
+	night_number = 0

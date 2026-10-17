@@ -70,6 +70,17 @@ func start_cooldown(id: String, seconds: float) -> void:
 func global_lockout_left() -> float:
 	return _global_lockout_remaining
 
+## Back to a cold boot. Part of GameManager.start_new_run().
+##
+## Clearing `callable_enablers` is not optional: the four enabler systems
+## append to it from their own setup, and three of them are Main children. A
+## scene reload without this would list every enabler twice, and the stale
+## half would call into freed nodes.
+func reset() -> void:
+	callable_enablers.clear()
+	_cooldowns.clear()
+	_global_lockout_remaining = 0.0
+
 ## Why this enabler can't be called right now, or "" if it can. Cooldowns are
 ## checked here so every caller (menu rendering AND selection) gets the same
 ## answer from one place; per-enabler `available_fn` reasons stack on top.

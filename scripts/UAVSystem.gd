@@ -32,6 +32,20 @@ var _used_night := -1
 var _hud: HUD
 var _radio: RadioMenu
 
+## Back to a cold boot. Part of GameManager.start_new_run().
+##
+## Disconnects as well as clearing: both ends are autoloads, so the
+## connection survives a scene reload, and the next setup() connecting again
+## would be a "signal already connected" error.
+func reset() -> void:
+	active = false
+	_used_night = -1
+	_hud = null
+	_radio = null
+	if GameManager.phase_changed.is_connected(_on_phase_changed):
+		GameManager.phase_changed.disconnect(_on_phase_changed)
+	uav_state_changed.emit(false)
+
 func setup(hud: HUD, radio: RadioMenu) -> void:
 	_hud = hud
 	_radio = radio

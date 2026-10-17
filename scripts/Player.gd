@@ -26,6 +26,9 @@ signal prompt_cleared(source)
 signal grenade_equipped_changed(equipped: bool)
 ## Emitted on death so any open modal UI (the store) can close itself cleanly.
 signal died_while_busy
+## The run is over. Emitted once, on the death that ends it — never when
+## `respawn_on_death` is on. Main shows the game-over panel off this.
+signal died_permanently
 ## Player took a hit. `dir_angle` is radians relative to facing (0 = ahead,
 ## positive = to the right) so the HUD can show where it came from.
 signal damaged(dir_angle: float)
@@ -45,6 +48,12 @@ const MOVE_NOISE := {
 	MoveState.WALK: 5.0,
 	MoveState.SPRINT: 15.0,
 }
+# --- Death -----------------------------------------------------------------
+## DEBUG. Off: death ends the run (game-over panel, Restart). On: the old
+## teleport-and-heal respawn, exactly as it was — the `_died_this_frame` latch
+## and every consumer of it are untouched on this path.
+@export var respawn_on_death: bool = false
+
 # --- Jump & mantle ---------------------------------------------------------
 @export var jump_height: float = 0.9
 ## Noise made on landing a jump and on completing a mantle (PROJECT_SPEC.md
@@ -266,6 +275,9 @@ var hp := MAX_HP
 ## player respawns instantly, so this is the only window in which a death is
 ## observable at all — see is_alive().
 var _died_this_frame := false
+## Persistent: the run is over. Only ever set when `respawn_on_death` is off,
+## and only cleared by a new run rebuilding this node from scratch.
+var _dead := false
 
 # Weapon state. `ammo`/`reserve` mirror the CURRENT weapon. Loaded magazines
 # live here per weapon; RESERVE ammo is owned by the AmmoManager autoload.
@@ -485,6 +497,20 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	fire_cooldown = maxf(0.0, fire_cooldown - delta)
 
+	# Dead: the body still falls and settles, nothing else runs. Ahead of the
+	# mantle branch so a death mid-mantle doesn't hang the corpse on a ledge.
+	if _dead:
+		# Control is off, so this only cancels a half-finished "Hold E" and
+		# clears its prompt — dying mid-recovery must not strand it on screen.
+		_update_claymore_recovery(delta)
+		if not is_on_floor():
+			velocity.y -= gravity * delta
+		velocity.x = 0.0
+		velocity.z = 0.0
+		move_and_slide()
+		_update_feedback(delta)
+		return
+
 	# A mantle is a locked interpolation: no gravity, no steering, no shooting.
 	if _mantling:
 		_update_mantle(delta)
@@ -665,6 +691,11 @@ func _update_laser_detection(delta: float) -> void:
 
 # --- Input ----------------------------------------------------------------
 func _unhandled_input(event: InputEvent) -> void:
+	# Not every key path below is gated on control_enabled (the equip actions
+	# check later, inside their own functions). The dead get nothing at all,
+	# including Esc — the game-over panel owns the mouse.
+	if _dead:
+		return
 	if event is InputEventMouseMotion and mouse_captured and control_enabled and not radio_menu_open:
 		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 		head.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
@@ -2101,8 +2132,17 @@ func take_area_damage(amount: int, origin: Vector3) -> void:
 ## both before and after the killing blow and still never counts. Hence the
 ## latch below: _respawn() sets it, and it clears deferred, i.e. after every
 ## same-frame consumer (the blast loop is synchronous) has sampled it.
+##
+## With respawn off, death is persistent and so is this — which is what keeps
+## Zombie._nearest_hostile_target()'s "group non-empty while a player is
+## alive" assert true once a dead player has left GROUP_HOSTILE_TARGET.
 func is_alive() -> bool:
-	return not _died_this_frame
+	return not (_died_this_frame or _dead)
+
+## True once the run has ended. Distinct from `not is_alive()`, which is also
+## true for the one frame of a respawn death.
+func is_dead() -> bool:
+	return _dead
 
 ## THE point sight enters and leaves this player — LineOfSight's contract (see
 ## LineOfSight.eye_point()). This is the camera's own position, not a body
@@ -2137,6 +2177,10 @@ func take_melee_damage(amount: int, source_pos: Vector3) -> void:
 	take_damage(amount, source_pos)
 
 func take_damage(amount: int, source_pos = null) -> void:
+	# A dead player has left every damage group, but a blast already iterating
+	# or a zombie swinging off a stale target can still land one call here.
+	if _dead:
+		return
 	hp = maxi(0, hp - amount)
 	health_changed.emit(hp, MAX_HP)
 	add_shake(HURT_SHAKE)
@@ -2149,7 +2193,32 @@ func take_damage(amount: int, source_pos = null) -> void:
 	if _sfx_hurt.stream:
 		_sfx_hurt.play()
 	if hp <= 0:
-		_respawn()
+		if respawn_on_death:
+			_respawn()
+		else:
+			_die()
+
+## The run ends here. Persistent, unlike _respawn(): the player stays where it
+## fell, takes no input and no damage, and stops being anything's target.
+##
+## Leaves the target and blast groups but STAYS in "player": Zombie's
+## _no_live_player() looks the player up by that group and reads is_alive(),
+## which is how the "hostile-target group is never empty while a player is
+## alive" assert stays true with no zombie-side change.
+func _die() -> void:
+	_dead = true
+	# Same order and the same hand-offs as _respawn(): the fuse goes off where
+	# the body dropped, and any open store closes before control is taken.
+	_drop_cooking_grenade()
+	died_while_busy.emit()
+	_cancel_ifak("died")
+	remove_from_group(Zombie.GROUP_HOSTILE_TARGET)
+	remove_from_group(AreaDamageSystem.GROUP_DAMAGEABLE)
+	_force_unads()
+	set_control_enabled(false)
+	_mantling = false
+	message.emit("You died.")
+	died_permanently.emit()
 
 func _respawn() -> void:
 	# One-frame death latch for is_alive() — see its docstring. Set before

@@ -1002,8 +1002,13 @@ func _acquire_target() -> Node3D:
 	# Cache only when a cadence was actually asked for. At the 0.0 default
 	# this branch never runs and every query re-scans, matching the old
 	# per-call _get_player() exactly.
+	# Still a member, not merely instance-valid: a target that died
+	# permanently has LEFT the group (see GROUP_HOSTILE_TARGET's contract) but
+	# is still a live node — a dead player is never freed — so validity alone
+	# would keep a zombie swinging at a corpse until the cache expired.
 	if target_reevaluate_interval > 0.0 and _target_timer > 0.0 \
-			and _target_cache != null and is_instance_valid(_target_cache):
+			and is_instance_valid(_target_cache) \
+			and _target_cache.is_in_group(GROUP_HOSTILE_TARGET):
 		return _target_cache
 	_target_cache = _nearest_hostile_target()
 	_target_timer = target_reevaluate_interval

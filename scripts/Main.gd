@@ -639,6 +639,13 @@ func _build_ui() -> void:
 	add_child(_roster_menu)
 	_roster_menu.setup(player, _hud, FIGHTER_ECONOMY_CONFIG, _spawn_fighter)
 
+	# Death ends the run (unless Player.respawn_on_death). Owns its own input
+	# blocking and clock halt; Main only builds it.
+	var game_over := GameOverPanel.new()
+	game_over.name = "GameOverPanel"
+	add_child(game_over)
+	game_over.setup(player)
+
 	# Step 8A phase 4 debug overlay (P). Built here rather than lazily on
 	# first toggle so it is in the tree with everything else and its own
 	# _process is running when the key is hit.

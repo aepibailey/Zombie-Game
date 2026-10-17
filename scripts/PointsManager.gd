@@ -12,10 +12,22 @@ var points: int = 0
 ## need and that previously didn't exist.
 var earned_this_night: int = 0
 var spent_this_night: int = 0
+## Everything earned since the run began, spending ignored — what the
+## game-over panel reports. `points` is only the balance left to spend.
+var earned_this_run: int = 0
 
 func add_points(amount: int) -> void:
 	points += amount
 	earned_this_night += amount
+	earned_this_run += amount
+	points_changed.emit(points)
+
+## Back to a cold boot's values. Part of GameManager.start_new_run().
+func reset() -> void:
+	points = 0
+	earned_this_night = 0
+	spent_this_night = 0
+	earned_this_run = 0
 	points_changed.emit(points)
 
 func begin_night_tally() -> void:
