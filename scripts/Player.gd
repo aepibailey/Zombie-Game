@@ -12,6 +12,9 @@ signal weapon_changed(display_name: String, fire_mode: String)
 signal message(text: String)
 signal ifak_changed(count: int, max_count: int)
 signal ifak_progress(active: bool, progress: float)
+## An IFAK finished applying and was consumed. Distinct from ifak_changed,
+## which also fires when one is bought or picked up.
+signal ifak_used
 signal grenade_changed(count: int, max_count: int)
 signal claymore_changed(count: int, max_count: int)
 signal claymore_equipped_changed(equipped: bool)
@@ -2494,6 +2497,7 @@ func _update_ifak(delta: float) -> void:
 		ifak_changed.emit(ifaks, ifak_max_carry)
 		health_changed.emit(health.hp, MAX_HP)
 		ifak_progress.emit(false, 0.0)
+		ifak_used.emit()
 		message.emit("IFAK applied — %d HP." % health.hp)
 
 # --- Store purchase API ---------------------------------------------------

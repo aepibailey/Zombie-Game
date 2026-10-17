@@ -231,8 +231,8 @@ func _ready() -> void:
 	_apply_lighting(GameManager.is_day())
 
 	GameManager.phase_changed.connect(_on_phase_changed)
-	# A run-ending death writes the row in progress (RunLogger, ended_by = death).
-	player.died_permanently.connect(RunLogger.on_player_died)
+	# Death, damage and IFAK use feed the run log; see RunLogger.bind_player().
+	RunLogger.bind_player(player)
 
 	# Bake the navmesh after the geometry is in the tree, then let the
 	# NavigationServer sync for a frame before anything queries a path.
@@ -824,6 +824,7 @@ func _process(delta: float) -> void:
 	if _spawn_timer <= 0.0 and alive_count() < max_concurrent:
 		_spawn_zombie()
 		_wave_spawned += 1
+		RunLogger.note_alive(alive_count())
 		_spawn_timer = _spawn_interval * randf_range(1.0 - spawn_jitter, 1.0 + spawn_jitter)
 		_update_wave_hud()
 
@@ -1098,6 +1099,8 @@ func _spawn_fighter() -> Fighter:
 	# SECOND roll by the time it ran.
 	f.recruit(FIGHTER_TYPE_IRREGULAR)
 	add_child(f)
+	# Freed with the fighter, like RosterMenu's own died connection.
+	f.died.connect(RunLogger.on_fighter_died)
 
 	var fwd := -player.global_transform.basis.z
 	fwd.y = 0.0

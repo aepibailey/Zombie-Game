@@ -29,12 +29,19 @@ const COLUMNS := [
 	"day_kills", "points_earned", "bank_at_dawn", "bank_at_dusk",
 	"spent_ammo", "spent_weapons", "spent_attachments", "spent_equipment",
 	"spent_defences", "spent_enablers", "spent_fighters",
+	"max_alive_reached", "player_hp_lost", "ifaks_used", "fighters_lost",
+	"fps_min", "fps_avg",
 ]
 ## Column for each PointsManager.SpendCategory, in enum order.
 const SPEND_COLUMNS := [
 	"spent_ammo", "spent_weapons", "spent_attachments", "spent_equipment",
 	"spent_defences", "spent_enablers", "spent_fighters",
 ]
+
+## FPS is sampled at Night only, every FPS_SAMPLE_INTERVAL, skipping the first
+## FPS_WARMUP of each night (the dusk spike: HUD messages, the first spawns).
+const FPS_SAMPLE_INTERVAL := 0.5
+const FPS_WARMUP := 1.0
 
 var run_id := ""
 var _path := ""
@@ -48,6 +55,14 @@ var _dawn_seen := false
 var _earned_at_open := 0
 var _spent_at_open := 0
 var _by_category_at_open: Array[int] = []
+# Player HP as last reported, so a loss is the real drop in HP (a killing
+# blow larger than the HP left counts only what was left).
+var _last_hp := 0
+var _night_elapsed := 0.0
+var _fps_timer := 0.0
+var _fps_sum := 0.0
+var _fps_count := 0
+var _fps_min := 0.0
 var _earned_at_dawn := 0
 var _spent_at_dawn := 0
 
@@ -83,7 +98,13 @@ func begin_night(night: int, pool: int, carryover_in: int) -> void:
 		"run_id": run_id, "night": night, "pool": pool, "carryover_in": carryover_in,
 		"walker_kills_head": 0, "walker_kills_body": 0,
 		"leaper_kills_head": 0, "leaper_kills_body": 0, "day_kills": 0,
+		"max_alive_reached": 0, "player_hp_lost": 0, "ifaks_used": 0, "fighters_lost": 0,
 	}
+	_night_elapsed = 0.0
+	_fps_timer = 0.0
+	_fps_sum = 0.0
+	_fps_count = 0
+	_fps_min = 0.0
 	_dawn_seen = false
 	_earned_at_open = PointsManager.earned_this_run
 	_spent_at_open = PointsManager.spent_this_run
@@ -97,11 +118,56 @@ func mark_dawn() -> void:
 	_earned_at_dawn = PointsManager.earned_this_run
 	_spent_at_dawn = PointsManager.spent_this_run
 
-## Wired by Main to Player.died_permanently. A respawning death never fires
-## that signal, so it never ends a row: the run goes on.
+## Main calls this once per scene with its player. Holds no reference: the
+## connections are freed with the player, so a Restart's new player simply
+## binds again.
+func bind_player(player: Player) -> void:
+	_last_hp = player.health.hp
+	player.died_permanently.connect(on_player_died)
+	player.health_changed.connect(_on_player_health)
+	player.ifak_used.connect(_on_ifak_used)
+
+## Player.died_permanently. A respawning death never fires that signal, so it
+## never ends a row: the run goes on.
 func on_player_died() -> void:
 	if not _row.is_empty():
 		_close_row("death")
+
+## Player.health_changed fires on damage, heals and respawn alike; only a
+## drop is a loss.
+func _on_player_health(hp: int, _max_hp: int) -> void:
+	if not _row.is_empty() and hp < _last_hp:
+		_row["player_hp_lost"] += _last_hp - hp
+	_last_hp = hp
+
+func _on_ifak_used() -> void:
+	if not _row.is_empty():
+		_row["ifaks_used"] += 1
+
+## Fighter.died, connected by Main where each fighter is created.
+func on_fighter_died() -> void:
+	if not _row.is_empty():
+		_row["fighters_lost"] += 1
+
+## Main reports the alive count after every spawn — the only moment it rises.
+func note_alive(alive: int) -> void:
+	if not _row.is_empty():
+		_row["max_alive_reached"] = maxi(_row["max_alive_reached"], alive)
+
+func _process(delta: float) -> void:
+	if _row.is_empty() or GameManager.is_day():
+		return
+	_night_elapsed += delta
+	if _night_elapsed < FPS_WARMUP:
+		return
+	_fps_timer += delta
+	if _fps_timer < FPS_SAMPLE_INTERVAL:
+		return
+	_fps_timer -= FPS_SAMPLE_INTERVAL
+	var fps := Engine.get_frames_per_second()
+	_fps_min = fps if _fps_count == 0 else minf(_fps_min, fps)
+	_fps_sum += fps
+	_fps_count += 1
 
 # --- Called by Zombie._die() -------------------------------------------------
 ## Night kills count by variant and killing blow. By Day, only kills a placed
@@ -130,6 +196,10 @@ func _close_row(ended_by: String) -> void:
 	_row["ended_by"] = ended_by
 	_row["points_earned"] = PointsManager.earned_this_run - _earned_at_open
 	_fill_spend_columns()
+	# Blank, not 0, when the night ended before the first sample.
+	if _fps_count > 0:
+		_row["fps_min"] = snappedf(_fps_min, 0.1)
+		_row["fps_avg"] = snappedf(_fps_sum / _fps_count, 0.1)
 	# Dusk only exists for a row that reached the next Night.
 	if ended_by == "dusk":
 		_row["bank_at_dusk"] = PointsManager.points
