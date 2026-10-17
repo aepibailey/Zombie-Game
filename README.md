@@ -17,8 +17,9 @@ macOS on Apple Silicon. This repo is the V1 thin slice defined in
 
 ## Headless smoke test
 
-There are two automated tests: this one and the table tests below. Both need
-the engine on the command line, which is a separate install from the editor:
+There are three automated tests: this one, and the table and damage tests
+below. All three need the engine on the command line, which is a separate
+install from the editor:
 
 ```sh
 # Linux x86_64; match the version in project.godot's config/features (4.3).
@@ -66,6 +67,23 @@ A failure means the code and a spec table disagree. Decide which is right
 before changing either. A section that throws is reported as aborted, and a
 run that never reaches its report fails on a 10s watchdog, so a crash can never
 read as a pass.
+
+## Headless damage tests
+
+```sh
+./Godot_v4.3-stable_linux.x86_64 --headless res://tools/damage_tests.tscn
+```
+
+About 1.5s, same exit-code and watchdog rules as the table tests. Every damage
+path against every actor, through the real call sites where one exists:
+player rounds via `Player._fire_ray()`, fighter rounds and kill credit via
+`Fighter._shoot()`, blasts via `AreaDamageSystem.detonate()`, mines via
+`Minefield._apply()`, zombie melee via `_do_attack()`/`_do_entangled()`, plus
+kill scoring by night and day, the player's game over, its debug respawn
+latch, and the IFAK. The values are characterization: recorded from the code
+as it behaves, so any change to one is a behaviour change to justify, not a
+number to update. An `ObjectDB instances leaked` warning at exit is audio
+still playing when the run quits, not a failure.
 
 ## Controls
 
@@ -181,6 +199,7 @@ tools/
   gen_placeholder_audio.py  # re-roll footstep variations (edit CONFIG)
   smoke_test.gd/.tscn       # headless engagement test — see above, run as a SCENE
   table_tests.gd/.tscn      # headless spec-number checks — see above, run as a SCENE
+  damage_tests.gd/.tscn     # headless damage-path checks — see above, run as a SCENE
 ```
 
 ## Noise model (from the spec)

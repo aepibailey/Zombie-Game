@@ -1,5 +1,6 @@
-# Runs the headless smoke test (tools/smoke_test.tscn) and the table tests
-# (tools/table_tests.tscn) on every push and PR. No lint, no broader suite.
+# Runs the headless smoke test (tools/smoke_test.tscn), the table tests
+# (tools/table_tests.tscn) and the damage tests (tools/damage_tests.tscn) on
+# every push and PR. No lint, no broader suite.
 # The job keeps its original `smoke-test` name so the check name is stable.
 #
 # Each step that runs a test is wrapped in a hard 60s `timeout`. An earlier
@@ -50,4 +51,10 @@ jobs:
       - name: Run table tests (60s hard timeout)
         run: |
           timeout 60 "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless res://tools/table_tests.tscn 2>&1 \
+            | grep -vE 'mesh_get_surface_count|Parameter "m" is null'
+
+      # Every damage path against every actor, pinned as it behaves; ~1.5s.
+      - name: Run damage tests (60s hard timeout)
+        run: |
+          timeout 60 "./Godot_v${GODOT_VERSION}_linux.x86_64" --headless res://tools/damage_tests.tscn 2>&1 \
             | grep -vE 'mesh_get_surface_count|Parameter "m" is null'
