@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="NightTypeProfile" load_steps=2 format=3]
+
+; Patience: few, tough, quiet. Night 10 (arrival at Position Two) and the cycle from 30.
+
+[ext_resource type="Script" path="res://scripts/NightTypeProfile.gd" id="1_ntype"]
+
+[resource]
+script = ExtResource("1_ntype")
+id = "hunters"
+display_name = "Hunters"
+pool_mult = 0.5
+hp_mult = 2.0
+max_alive_override = 8
+points_mult = 2.0

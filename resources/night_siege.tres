@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="NightTypeProfile" load_steps=2 format=3]
+
+; Obstacles and fighter placement: one spawn direction a night. Night 20, the cycle from 30, and the Transit stand-in (9, 25).
+
+[ext_resource type="Script" path="res://scripts/NightTypeProfile.gd" id="1_ntype"]
+
+[resource]
+script = ExtResource("1_ntype")
+id = "siege"
+display_name = "Siege"
+pool_mult = 1.5
+max_alive_bonus = 8
+spawn_arc_deg = 120.0

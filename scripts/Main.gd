@@ -221,6 +221,8 @@ var _wave_spawned := 0          # how many have spawned so far
 var _spawn_timer := 0.0         # countdown to the next trickle spawn
 var _spawn_interval := 4.0      # this night's base interval (scaled to pool size)
 var _max_alive := 0             # this night's concurrent cap (max_alive_for_night)
+var _night_profile: NightTypeProfile   # tonight's type, fixed at dusk
+var _spawn_bearing := 0.0       # tonight's spawn direction, when the type has an arc
 var _all_clear_shown := false   # prompt fires once per all-clear event
 
 @onready var player: Player = $Player
@@ -792,8 +794,17 @@ func _begin_night() -> void:
 	var carryover := _retreated_count
 	_retreated_count = 0
 
-	var new_pool: int = pool_for_night(GameManager.night_number, base_spawn, spawn_per_night)
+	# Tonight's type shapes every number below; each apply_* is the one
+	# place its rule is written (NightTypeProfile).
+	_night_profile = GameManager.tonight_profile()
+	var type_name := GameManager.night_type_name(GameManager.night_number)
+	# Pool: the type's multiplier first, carryover added after it.
+	var new_pool: int = _night_profile.apply_pool(
+		pool_for_night(GameManager.night_number, base_spawn, spawn_per_night))
 	_wave_total = carryover + new_pool
+	# One bearing per night; every spawn tonight, carryover included, comes
+	# from within the arc around it.
+	_spawn_bearing = randf() * TAU
 	_wave_spawned = 0
 	# alive count is derived (see alive_count()), never tracked separately.
 	_spawn_timer = FIRST_SPAWN_DELAY
@@ -801,24 +812,28 @@ func _begin_night() -> void:
 	# spreads the whole count across the spawn window.
 	_spawn_interval = _compute_spawn_interval(_wave_total)
 	_max_alive = max_alive_for_night(GameManager.night_number, max_alive_base, max_alive_step,
-		max_alive_step_every, max_alive_step_start_night, max_alive_ceiling)
+		max_alive_step_every, max_alive_step_start_night, max_alive_ceiling,
+		_night_profile.max_alive_bonus, _night_profile.max_alive_override)
 	_all_clear_shown = false
-	RunLogger.begin_night(GameManager.night_number, new_pool, carryover,
-		_max_alive, _zombie_hp_for_type(_type_walker.max_health))
-	var lf := leaper_fraction_for_night(GameManager.night_number)
-	print("[Night %d] to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs" % [
-		GameManager.night_number, _wave_total, new_pool, carryover,
-		_max_alive, _zombie_hp_for_night(), _spawn_interval])
+	RunLogger.begin_night(GameManager.night_number, type_name, new_pool, carryover,
+		_max_alive, _night_hp_for_type(_type_walker.max_health))
+	var lf := _night_leaper_fraction()
+	print("[Night %d] %s: to spawn %d (pool %d + carryover %d), cap %d, zombie HP %d, interval %.2fs%s" % [
+		GameManager.night_number, type_name, _wave_total, new_pool, carryover,
+		_max_alive, _night_hp_for_type(zombie_base_hp), _spawn_interval,
+		(", spawn arc %.0f deg on bearing %.0f deg" % [_night_profile.spawn_arc_deg, rad_to_deg(_spawn_bearing)])
+			if _night_profile.has_spawn_arc() else ""])
 	print("[Night %d] mix: %d%% leapers (walker %d HP / leaper %d HP)" % [
 		GameManager.night_number, int(round(lf * 100.0)),
-		_zombie_hp_for_type(_type_walker.max_health),
-		_zombie_hp_for_type(_type_leaper.max_health)])
+		_night_hp_for_type(_type_walker.max_health),
+		_night_hp_for_type(_type_leaper.max_health)])
 	_update_wave_hud()
 	if carryover > 0:
-		_hud.show_message("NIGHT %d — %d inbound (+%d survivors carried over)." % [
-			GameManager.night_number, new_pool, carryover])
+		_hud.show_message("NIGHT %d — %s — %d inbound (+%d survivors carried over)." % [
+			GameManager.night_number, type_name, new_pool, carryover])
 	else:
-		_hud.show_message("NIGHT %d — %d hostiles inbound." % [GameManager.night_number, new_pool])
+		_hud.show_message("NIGHT %d — %s — %d hostiles inbound." % [
+			GameManager.night_number, type_name, new_pool])
 
 func _begin_day() -> void:
 	# Survivors walk out past the tree line and despawn, each one counted into
@@ -942,11 +957,18 @@ func _compute_spawn_interval(pool: int) -> float:
 ## every `step_every` nights from it, ceiling last. 20 through night 14,
 ## 22 / 24 / ... from 15, 32 from night 40 at the defaults. Static and handed
 ## the tunables, like pool_for_night(), so it is testable without a Main.
+##
+## A night type then adds `bonus`, or replaces the whole value with
+## `override` when that is >= 0. The ceiling applies LAST, to either: it is a
+## frame-rate bound, not a balance number, so no night type may exceed it.
 static func max_alive_for_night(night: int, base: int, step: int, step_every: int,
-		step_start_night: int, ceiling: int) -> int:
+		step_start_night: int, ceiling: int, bonus: int = 0, override: int = -1) -> int:
 	var cap := base
 	if night >= step_start_night:
 		cap += step * int(floor(float(night - step_start_night) / float(maxi(1, step_every))))
+	cap += bonus
+	if override >= 0:
+		cap = override
 	return mini(cap, ceiling)
 
 ## A variant's max HP on `night`. Linear through `linear_until`:
@@ -965,14 +987,21 @@ static func hp_for_night(night: int, base: int, per_step: int, nights_per_step_:
 		return linear
 	return roundi(float(linear) * pow(growth, night - linear_until))
 
-## Per-night walker max HP (the base the HP tables quote).
-func _zombie_hp_for_night() -> int:
-	return _zombie_hp_for_type(zombie_base_hp)
-
-## Tonight's max HP for whatever the variant's BASE health is.
+## Tonight's CURVE HP for whatever the variant's BASE health is — the
+## escalation curve alone, before any night type. The tables pin this.
 func _zombie_hp_for_type(base: int) -> int:
 	return hp_for_night(GameManager.night_number, base, hp_per_step, nights_per_step,
 		hp_linear_until_night, hp_growth_per_night)
+
+## What a zombie of that base actually spawns with tonight: the curve, then
+## the night type's hp_mult (a Hunters walker on night 10 is 264, not 132).
+func _night_hp_for_type(base: int) -> int:
+	return GameManager.tonight_profile().apply_hp(_zombie_hp_for_type(base))
+
+## Tonight's leaper share: the curve, unless the night type overrides it.
+func _night_leaper_fraction() -> float:
+	return GameManager.tonight_profile().apply_leaper_share(
+		leaper_fraction_for_night(GameManager.night_number))
 
 ## Fraction of tonight's spawns that should be leapers. Nights 1-3 are pure
 ## walkers; from night 4 it opens at 10% and climbs 5%/night to a 30% ceiling.
@@ -984,19 +1013,22 @@ func leaper_fraction_for_night(night: int) -> float:
 
 ## Roll this spawn's variant against tonight's leaper share.
 func _pick_zombie_type() -> ZombieType:
-	if randf() < leaper_fraction_for_night(GameManager.night_number):
+	if randf() < _night_leaper_fraction():
 		return _type_leaper
 	return _type_walker
 
 func _spawn_zombie() -> void:
 	var angle := randf() * TAU
+	if _night_profile and _night_profile.has_spawn_arc():
+		var half := deg_to_rad(_night_profile.spawn_arc_deg) * 0.5
+		angle = _spawn_bearing + randf_range(-half, half)
 	var r := randf_range(TREE_RING_MIN - 2.0, TREE_RING_MAX)
 	var z = zombie_scene.instantiate()  # untyped for the zombie's custom API
 	# Both BEFORE add_child: _ready() seeds hp from max_hp and builds the
 	# variant's silhouette from zombie_type.
 	var zt := _pick_zombie_type()
 	z.zombie_type = zt
-	z.max_hp = _zombie_hp_for_type(zt.max_health)
+	z.max_hp = _night_hp_for_type(zt.max_health)
 	add_child(z)
 	z.global_position = Vector3(cos(angle) * r, 0.3, sin(angle) * r)
 	z.died.connect(_on_zombie_died)

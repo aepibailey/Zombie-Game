@@ -24,7 +24,7 @@ extends Node
 
 const RUNS_DIR := "user://runs"
 const COLUMNS := [
-	"run_id", "night", "ended_by", "pool", "carryover_in", "carryover_out",
+	"run_id", "night", "night_type", "ended_by", "pool", "carryover_in", "carryover_out",
 	"max_alive", "walker_hp",
 	"walker_kills_head", "walker_kills_body", "leaper_kills_head", "leaper_kills_body",
 	"day_kills", "points_earned", "bank_at_dawn", "bank_at_dusk",
@@ -94,12 +94,16 @@ func _start_run() -> void:
 ## `max_alive` and `walker_hp` are the night's escalation as Main computed
 ## it — the cap and a walker's max HP — so a run can be checked against
 ## docs/RUN_STRUCTURE.md's night-by-night table straight from the CSV.
-func begin_night(night: int, pool: int, carryover_in: int, max_alive: int, walker_hp: int) -> void:
+## `night_type` is the SCHEDULED type (GameManager.night_type_name): TRANSIT
+## on nights 9 and 25 even though they play as Siege for now.
+func begin_night(night: int, night_type: String, pool: int, carryover_in: int,
+		max_alive: int, walker_hp: int) -> void:
 	if not _row.is_empty():
 		_row["carryover_out"] = carryover_in
 		_close_row("dusk")
 	_row = {
-		"run_id": run_id, "night": night, "pool": pool, "carryover_in": carryover_in,
+		"run_id": run_id, "night": night, "night_type": night_type,
+		"pool": pool, "carryover_in": carryover_in,
 		"max_alive": max_alive, "walker_hp": walker_hp,
 		"walker_kills_head": 0, "walker_kills_body": 0,
 		"leaper_kills_head": 0, "leaper_kills_body": 0, "day_kills": 0,

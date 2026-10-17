@@ -44,6 +44,7 @@ func _ready() -> void:
 		_test_zombie_hp,
 		_test_hp_curve,
 		_test_max_alive,
+		_test_night_types,
 		_test_night_pool,
 		_test_spawn_interval,
 		_test_leaper_fraction,
@@ -124,6 +125,51 @@ func _test_max_alive() -> bool:
 		_eq(_main_script.max_alive_for_night(row[0], _main.max_alive_base, _main.max_alive_step,
 			_main.max_alive_step_every, _main.max_alive_step_start_night, _main.max_alive_ceiling),
 			row[1], "night %d max alive" % row[0])
+	return true
+
+# --- Prompt A phase 2: night types (docs/RUN_STRUCTURE.md "Night-by-night table") --
+## The schedule, then each override through the SAME functions the spawner
+## uses: the profile's apply_* helpers, Main.max_alive_for_night() with the
+## profile's bonus/override, and Main._night_hp_for_type().
+func _test_night_types() -> bool:
+	print("[TABLE] night types (Prompt A phase 2)")
+	var NT := GameManager.NightType
+	for row in [[5, NT.SWARM], [9, NT.TRANSIT], [10, NT.HUNTERS], [12, NT.NORMAL],
+			[15, NT.SWARM], [20, NT.SIEGE], [25, NT.TRANSIT],
+			[30, NT.HUNTERS], [35, NT.SWARM], [40, NT.SIEGE], [45, NT.HUNTERS], [50, NT.SWARM]]:
+		_eq(GameManager.night_type_name(row[0]), NT.keys()[row[1]], "night %d type" % row[0])
+	_check(GameManager.get_night_profile(9) == GameManager.siege_profile, "night 9 TRANSIT plays as Siege")
+	_check(GameManager.get_night_profile(25) == GameManager.siege_profile, "night 25 TRANSIT plays as Siege")
+	_eq(GameManager.get_night_profile(12).id, "normal", "night 12 profile")
+	_eq(GameManager.get_night_profile(31).id, "normal", "night 31 profile (between cycle nights)")
+
+	for row in [[9, 45], [10, 17], [20, 95], [30, 47], [12, 39], [5, 18]]:
+		var base: int = _main_script.pool_for_night(row[0], _main.base_spawn, _main.spawn_per_night)
+		_eq(GameManager.get_night_profile(row[0]).apply_pool(base), row[1],
+			"night %d pool before carryover" % row[0])
+
+	for row in [[9, 28], [10, 8], [20, 32], [25, 32], [15, 22], [12, 20]]:
+		var p: NightTypeProfile = GameManager.get_night_profile(row[0])
+		_eq(_main_script.max_alive_for_night(row[0], _main.max_alive_base, _main.max_alive_step,
+			_main.max_alive_step_every, _main.max_alive_step_start_night, _main.max_alive_ceiling,
+			p.max_alive_bonus, p.max_alive_override), row[1], "night %d max alive" % row[0])
+
+	for row in [[10, 264], [15, 142], [30, 846], [5, 93], [12, 148], [20, 236]]:
+		GameManager.night_number = row[0]
+		_eq(_main._night_hp_for_type(100), row[1], "night %d walker HP with type" % row[0])
+	GameManager.night_number = 10
+	_eq(_main._night_hp_for_type(60), 184, "night 10 Hunters leaper HP (92 x 2)")
+
+	for row in [[5, 0.70], [15, 0.70], [9, 0.30], [12, 0.30], [4, 0.10]]:
+		GameManager.night_number = row[0]
+		_near(_main._night_leaper_fraction(), row[1], "night %d leaper share with type" % row[0])
+
+	var hunters: NightTypeProfile = GameManager.hunters_profile
+	_eq([hunters.apply_points(1), hunters.apply_points(3), hunters.apply_points(5)], [2, 6, 10],
+		"Hunters doubles kill awards")
+	_eq(GameManager.normal_profile.apply_points(3), 3, "Normal leaves kill awards alone")
+	_check(GameManager.siege_profile.has_spawn_arc() and not GameManager.normal_profile.has_spawn_arc(),
+		"Siege has a spawn arc, Normal the full ring")
 	return true
 
 # --- PROJECT_SPEC.md "Night scaling" ------------------------------------------

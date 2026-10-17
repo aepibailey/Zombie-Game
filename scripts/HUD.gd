@@ -10,6 +10,9 @@ class_name HUD
 
 var _clock_label: Label
 var _night_label: Label
+## Tonight's scheduled type, from GameManager.night_started. Shown beside the
+## night number while it is Night; by Day the readout is the number alone.
+var _night_type_name := ""
 var _wave_label: Label
 var _points_label: Label
 var _health_label: Label
@@ -107,6 +110,7 @@ func _ready() -> void:
 	# Autoload wiring.
 	PointsManager.points_changed.connect(_on_points_changed)
 	GameManager.time_updated.connect(_on_time_updated)
+	GameManager.night_started.connect(_on_night_started)
 	_on_points_changed(PointsManager.points)
 
 # Top-center day/night clock. A translucent backing panel keeps the readout
@@ -361,7 +365,18 @@ func _on_time_updated(time_left: float, phase: int) -> void:
 	# Warm for day, cool for night — both stay bright over the backing panel.
 	_clock_label.add_theme_color_override("font_color",
 		Color(1.0, 0.95, 0.7) if is_day else Color(0.72, 0.86, 1.0))
+	_refresh_night_label(is_day)
+
+## Refreshed on every clock tick AND straight from night_started, so the
+## type is named from dusk's first frame, not one tick later.
+func _on_night_started(_night: int, type_name: String) -> void:
+	_night_type_name = type_name
+	_refresh_night_label(false)
+
+func _refresh_night_label(is_day: bool) -> void:
 	_night_label.text = "Night %d" % maxi(GameManager.night_number, 1)
+	if not is_day and _night_type_name != "":
+		_night_label.text += " — %s" % _night_type_name
 
 func _on_points_changed(points: int) -> void:
 	_points_label.text = "Points: %d" % points

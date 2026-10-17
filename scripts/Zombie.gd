@@ -1453,8 +1453,14 @@ func _die() -> void:
 	# every source. A dawn retreat must not be a shooting gallery, but one
 	# that walks into your claymore or minefield still pays: those two wrap
 	# their damage in PointsManager.credit_defense_kills().
-	if not GameManager.is_day() or PointsManager.defense_credit_active():
-		PointsManager.add_points(zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill)
+	#
+	# Night kills take the night type's points_mult (Hunters pays double),
+	# from any source. A Day kill by a placed defense always pays 1.0.
+	var award := zombie_type.points_headshot_kill if last_hit_headshot else zombie_type.points_body_kill
+	if not GameManager.is_day():
+		PointsManager.add_points(GameManager.tonight_profile().apply_points(award))
+	elif PointsManager.defense_credit_active():
+		PointsManager.add_points(award)
 	RunLogger.record_kill(zombie_type.id, last_hit_headshot)
 	# Shots-to-kill telemetry for tuning the HP step size.
 	print("[Night %d] zombie down — maxHP %d, shots: %d head + %d body = %d total (killing blow: %s)" % [

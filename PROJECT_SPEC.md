@@ -37,6 +37,7 @@ Zombies gain health every other night through night 10, then compound — the ru
 - Defaults: `zombie_base_hp = 100`, `hp_per_step = 8`, `nights_per_step = 2`, `hp_linear_until_night = 10`, `hp_growth_per_night = 1.06`.
 - Walker: nights 1–2 = **100**, 3–4 = **108**, 5–6 = **116**, 9–10 = **132**, then 11 = **140**, 15 = **177**, 20 = **236**, 30 = **423**, 50 = **1358**, … no cap.
 - Leaper (60 base): the same +8 step to **92** on night 10, then `round(92 * 1.06^(n - 10))`.
+- **Night types** reshape a night on top of these curves: `NightTypeProfile` resources (`resources/night_*.tres`) scheduled by `GameManager.get_night_profile()` — Swarm on 5 and 15, Transit (plays as Siege for now) on 9 and 25, Hunters on 10, Siege on 20, then Hunters → Swarm → Siege every 5th night from 30. The type's `hp_mult` applies after the curve, `pool_mult` before carryover, and `points_mult` to Night kills only. See `docs/RUN_STRUCTURE.md`.
 - Max alive at once is `Main.max_alive_for_night()`: `max_alive_base` (20) before `max_alive_step_start_night` (10), then `+max_alive_step` (2) every `max_alive_step_every` (5) nights, capped at `max_alive_ceiling` (32).
 - On every zombie death a debug line logs night number, that zombie's max HP, and shots-to-kill split by headshot/body — used to find the shots-to-kill breakpoints when tuning the step size.
 

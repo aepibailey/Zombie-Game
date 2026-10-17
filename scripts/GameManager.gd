@@ -8,8 +8,15 @@ extends Node
 
 signal phase_changed(phase: int)
 signal time_updated(time_left: float, phase: int)
+## Fired at dusk, right after phase_changed(NIGHT), once night_number has
+## advanced. Carries the night's scheduled type so the HUD can name it.
+signal night_started(night: int, type_name: String)
 
 enum Phase { DAY, NIGHT }
+
+## The night schedule's vocabulary. TRANSIT is planned but not built: it
+## resolves to transit_standin_profile until it is (see get_night_profile).
+enum NightType { NORMAL, SWARM, SIEGE, HUNTERS, TRANSIT }
 
 # --- Tuning ---------------------------------------------------------------
 # Playtest cadence: 30s day / 120s night. (Spec default for a night is 360s /
@@ -17,6 +24,24 @@ enum Phase { DAY, NIGHT }
 # rather than a const — edit here, or set it at runtime.
 const DAY_LENGTH: float = 30.0
 @export var NIGHT_LENGTH: float = 120.0
+
+# --- Night schedule — docs/RUN_STRUCTURE.md "Escalation, night types and Day" --
+## Fixed special nights. Every other night is NORMAL, except the cycle below.
+@export var special_nights: Dictionary = {
+	5: NightType.SWARM, 9: NightType.TRANSIT, 10: NightType.HUNTERS,
+	15: NightType.SWARM, 20: NightType.SIEGE, 25: NightType.TRANSIT,
+}
+## From special_cycle_start, every special_cycle_every-th night takes the next
+## entry of special_cycle, wrapping: 30 Hunters, 35 Swarm, 40 Siege, 45 Hunters.
+@export var special_cycle_start: int = 30
+@export var special_cycle_every: int = 5
+@export var special_cycle: Array[NightType] = [NightType.HUNTERS, NightType.SWARM, NightType.SIEGE]
+@export var normal_profile: NightTypeProfile = preload("res://resources/night_normal.tres")
+@export var swarm_profile: NightTypeProfile = preload("res://resources/night_swarm.tres")
+@export var siege_profile: NightTypeProfile = preload("res://resources/night_siege.tres")
+@export var hunters_profile: NightTypeProfile = preload("res://resources/night_hunters.tres")
+## What a TRANSIT night actually plays as until the transit night is built.
+@export var transit_standin_profile: NightTypeProfile = preload("res://resources/night_siege.tres")
 
 var current_phase: int = Phase.DAY
 var time_left: float = 0.0
@@ -89,6 +114,38 @@ func _start_phase(phase: int) -> void:
 		assert(_clock_halt_sources.is_empty(),
 			"[GAMEMANAGER] entering Night with the clock halt still held by: %s — every request_clock_halt() must be matched by a release_clock_halt()." % [_clock_halt_sources.keys()])
 	phase_changed.emit(phase)
+	if phase == Phase.NIGHT:
+		night_started.emit(night_number, night_type_name(night_number))
+
+## The scheduled type of `night`: a fixed special night, else the cycle from
+## special_cycle_start, else NORMAL.
+func get_night_type(night: int) -> NightType:
+	if special_nights.has(night):
+		return special_nights[night]
+	if night >= special_cycle_start and not special_cycle.is_empty() \
+			and (night - special_cycle_start) % maxi(1, special_cycle_every) == 0:
+		var i := ((night - special_cycle_start) / maxi(1, special_cycle_every)) % special_cycle.size()
+		return special_cycle[i]
+	return NightType.NORMAL
+
+## The profile `night` actually PLAYS with. TRANSIT resolves to the stand-in.
+func get_night_profile(night: int) -> NightTypeProfile:
+	match get_night_type(night):
+		NightType.SWARM: return swarm_profile
+		NightType.SIEGE: return siege_profile
+		NightType.HUNTERS: return hunters_profile
+		NightType.TRANSIT: return transit_standin_profile
+	return normal_profile
+
+## Tonight's profile. Only meaningful at Night; by Day it is the profile of
+## the night just survived.
+func tonight_profile() -> NightTypeProfile:
+	return get_night_profile(night_number)
+
+## The SCHEDULED type's name, upper case: "TRANSIT" on night 9 even though it
+## plays as Siege — the HUD and the run log say what the night is.
+func night_type_name(night: int) -> String:
+	return NightType.keys()[get_night_type(night)]
 
 func is_day() -> bool:
 	return current_phase == Phase.DAY

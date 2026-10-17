@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="NightTypeProfile" load_steps=2 format=3]
+
+; Every field at its default: the escalation curve, unchanged. See docs/RUN_STRUCTURE.md "Escalation".
+
+[ext_resource type="Script" path="res://scripts/NightTypeProfile.gd" id="1_ntype"]
+
+[resource]
+script = ExtResource("1_ntype")
+id = "normal"
+display_name = "Normal"
+
