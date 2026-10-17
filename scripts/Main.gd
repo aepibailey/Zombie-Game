@@ -129,6 +129,13 @@ const KEY_DEBUG_SECTOR_PREVIEW := KEY_U
 ## exercise every spend category. Remove after Prompt A testing.
 const KEY_DEBUG_POINTS := KEY_I
 const DEBUG_POINTS_GRANT := 500
+## TEMPORARY (Prompt A test gates): during Day, sets the UPCOMING night to the
+## next entry here past it — 5, 9, 10, 15, 20, 30 — so a gate's night is a few
+## presses away. Every escalation rule reads night_number, so nothing else
+## needs touching; the run log shows the skip as a gap in its night column.
+## Remove after Prompt A testing, with the points key.
+const KEY_DEBUG_NIGHT_JUMP := KEY_X
+const DEBUG_JUMP_NIGHTS := [5, 9, 10, 15, 20, 30]
 const COVER_PREVIEW_CONFIG := preload("res://resources/cover_preview.tres")
 
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
@@ -1100,6 +1107,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		PointsManager.add_points(DEBUG_POINTS_GRANT)
 		_hud.show_message("DEBUG: +%d pts" % DEBUG_POINTS_GRANT)
 		return
+	if event.keycode == KEY_DEBUG_NIGHT_JUMP:
+		_debug_jump_night()
+		return
 	if event.keycode == KEY_DEBUG_SPAWN_COVER_TEST:
 		_debug_spawn_cover_test()
 		return
@@ -1120,6 +1130,22 @@ func _unhandled_input(event: InputEvent) -> void:
 # rules, the 8-cap and the recruit economy are all phases of their own — this
 # deliberately enforces NONE of them, because its only job is to put a fighter
 # in the world so the entity itself can be verified.
+## TEMPORARY — see KEY_DEBUG_NIGHT_JUMP. Day only: at night the current
+## night's pool, HP and cap are already set, and changing the counter under
+## them would make the run log's row disagree with what actually spawned.
+func _debug_jump_night() -> void:
+	if not GameManager.is_day():
+		_hud.show_message("DEBUG: night jump works during Day only.")
+		return
+	var upcoming := GameManager.night_number + 1
+	for n in DEBUG_JUMP_NIGHTS:
+		if n > upcoming:
+			GameManager.night_number = n - 1   # dusk increments it to n
+			_hud.show_message("DEBUG: next night is %d." % n)
+			print("[DEBUG] next night set to %d" % n)
+			return
+	_hud.show_message("DEBUG: next night is %d — no further jump." % upcoming)
+
 func _debug_spawn_fighter() -> void:
 	var f := _spawn_fighter()
 	var live: int = get_tree().get_nodes_in_group(Fighter.GROUP).size()
