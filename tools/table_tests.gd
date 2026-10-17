@@ -27,11 +27,13 @@ const WATCHDOG_SEC := 10.0
 
 var _failures: Array[String] = []
 var _main: Node
+var _main_script: GDScript
 var _dummy: Zombie
 
 func _ready() -> void:
 	get_tree().create_timer(WATCHDOG_SEC).timeout.connect(_on_watchdog)
-	_main = load("res://scripts/Main.gd").new()
+	_main_script = load("res://scripts/Main.gd")
+	_main = _main_script.new()
 	_dummy = load("res://scenes/Zombie.tscn").instantiate()
 	_dummy.zombie_type = load("res://resources/zombie_walker.tres")
 	_dummy.max_hp = 1_000_000_000
@@ -40,6 +42,7 @@ func _ready() -> void:
 	var saved_night: int = GameManager.night_number
 	for section in [
 		_test_zombie_hp,
+		_test_night_pool,
 		_test_spawn_interval,
 		_test_leaper_fraction,
 		_test_falloff,
@@ -99,9 +102,17 @@ func _test_zombie_hp() -> bool:
 	return true
 
 # --- PROJECT_SPEC.md "Night scaling" ------------------------------------------
-## The table's pools are base_spawn + spawn_per_night * (night - 1) with no
-## carryover: 6 / 12 / 18 / 33. That formula is inline in Main's night start,
-## not a function, so only the interval it feeds is tested here.
+## Pool before carryover, at Main's real exported defaults, over the same
+## nights 1–21 the HP and headshot tables cover. Nights 1/3/5/10 are also the
+## pools the spawn-interval rows below assume.
+func _test_night_pool() -> bool:
+	print("[TABLE] night pool (PROJECT_SPEC.md \"Night scaling\" / \"Economy\")")
+	for row in [[1, 6], [2, 9], [3, 12], [4, 15], [5, 18], [8, 27], [10, 33], [21, 66]]:
+		_eq(_main_script.pool_for_night(row[0], _main.base_spawn, _main.spawn_per_night), row[1],
+			"night %d pool" % row[0])
+	return true
+
+## Intervals for the pools above (no carryover).
 func _test_spawn_interval() -> bool:
 	print("[TABLE] spawn interval (PROJECT_SPEC.md \"Night scaling\")")
 	_near(GameManager.NIGHT_LENGTH, 120.0, "table assumes 120s nights")

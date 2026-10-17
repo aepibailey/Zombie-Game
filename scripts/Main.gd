@@ -761,7 +761,7 @@ func _begin_night() -> void:
 	var carryover := _retreated_count
 	_retreated_count = 0
 
-	var new_pool: int = base_spawn + spawn_per_night * (GameManager.night_number - 1)
+	var new_pool: int = pool_for_night(GameManager.night_number, base_spawn, spawn_per_night)
 	_wave_total = carryover + new_pool
 	_wave_spawned = 0
 	# alive count is derived (see alive_count()), never tracked separately.
@@ -892,6 +892,11 @@ func _update_audio_debug() -> void:
 	for row in rows:
 		lines.append("%5.1f m  %s" % [row["d"], "walking" if row["moving"] else "still"])
 	_hud.set_debug_audio(lines, player.laser_debug_line())
+
+## Fresh zombies for `night`, before carryover: 6 / 9 / 12 ... at the defaults.
+## Static and handed the tunables, so it is testable without a Main instance.
+static func pool_for_night(night: int, base: int, per_night: int) -> int:
+	return base + per_night * (night - 1)
 
 ## Spread this night's pool across most of the night so bigger waves still
 ## arrive, instead of a fixed interval that runs out of night on late waves.

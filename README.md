@@ -54,9 +54,10 @@ repeatedly. That is Godot's dummy renderer, not this project — filter it:
 
 Runs in about a second; exit code 0 on all-pass, 1 on any failure. It checks the
 numbers the specs work out by hand against the live functions that produce
-them: zombie HP per night, spawn interval, leaper share, weapon falloff, SPAS-12
-pellet lethality, headshots-to-kill (and the 416-beats-M17 rule over nights
-1–200 × 0–150m), leaper ballistics, and supply-drop pricing. No world is built;
+them: zombie HP per night, night pool, spawn interval, leaper share, weapon
+falloff, SPAS-12 pellet lethality, headshots-to-kill (and the 416-beats-M17
+rule over nights 1–200 × 0–150m), leaper ballistics, and supply-drop pricing.
+No world is built;
 per-hit damage comes from the real `Zombie.take_damage()` on one inactive
 dummy. Same rules as the smoke test: run it as a scene, filter the renderer
 noise. CI runs both.
