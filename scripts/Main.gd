@@ -108,6 +108,10 @@ const KEY_DEBUG_COVER_DRAW := KEY_P
 ## spawn in front of the player); on a toggle until it does. See
 ## SectorPreview.gd.
 const KEY_DEBUG_SECTOR_PREVIEW := KEY_U
+## TEMPORARY (Prompt C gate 2): grants DEBUG_POINTS_GRANT so one Day can
+## exercise every spend category. Removed before Prompt C phase 3 ends.
+const KEY_DEBUG_POINTS := KEY_I
+const DEBUG_POINTS_GRANT := 500
 const COVER_PREVIEW_CONFIG := preload("res://resources/cover_preview.tres")
 
 var zombie_scene: PackedScene = preload("res://scenes/Zombie.tscn")
@@ -1045,6 +1049,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_DEBUG_SPAWN_FIGHTER:
 		_debug_spawn_fighter()
+		return
+	if event.keycode == KEY_DEBUG_POINTS:
+		# Through add_points, so it is an ordinary award to the run log.
+		PointsManager.add_points(DEBUG_POINTS_GRANT)
+		_hud.show_message("DEBUG: +%d pts" % DEBUG_POINTS_GRANT)
 		return
 	if event.keycode == KEY_DEBUG_SPAWN_COVER_TEST:
 		_debug_spawn_cover_test()
