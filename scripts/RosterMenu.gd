@@ -314,7 +314,7 @@ func _upgrade_cost(current_tier: int) -> int:
 func _on_upgrade_pressed(f, cost: int) -> void:
 	if not is_instance_valid(f) or not f.is_alive():
 		return
-	if not PointsManager.spend_points(cost):
+	if not PointsManager.spend_points(cost, PointsManager.SpendCategory.FIGHTERS):
 		return
 	f.upgrade()
 	_refresh()
@@ -322,13 +322,13 @@ func _on_upgrade_pressed(f, cost: int) -> void:
 func _on_suppress_pressed(f) -> void:
 	if not is_instance_valid(f) or not f.is_alive():
 		return
-	if not PointsManager.spend_points(economy.suppressor_cost):
+	if not PointsManager.spend_points(economy.suppressor_cost, PointsManager.SpendCategory.FIGHTERS):
 		return
 	f.apply_suppressor()
 	_refresh()
 
 func _on_recruit_pressed(cost: int) -> void:
-	if cost > 0 and not PointsManager.spend_points(cost):
+	if cost > 0 and not PointsManager.spend_points(cost, PointsManager.SpendCategory.FIGHTERS):
 		return
 	if not _spawn_fighter_fn.is_valid():
 		return

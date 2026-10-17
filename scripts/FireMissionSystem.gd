@@ -128,7 +128,7 @@ func _on_painted(cfg: FireMissionConfig, point: Vector3) -> void:
 	if _active_mission_id != "":
 		_hud.show_message("Fire mission already in flight.")
 		return
-	if not PointsManager.spend_points(cfg.cost):
+	if not PointsManager.spend_points(cfg.cost, PointsManager.SpendCategory.ENABLERS):
 		_hud.show_message("Not enough points for %s." % cfg.display_name)
 		return
 

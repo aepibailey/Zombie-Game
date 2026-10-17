@@ -345,7 +345,7 @@ func _on_buy(item) -> void:
 	if locked_by != "":
 		_fail("Requires %s first." % locked_by)
 		return
-	if not PointsManager.spend_points(_display_cost(item)):
+	if not PointsManager.spend_points(_display_cost(item), StoreCatalog.spend_category(item)):
 		_fail("Not enough points for %s." % item.display_name)
 		return
 	_status_label.text = _player.apply_store_purchase(item)

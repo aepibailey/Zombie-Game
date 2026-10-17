@@ -27,6 +27,13 @@ const COLUMNS := [
 	"run_id", "night", "ended_by", "pool", "carryover_in", "carryover_out",
 	"walker_kills_head", "walker_kills_body", "leaper_kills_head", "leaper_kills_body",
 	"day_kills", "points_earned", "bank_at_dawn", "bank_at_dusk",
+	"spent_ammo", "spent_weapons", "spent_attachments", "spent_equipment",
+	"spent_defences", "spent_enablers", "spent_fighters",
+]
+## Column for each PointsManager.SpendCategory, in enum order.
+const SPEND_COLUMNS := [
+	"spent_ammo", "spent_weapons", "spent_attachments", "spent_equipment",
+	"spent_defences", "spent_enablers", "spent_fighters",
 ]
 
 var run_id := ""
@@ -39,6 +46,8 @@ var _dawn_seen := false
 # Window figures are deltas of these, so nothing here keeps its own tally of
 # points that could drift from the authority.
 var _earned_at_open := 0
+var _spent_at_open := 0
+var _by_category_at_open: Array[int] = []
 var _earned_at_dawn := 0
 var _spent_at_dawn := 0
 
@@ -77,6 +86,8 @@ func begin_night(night: int, pool: int, carryover_in: int) -> void:
 	}
 	_dawn_seen = false
 	_earned_at_open = PointsManager.earned_this_run
+	_spent_at_open = PointsManager.spent_this_run
+	_by_category_at_open = PointsManager.spent_by_category.duplicate()
 
 func mark_dawn() -> void:
 	if _row.is_empty():
@@ -118,6 +129,7 @@ func _notification(what: int) -> void:
 func _close_row(ended_by: String) -> void:
 	_row["ended_by"] = ended_by
 	_row["points_earned"] = PointsManager.earned_this_run - _earned_at_open
+	_fill_spend_columns()
 	# Dusk only exists for a row that reached the next Night.
 	if ended_by == "dusk":
 		_row["bank_at_dusk"] = PointsManager.points
@@ -141,6 +153,20 @@ func _assert_day_bank() -> void:
 	assert(_row["bank_at_dusk"] == expected,
 		"[RUNLOG] night %d: bank_at_dusk %d != bank_at_dawn %d + day earned %d - day spent %d (= %d). Something changed points without going through PointsManager." % [
 			_row["night"], _row["bank_at_dusk"], _row["bank_at_dawn"], day_earned, day_spent, expected])
+
+## Every spend in this row's window, by category. The categories must add up
+## to everything PointsManager says was spent in the same window.
+func _fill_spend_columns() -> void:
+	assert(SPEND_COLUMNS.size() == PointsManager.SpendCategory.size(),
+		"[RUNLOG] SPEND_COLUMNS out of step with PointsManager.SpendCategory.")
+	var sum := 0
+	for i in SPEND_COLUMNS.size():
+		var spent: int = PointsManager.spent_by_category[i] - _by_category_at_open[i]
+		_row[SPEND_COLUMNS[i]] = spent
+		sum += spent
+	var total: int = PointsManager.spent_this_run - _spent_at_open
+	assert(sum == total,
+		"[RUNLOG] night %d: spend categories sum to %d but %d was spent." % [_row["night"], sum, total])
 
 func _append(row: Dictionary) -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(RUNS_DIR))

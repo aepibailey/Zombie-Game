@@ -594,7 +594,7 @@ func _try_place() -> void:
 			_sfx_deny.play()
 		return
 	# Points are deducted ONLY here, on a committed placement.
-	if not PointsManager.spend_points(t.cost):
+	if not PointsManager.spend_points(t.cost, PointsManager.SpendCategory.DEFENCES):
 		if _sfx_deny.stream:
 			_sfx_deny.play()
 		return
@@ -765,7 +765,7 @@ func _try_service_under_cursor() -> void:
 			_reason_label.text = "That field is fully stocked"
 			return
 		var cost2: int = REPLENISH_COST
-		if not PointsManager.spend_points(cost2):
+		if not PointsManager.spend_points(cost2, PointsManager.SpendCategory.DEFENCES):
 			_fail("Replenish needs %d pts" % cost2)
 			return
 		best.replenish()
@@ -844,7 +844,7 @@ func _on_repair_section_pressed(panel: SandbagPanel) -> void:
 	if _repair_target == null:
 		return
 	var cost: int = panel.repair_cost(_repair_target.section_repair_cost)
-	if not PointsManager.spend_points(cost):
+	if not PointsManager.spend_points(cost, PointsManager.SpendCategory.DEFENCES):
 		_fail("Repair needs %d pts" % cost)
 		return
 	panel.repair()
@@ -858,7 +858,7 @@ func _on_repair_all_pressed() -> void:
 	var cost: int = _repair_target.repair_all_cost()
 	if cost <= 0:
 		return
-	if not PointsManager.spend_points(cost):
+	if not PointsManager.spend_points(cost, PointsManager.SpendCategory.DEFENCES):
 		_fail("Repair All needs %d pts" % cost)
 		return
 	var spent: int = _repair_target.repair_all()

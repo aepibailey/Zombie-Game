@@ -164,7 +164,7 @@ func _on_painted(point: Vector3) -> void:
 
 	var cost: int = config.supply_drop_cost
 	var value := _bundle_value(_player.owned_weapons())
-	if not PointsManager.spend_points(cost):
+	if not PointsManager.spend_points(cost, PointsManager.SpendCategory.ENABLERS):
 		_hud.show_message("Not enough points for Supply Drop.")
 		return
 

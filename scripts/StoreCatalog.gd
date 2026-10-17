@@ -243,6 +243,21 @@ func categories() -> Array:
 	extras.sort()
 	return ordered + extras
 
+## What buying `item` counts as in the run log. The store's tabs are not the
+## log's categories: SUPPLIES holds both ammo and the IFAK, and the radio sits
+## under ENABLERS as the gate to them. Exhaustive on purpose — a new tab or
+## kind fails here rather than landing in the wrong column.
+func spend_category(item: StoreItem) -> PointsManager.SpendCategory:
+	if item.kind == "ammo":
+		return PointsManager.SpendCategory.AMMO
+	match item.category:
+		"WEAPONS": return PointsManager.SpendCategory.WEAPONS
+		"ATTACHMENTS": return PointsManager.SpendCategory.ATTACHMENTS
+		"SUPPLIES", "EQUIPMENT": return PointsManager.SpendCategory.EQUIPMENT   # IFAK; grenade, claymore
+		"ENABLERS": return PointsManager.SpendCategory.ENABLERS                 # radio
+	assert(false, "[STORE] no spend category for '%s' (category %s, kind %s)." % [item.id, item.category, item.kind])
+	return PointsManager.SpendCategory.EQUIPMENT
+
 func items_in(category: String) -> Array:
 	return items.filter(func(it): return it.category == category)
 

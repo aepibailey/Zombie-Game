@@ -258,7 +258,7 @@ func _on_painted(centre: Vector3) -> void:
 	if _available_reason() != "" or EnablerManager.cooldown_left(APACHE_ID) > 0.0:
 		_hud.show_message("Apache unavailable.")
 		return
-	if not PointsManager.spend_points(config.apache_cost):
+	if not PointsManager.spend_points(config.apache_cost, PointsManager.SpendCategory.ENABLERS):
 		_hud.show_message("Not enough points for the Apache.")
 		return
 

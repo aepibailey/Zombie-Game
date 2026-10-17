@@ -72,7 +72,7 @@ func _available_reason() -> String:
 func _call_uav() -> void:
 	if _available_reason() != "":
 		return
-	if not PointsManager.spend_points(CONFIG.uav_cost):
+	if not PointsManager.spend_points(CONFIG.uav_cost, PointsManager.SpendCategory.ENABLERS):
 		if _hud:
 			_hud.show_message("Not enough points for UAV Overwatch.")
 		return

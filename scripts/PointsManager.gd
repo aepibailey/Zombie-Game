@@ -6,6 +6,11 @@ extends Node
 
 signal points_changed(points: int)
 
+## What a spend bought — one per RunLogger spend column. There is deliberately
+## no "uncategorized" value: every spend says what it was for, and
+## spend_points() requires one.
+enum SpendCategory { AMMO, WEAPONS, ATTACHMENTS, EQUIPMENT, DEFENCES, ENABLERS, FIGHTERS }
+
 var points: int = 0
 ## Everything earned since the run began, spending ignored — what the
 ## game-over panel reports. `points` is only the balance left to spend.
@@ -13,6 +18,14 @@ var earned_this_run: int = 0
 ## Everything spent since the run began. With earned_this_run, the only
 ## totals kept here: RunLogger takes per-night windows as deltas of the two.
 var spent_this_run: int = 0
+## spent_this_run split by SpendCategory, indexed by the enum value.
+var spent_by_category: Array[int] = _zero_categories()
+
+static func _zero_categories() -> Array[int]:
+	var a: Array[int] = []
+	a.resize(SpendCategory.size())
+	a.fill(0)
+	return a
 
 func add_points(amount: int) -> void:
 	points += amount
@@ -24,6 +37,7 @@ func reset() -> void:
 	points = 0
 	earned_this_run = 0
 	spent_this_run = 0
+	spent_by_category = _zero_categories()
 	_defense_credit_depth = 0
 	points_changed.emit(points)
 
@@ -49,10 +63,21 @@ func defense_credit_active() -> bool:
 	return _defense_credit_depth > 0
 
 ## Returns true if the purchase succeeded (enough points and they were spent).
-func spend_points(amount: int) -> bool:
+## THE ONE SPEND PATH. `category` is required — no default — so a new call
+## site cannot compile without saying what it buys, and one passing a raw int
+## outside the enum fails here, before any points move.
+func spend_points(amount: int, category: SpendCategory) -> bool:
+	assert(category >= 0 and category < SpendCategory.size(),
+		"[POINTS] spend_points: invalid SpendCategory %d." % category)
+	# Release builds strip assert(); refuse the spend rather than move points
+	# that no column would ever account for.
+	if category < 0 or category >= SpendCategory.size():
+		push_error("[POINTS] spend_points: invalid SpendCategory %d — spend refused." % category)
+		return false
 	if points >= amount:
 		points -= amount
 		spent_this_run += amount
+		spent_by_category[category] += amount
 		points_changed.emit(points)
 		return true
 	return false
